@@ -1189,6 +1189,16 @@ public class PhaseHandler implements java.io.Serializable, IHasForgeLog {
         return false;
     }
 
+    /**
+     * Prepares a copied game (e.g. from GameCopier) to be resumed via mainGameLoop()
+     * from a point where a player was about to receive priority. Without this, a fresh
+     * PhaseHandler skips priority for the current phase entirely (givePriorityToPlayer
+     * defaults to false), so the copy silently fast-forwards to the next phase.
+     */
+    public final void devResumeAtPriority() {
+        givePriorityToPlayer = true;
+    }
+
     public final boolean devAdvanceToPhase(PhaseType targetPhase) {
         return devAdvanceToPhase(targetPhase, null);
     }

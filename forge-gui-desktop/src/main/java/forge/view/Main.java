@@ -77,6 +77,10 @@ public final class Main {
                 SimulateMatch.simulate(args);
                 break;
 
+            case "forkcheck":
+                ForkFidelityCheck.run(args);
+                break;
+
             case "parse":
                 CardReaderExperiments.parseAllCards(args);
                 break;
