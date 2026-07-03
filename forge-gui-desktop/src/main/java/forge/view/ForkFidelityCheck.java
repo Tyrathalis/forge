@@ -87,6 +87,11 @@ public final class ForkFidelityCheck {
         // If the divergence rate matches the same-RNG rate, RNG stream identity isn't
         // the binding factor and object-identity effects (hash iteration order) are.
         boolean freshRng = params.containsKey("freshrng");
+        // Chain mode: also make F2 = copy(F1) at the same point and replay both from
+        // the same RNG snapshot. F2 ≡ F1 means the orig→copy scramble is a one-time
+        // canonicalization (copy-of-copy is faithful → search trees are internally
+        // consistent); F2 ≠ F1 means every copy introduces fresh drift.
+        boolean chain = params.containsKey("chain");
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
@@ -107,10 +112,13 @@ public final class ForkFidelityCheck {
         Map<String, Integer> tally = new TreeMap<>();
         try (PrintWriter out = new PrintWriter(new FileWriter(outPath, true))) {
             for (int i = 0; i < nGames; i++) {
-                GameResult r = runOneGame(rules, type, decks, baseSeed + i, perturb, freshRng);
+                GameResult r = runOneGame(rules, type, decks, baseSeed + i, perturb, freshRng, chain);
                 out.println(r.toJson());
                 out.flush();
                 tally.merge(r.status, 1, Integer::sum);
+                if (r.chainStatus != null) {
+                    tally.merge("chain:" + r.chainStatus, 1, Integer::sum);
+                }
                 System.out.printf("game %d/%d seed=%d forkTurn=%d -> %s%n",
                         i + 1, nGames, r.seed, r.forkTurn, r.summaryLine());
             }
@@ -140,7 +148,7 @@ public final class ForkFidelityCheck {
         return params;
     }
 
-    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng) {
+    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain) {
         GameResult result = new GameResult(seed);
         // Fork turn drawn from a meta-RNG so it never perturbs game randomness.
         Random meta = new Random(seed * 6364136223846793005L + 1442695040888963407L);
@@ -162,6 +170,7 @@ public final class ForkFidelityCheck {
         Monitor monitor = new Monitor(game, result);
         monitor.perturb = perturb;
         monitor.freshRng = freshRng;
+        monitor.chain = chain;
         game.subscribeToEvents(monitor);
 
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -191,8 +200,44 @@ public final class ForkFidelityCheck {
             return result;
         }
         result.mainOutcome = outcomeString(game);
+        result.mainTraceHash = traceHash(monitor.mainTrace, result.forkTurn);
+        result.forkTraceHash = traceHash(monitor.forkTrace, result.forkTurn);
         classify(result, monitor);
+        if (chain) {
+            result.chainTraceHash = traceHash(monitor.chainTrace, result.forkTurn);
+            classifyChain(result, monitor);
+        }
         return result;
+    }
+
+    /** Compares F1's trajectory to F2's (fork-of-fork), independent of the main-vs-F1 verdict. */
+    private static void classifyChain(GameResult r, Monitor m) {
+        if (r.chainStatus != null) {
+            return; // chain_copy_crash / chain_resume_crash already set
+        }
+        if (!r.chainStaticMatch) {
+            r.chainStatus = "chain_static_mismatch";
+            return;
+        }
+        int lastCommonTurn = Math.min(
+                m.forkTrace.isEmpty() ? 0 : Collections.max(m.forkTrace.keySet()),
+                m.chainTrace.isEmpty() ? 0 : Collections.max(m.chainTrace.keySet()));
+        for (int t = r.forkTurn + 1; t <= lastCommonTurn; t++) {
+            List<String> a = m.forkTrace.get(t);
+            List<String> b = m.chainTrace.get(t);
+            if (a == null || b == null || !a.equals(b)) {
+                r.chainStatus = "chain_divergence";
+                r.chainDivergenceTurn = t;
+                r.chainSample = firstDiff(a, b);
+                return;
+            }
+        }
+        if (!r.forkOutcome.equals(r.chainOutcome)) {
+            r.chainStatus = "chain_outcome_mismatch";
+            r.chainSample = "f1=" + r.forkOutcome + " f2=" + r.chainOutcome;
+            return;
+        }
+        r.chainStatus = "chain_clean";
     }
 
     /** Compares mainline vs fork traces from the fork turn onward and sets result.status. */
@@ -247,10 +292,12 @@ public final class ForkFidelityCheck {
         final GameResult result;
         final Map<Integer, List<String>> mainTrace = new TreeMap<>();
         final Map<Integer, List<String>> forkTrace = new TreeMap<>();
+        final Map<Integer, List<String>> chainTrace = new TreeMap<>();
         ScheduledExecutorService watchdogs;
         boolean forked = false;
         boolean perturb = false;
         boolean freshRng = false;
+        boolean chain = false;
 
         Monitor(Game game, GameResult result) {
             this.game = game;
@@ -320,6 +367,21 @@ public final class ForkFidelityCheck {
                 result.divergenceSample = firstDiff(dMain, dFork);
             }
 
+            // Chain mode: F2 = copy(F1), made at the same point BEFORE F1 plays anything.
+            Game copy2 = null;
+            if (chain) {
+                long t1 = System.nanoTime();
+                try {
+                    copy2 = new GameCopier(copy).makeCopy();
+                    result.copy2Ms = (System.nanoTime() - t1) / 1_000_000;
+                    result.chainStaticMatch = dFork.equals(digest(copy2));
+                } catch (Throwable t) {
+                    result.chainStatus = "chain_copy_crash";
+                    result.notes = result.notes + " chain: " + t;
+                    copy2 = null;
+                }
+            }
+
             if (perturb) {
                 Player p0 = copy.getPlayers().get(0);
                 p0.setLife(p0.getLife() - 1, null);
@@ -344,8 +406,32 @@ public final class ForkFidelityCheck {
                 if (!copy.isGameOver()) {
                     copy.setGameOver(GameEndReason.Draw);
                 }
-                // Mainline resumes from the exact RNG state the fork started with.
                 MyRandom.setRandom(restoreRng(rngState));
+            }
+
+            // F2 replay from the same RNG snapshot; compare to F1 in classifyChain.
+            if (copy2 != null && result.chainStatus == null) {
+                final Game f2 = copy2;
+                f2.subscribeToEvents(new ForkRecorder(f2, chainTrace));
+                f2.getPhaseHandler().devResumeAtPriority();
+                f2.copyLastState();
+                MyRandom.setRandom(freshRng ? new Random(result.seed * 31 + 7) : restoreRng(rngState));
+                ScheduledFuture<?> chainClock = watchdogs.schedule(
+                        () -> f2.setGameOver(GameEndReason.Draw), FORK_TIMEOUT_S, TimeUnit.SECONDS);
+                try {
+                    f2.getPhaseHandler().mainGameLoop();
+                    result.chainOutcome = outcomeString(f2);
+                } catch (Throwable t) {
+                    result.chainStatus = "chain_resume_crash";
+                    result.notes = result.notes + " chain: " + t;
+                } finally {
+                    chainClock.cancel(false);
+                    if (!f2.isGameOver()) {
+                        f2.setGameOver(GameEndReason.Draw);
+                    }
+                    // Mainline resumes from the exact RNG state the fork started with.
+                    MyRandom.setRandom(restoreRng(rngState));
+                }
             }
         }
     }
@@ -459,6 +545,30 @@ public final class ForkFidelityCheck {
         return winner + "@turn" + g.getOutcome().getLastTurnNumber();
     }
 
+    /** Short stable hash of a trace's turns strictly after fromTurn (for cross-run comparison). */
+    private static String traceHash(Map<Integer, List<String>> trace, int fromTurn) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            for (Map.Entry<Integer, List<String>> e : trace.entrySet()) { // TreeMap: sorted
+                if (e.getKey() <= fromTurn) {
+                    continue;
+                }
+                md.update(String.valueOf(e.getKey()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                for (String s : e.getValue()) {
+                    md.update(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            byte[] h = md.digest();
+            for (int i = 0; i < 8; i++) {
+                sb.append(String.format("%02x", h[i]));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "hash_error";
+        }
+    }
+
     // ------------------------------------------------------------------
     // RNG snapshot (java.util.Random is Serializable)
     // ------------------------------------------------------------------
@@ -499,6 +609,16 @@ public final class ForkFidelityCheck {
         String notes = "";
         int mainTurns;
         int forkTurns;
+        String mainTraceHash = "";
+        String forkTraceHash = "";
+        // chain mode (F2 = copy of F1)
+        String chainStatus;
+        boolean chainStaticMatch;
+        long copy2Ms;
+        int chainDivergenceTurn = -1;
+        String chainSample;
+        String chainOutcome = "";
+        String chainTraceHash = "";
 
         GameResult(long seed) {
             this.seed = seed;
@@ -506,6 +626,7 @@ public final class ForkFidelityCheck {
 
         String summaryLine() {
             return status + (divergenceTurn >= 0 ? "@turn" + divergenceTurn : "")
+                    + (chainStatus != null ? " " + chainStatus + (chainDivergenceTurn >= 0 ? "@turn" + chainDivergenceTurn : "") : "")
                     + " copy=" + copyMs + "ms main=" + mainOutcome + " fork=" + forkOutcome;
         }
 
@@ -522,6 +643,16 @@ public final class ForkFidelityCheck {
                     + ",\"mainOutcome\":\"" + esc(mainOutcome) + '"'
                     + ",\"forkOutcome\":\"" + esc(forkOutcome) + '"'
                     + ",\"divergenceSample\":\"" + esc(divergenceSample) + '"'
+                    + ",\"mainTraceHash\":\"" + mainTraceHash + '"'
+                    + ",\"forkTraceHash\":\"" + forkTraceHash + '"'
+                    + (chainStatus == null ? "" :
+                        ",\"chainStatus\":\"" + chainStatus + '"'
+                        + ",\"chainStaticMatch\":" + chainStaticMatch
+                        + ",\"copy2Ms\":" + copy2Ms
+                        + ",\"chainDivergenceTurn\":" + chainDivergenceTurn
+                        + ",\"chainOutcome\":\"" + esc(chainOutcome) + '"'
+                        + ",\"chainSample\":\"" + esc(chainSample) + '"'
+                        + ",\"chainTraceHash\":\"" + chainTraceHash + '"')
                     + ",\"notes\":\"" + esc(notes) + "\"}";
         }
 
