@@ -83,6 +83,10 @@ public final class ForkFidelityCheck {
         // Sensitivity check: perturb the fork (1 life) after the static compare; the
         // trajectory detector MUST then report divergence, or the harness is broken.
         boolean perturb = params.containsKey("perturb");
+        // Discriminator: replay the fork with a DIFFERENT RNG instead of the clone.
+        // If the divergence rate matches the same-RNG rate, RNG stream identity isn't
+        // the binding factor and object-identity effects (hash iteration order) are.
+        boolean freshRng = params.containsKey("freshrng");
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
@@ -103,7 +107,7 @@ public final class ForkFidelityCheck {
         Map<String, Integer> tally = new TreeMap<>();
         try (PrintWriter out = new PrintWriter(new FileWriter(outPath, true))) {
             for (int i = 0; i < nGames; i++) {
-                GameResult r = runOneGame(rules, type, decks, baseSeed + i, perturb);
+                GameResult r = runOneGame(rules, type, decks, baseSeed + i, perturb, freshRng);
                 out.println(r.toJson());
                 out.flush();
                 tally.merge(r.status, 1, Integer::sum);
@@ -136,11 +140,11 @@ public final class ForkFidelityCheck {
         return params;
     }
 
-    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb) {
+    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng) {
         GameResult result = new GameResult(seed);
         // Fork turn drawn from a meta-RNG so it never perturbs game randomness.
         Random meta = new Random(seed * 6364136223846793005L + 1442695040888963407L);
-        result.forkTurn = MIN_FORK_TURN + meta.nextInt(MAX_FORK_TURN - MIN_FORK_TURN + 1);
+        result.plannedForkTurn = MIN_FORK_TURN + meta.nextInt(MAX_FORK_TURN - MIN_FORK_TURN + 1);
 
         MyRandom.setRandom(new Random(seed));
 
@@ -157,6 +161,7 @@ public final class ForkFidelityCheck {
         Game game = mc.createGame();
         Monitor monitor = new Monitor(game, result);
         monitor.perturb = perturb;
+        monitor.freshRng = freshRng;
         game.subscribeToEvents(monitor);
 
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -245,6 +250,7 @@ public final class ForkFidelityCheck {
         ScheduledExecutorService watchdogs;
         boolean forked = false;
         boolean perturb = false;
+        boolean freshRng = false;
 
         Monitor(Game game, GameResult result) {
             this.game = game;
@@ -262,7 +268,15 @@ public final class ForkFidelityCheck {
                 return;
             }
             PhaseHandler ph = game.getPhaseHandler();
-            if (ph.getTurn() != result.forkTurn || !game.getStack().isEmpty()) {
+            if (ph.getTurn() < result.plannedForkTurn || !game.getStack().isEmpty()) {
+                return;
+            }
+            // Only fork when the ACTIVE player holds priority: GameCopier resets the
+            // copy's priority to the active player, so forking at an opponent-priority
+            // window would hand the active player an extra action in the fork.
+            // If the planned turn's MAIN1 offers no such window, the fork slips to a
+            // later turn (recorded via forkTurn vs plannedForkTurn).
+            if (ph.getPriorityPlayer() != ph.getPlayerTurn()) {
                 return;
             }
             // Drain pending triggers exactly the way the priority loop is about to
@@ -279,6 +293,7 @@ public final class ForkFidelityCheck {
                 return;
             }
             forked = true;
+            result.forkTurn = ph.getTurn();
             doFork();
         }
 
@@ -315,7 +330,7 @@ public final class ForkFidelityCheck {
             copy.getPhaseHandler().devResumeAtPriority();
             copy.copyLastState();
 
-            MyRandom.setRandom(restoreRng(rngState));
+            MyRandom.setRandom(freshRng ? new Random(result.seed * 31 + 7) : restoreRng(rngState));
             ScheduledFuture<?> forkClock = watchdogs.schedule(
                     () -> copy.setGameOver(GameEndReason.Draw), FORK_TIMEOUT_S, TimeUnit.SECONDS);
             try {
@@ -472,7 +487,8 @@ public final class ForkFidelityCheck {
     // ------------------------------------------------------------------
     private static final class GameResult {
         final long seed;
-        int forkTurn;
+        int plannedForkTurn;
+        int forkTurn = -1;
         String status; // clean | divergence | static_mismatch | outcome_mismatch | copy_crash | resume_crash | no_fork | main_crash_or_hang
         boolean staticMatch;
         long copyMs;
@@ -495,6 +511,7 @@ public final class ForkFidelityCheck {
 
         String toJson() {
             return "{\"seed\":" + seed
+                    + ",\"plannedForkTurn\":" + plannedForkTurn
                     + ",\"forkTurn\":" + forkTurn
                     + ",\"status\":\"" + status + '"'
                     + ",\"staticMatch\":" + staticMatch
