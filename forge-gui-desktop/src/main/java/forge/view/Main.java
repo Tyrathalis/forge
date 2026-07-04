@@ -81,6 +81,10 @@ public final class Main {
                 ForkFidelityCheck.run(args);
                 break;
 
+            case "census":
+                CensusRun.run(args);
+                break;
+
             case "parse":
                 CardReaderExperiments.parseAllCards(args);
                 break;
