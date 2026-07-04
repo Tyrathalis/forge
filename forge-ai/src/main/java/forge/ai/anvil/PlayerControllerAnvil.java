@@ -4,9 +4,6 @@ import com.google.common.collect.Lists;
 
 import forge.LobbyPlayer;
 import forge.ai.AiPlayDecision;
-import forge.ai.ComputerUtilAbility;
-import forge.ai.ComputerUtilCard;
-import forge.ai.ComputerUtilCost;
 import forge.game.Game;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
@@ -60,27 +57,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_PRIORITY)) {
             return super.chooseSpellAbilityToPlay();
         }
-        List<SpellAbility> options = Lists.newArrayList();
-        CardCollection cards = ComputerUtilCard.dedupeCards(ComputerUtilAbility.getAvailableCards(getGame(), player));
-        for (SpellAbility sa : ComputerUtilAbility.getSpellAbilities(cards, player)) {
-            sa.setActivatingPlayer(player);
-            if (!sa.isLandAbility() && sa.canPlay() && ComputerUtilCost.canPayCost(sa, player, false)) {
-                options.add(sa);
-            }
-        }
-        CardCollectionView lands = ComputerUtilAbility.getAvailableLandsToPlay(getGame(), player);
-        if (lands != null) {
-            for (Card land : lands) {
-                for (SpellAbility sa : land.getAllPossibleAbilities(player, true)) {
-                    if (sa.isLandAbility()) {
-                        sa.setActivatingPlayer(player);
-                        if (sa.canPlay()) {
-                            options.add(sa);
-                        }
-                    }
-                }
-            }
-        }
+        List<SpellAbility> options = AnvilOptions.priorityOptions(getGame(), player);
 
         // Index 0 = pass; one round-trip per priority window regardless.
         List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
