@@ -83,7 +83,12 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
 
         // Index 0 = pass; one round-trip per priority window regardless.
-        int pick = bridge.selectOne(TAG_PRIORITY, options.size() + 1);
+        List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
+        labels.add("pass");
+        for (SpellAbility sa : options) {
+            labels.add(Census.str(sa));
+        }
+        int pick = bridge.selectOne(TAG_PRIORITY, labels);
         if (pick == 0) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                     "by", "bridge", "options", options.size(), "pick", "pass");
@@ -171,7 +176,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_NUMBER)) {
             return super.chooseNumber(sa, title, values, relatedPlayer);
         }
-        int v = values.get(bridge.selectOne(TAG_NUMBER, values.size()));
+        List<String> valueLabels = Lists.newArrayListWithCapacity(values.size());
+        for (Integer n : values) {
+            valueLabels.add(String.valueOf(n));
+        }
+        int v = values.get(bridge.selectOne(TAG_NUMBER, valueLabels));
         Census.rec(getGame(), getPlayer(), "chooseNumber", "by", "bridge", "v", v);
         return v;
     }
