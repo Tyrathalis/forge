@@ -3,8 +3,12 @@ package forge.view;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -17,6 +21,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import forge.ai.AiProfileUtil;
 import forge.ai.anvil.AnvilBridge;
 import forge.ai.anvil.AnvilLobbyPlayer;
 import forge.ai.anvil.Census;
@@ -41,10 +46,17 @@ import forge.util.MyRandom;
  * (recycling = chunk boundary). Seeds: SplitMix64(seed_base ^ index), same
  * function as the Python orchestrator (anvil/bridge/harness/seeds.py).
  *
- * Syntax: forge anvil -d <deck1> <deck2> [-f <format>] [-b local-random|grpc:host:port]
+ * Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <gamesPerPair>])
+ *   [-f <format>] [-b local-random|grpc:host:port]
  *   [-tags <csv>] [-census <out.jsonl>] [-obs <out.zst>]
  *   chunk mode:  -range <start> <count> -seedbase <long> [-results <games.jsonl>] [-stopfile <path>]
  *   legacy mode: [-n <games>] [-s <baseSeed>]
+ *
+ * -pairs: one deck pair per line, tab-separated (deck names contain spaces);
+ * game index i plays pair (i / gpp) % nPairs. AI personalities are drawn
+ * per seat from the game seed (sorted profile list), so corpus provenance is
+ * a pure function of (seedbase, index) — logged in results JSONL and the
+ * observation game record.
  */
 public final class AnvilRun {
     private static final int DRAW_CLOCK_S = 300;
@@ -70,8 +82,10 @@ public final class AnvilRun {
         FModel.initialize(null, null);
 
         Map<String, List<String>> params = parseParams(args);
-        if (params == null || !params.containsKey("d") || params.get("d").size() != 2) {
-            System.out.println("Syntax: forge anvil -d <deck1> <deck2> [-f <format>] "
+        boolean fixedPair = params != null && params.containsKey("d") && params.get("d").size() == 2;
+        boolean pairFile = params != null && params.containsKey("pairs");
+        if (params == null || fixedPair == pairFile) {
+            System.out.println("Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <n>]) [-f <format>] "
                     + "[-b local-random|grpc:host:port] [-tags <csv>] [-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-n <games>] [-s <baseSeed>]");
@@ -117,19 +131,54 @@ public final class AnvilRun {
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
 
-        List<Deck> decks = new ArrayList<>();
-        for (String deckName : params.get("d")) {
-            Deck d = SimulateMatch.deckFromCommandLineParameter(deckName, type);
-            if (d == null) {
-                System.out.println("Could not load deck: " + deckName);
-                return;
+        // Deck schedule: fixed pair (-d) or index-mapped pairs file (-pairs).
+        List<String[]> pairNames = new ArrayList<>();
+        int gamesPerPair = params.containsKey("gpp")
+                ? Integer.parseInt(params.get("gpp").get(0)) : 5;
+        if (fixedPair) {
+            pairNames.add(new String[] { params.get("d").get(0), params.get("d").get(1) });
+            gamesPerPair = Integer.MAX_VALUE;
+        } else {
+            try {
+                for (String line : Files.readAllLines(Paths.get(params.get("pairs").get(0)),
+                        StandardCharsets.UTF_8)) {
+                    if (line.isEmpty() || line.startsWith("#")) {
+                        continue;
+                    }
+                    String[] pq = line.split("\t");
+                    if (pq.length != 2) {
+                        System.err.println("FATAL: bad pairs line (need 2 tab-separated decks): " + line);
+                        System.exit(2);
+                    }
+                    pairNames.add(pq);
+                }
+            } catch (java.io.IOException e) {
+                System.err.println("FATAL: cannot read pairs file: " + e);
+                System.exit(2);
             }
-            decks.add(d);
+            if (pairNames.isEmpty()) {
+                System.err.println("FATAL: pairs file has no pairs");
+                System.exit(2);
+            }
+        }
+        Map<String, Deck> deckCache = new HashMap<>();
+
+        // AI personalities (ADR-0004: corpus is personality-randomized). Sorted
+        // so the seed->profile map is stable across filesystems.
+        List<String> profiles = new ArrayList<>(AiProfileUtil.getAvailableProfiles());
+        Collections.sort(profiles);
+        if (profiles.isEmpty()) {
+            // Profiles are corpus provenance — an empty list would silently run
+            // every seat on enum defaults while the log claims randomization.
+            System.err.println("FATAL: no AI profiles found (AI_PROFILE_DIR missing?)");
+            System.exit(2);
         }
 
-        System.out.printf("Anvil worker: games [%d,%d), %s, seedbase=%s, bridge=%s, tags=%s%n",
+        System.out.printf("Anvil worker: games [%d,%d), %s, seedbase=%s, bridge=%s, tags=%s, "
+                        + "pairs=%d gpp=%s, profiles=%s%n",
                 rangeStart, rangeStart + nGames, type,
-                seedBase != null ? seedBase : ("legacy:" + legacyBaseSeed), bridgeMode, tags);
+                seedBase != null ? seedBase : ("legacy:" + legacyBaseSeed), bridgeMode, tags,
+                pairNames.size(), fixedPair ? "-" : String.valueOf(gamesPerPair), profiles);
 
         Map<String, Integer> tally = new TreeMap<>();
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -177,12 +226,32 @@ public final class AnvilRun {
                         ? splitmix64(seedBase + idx * 0x9E3779B97F4A7C15L) : legacyBaseSeed + idx;
                 MyRandom.setRandom(new Random(seed));
 
+                String[] pair = pairNames.get((int) ((idx / (long) gamesPerPair) % pairNames.size()));
+                List<Deck> decks = new ArrayList<>();
+                for (String deckName : pair) {
+                    Deck d = deckCache.computeIfAbsent(deckName,
+                            n -> SimulateMatch.deckFromCommandLineParameter(n, type));
+                    if (d == null) {
+                        System.err.println("FATAL: could not load deck: " + deckName);
+                        System.exit(2);
+                    }
+                    decks.add(d);
+                }
+
+                // Per-seat personality: pure function of the game seed, so the
+                // corpus expert mix reproduces from (seedbase, index) alone.
+                String[] seatProfiles = new String[decks.size()];
                 List<RegisteredPlayer> pp = new ArrayList<>();
                 for (int j = 0; j < decks.size(); j++) {
                     Deck d = decks.get(j);
+                    seatProfiles[j] = profiles.get((int) Long.remainderUnsigned(
+                            splitmix64(seed + (j + 1) * 0x9E3779B97F4A7C15L), profiles.size()));
                     RegisteredPlayer rp = type.equals(GameType.Commander)
                             ? RegisteredPlayer.forCommander(d) : new RegisteredPlayer(d);
-                    rp.setPlayer(new AnvilLobbyPlayer("Anvil(" + (j + 1) + ")-" + d.getName(), bridge, tags));
+                    AnvilLobbyPlayer lp = new AnvilLobbyPlayer(
+                            "Anvil(" + (j + 1) + ")-" + d.getName(), bridge, tags);
+                    lp.setAiProfile(seatProfiles[j]);
+                    rp.setPlayer(lp);
                     pp.add(rp);
                 }
 
@@ -230,7 +299,9 @@ public final class AnvilRun {
                             + ",\"status\":\"" + status + "\""
                             + ",\"winner\":" + (winner == null ? "null" : "\"" + winner.replace("\"", "'") + "\"")
                             + ",\"turns\":" + turns + ",\"ms\":" + wallMs
-                            + ",\"draw_clock\":" + drawClockHit[0] + "}");
+                            + ",\"draw_clock\":" + drawClockHit[0]
+                            + ",\"decks\":[\"" + jstr(pair[0]) + "\",\"" + jstr(pair[1]) + "\"]"
+                            + ",\"profiles\":[\"" + jstr(seatProfiles[0]) + "\",\"" + jstr(seatProfiles[1]) + "\"]}");
                     results.flush();
                 }
                 System.out.printf("game %d seed=%d -> %s (%d turns)%n", idx, seed, status, turns);
@@ -252,6 +323,10 @@ public final class AnvilRun {
         tally.forEach((k, v) -> System.out.printf("%-24s %d%n", k, v));
         System.out.printf("wall=%ds%n", wallS);
         System.out.flush();
+    }
+
+    private static String jstr(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static Map<String, List<String>> parseParams(String[] args) {
