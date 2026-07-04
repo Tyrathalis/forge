@@ -71,8 +71,16 @@ public final class AnvilRun {
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
             bridge = new LocalRandomBridge();
+        } else if (bridgeMode.startsWith("grpc:")) {
+            String[] hp = bridgeMode.substring(5).split(":");
+            forge.anvil.GrpcBridge grpc = new forge.anvil.GrpcBridge(
+                    hp[0], Integer.parseInt(hp[1]), "anvil-worker", "56c96c6c40");
+            if (!grpc.serverBridgedTags().isEmpty()) {
+                tags = grpc.serverBridgedTags(); // server-driven coverage
+            }
+            bridge = grpc;
         } else {
-            System.out.println("Unknown bridge mode (grpc arrives with the Python server): " + bridgeMode);
+            System.out.println("Unknown bridge mode: " + bridgeMode);
             return;
         }
 
@@ -119,6 +127,8 @@ public final class AnvilRun {
                 Match mc = new Match(rules, pp, "Anvil");
                 Game game = mc.createGame();
                 Census.startGame(i, seed);
+                long gameT0 = System.currentTimeMillis();
+                bridge.gameStart("g" + i, seed);
                 ScheduledFuture<?> drawClock = watchdogs.schedule(
                         () -> game.setGameOver(GameEndReason.Draw), DRAW_CLOCK_S, TimeUnit.SECONDS);
                 String status;
@@ -136,6 +146,7 @@ public final class AnvilRun {
                         ? game.getOutcome().getWinningLobbyPlayer().getName() : null;
                 int turns = game.getOutcome() != null ? game.getOutcome().getLastTurnNumber() : -1;
                 Census.endGame(winner, turns);
+                bridge.gameEnd("g" + i, winner, turns, System.currentTimeMillis() - gameT0);
                 tally.merge(status, 1, Integer::sum);
                 System.out.printf("game %d/%d seed=%d -> %s (%d turns)%n", i + 1, nGames, seed, status, turns);
             }
@@ -143,6 +154,7 @@ public final class AnvilRun {
             e.printStackTrace();
         } finally {
             Census.close();
+            bridge.close();
             watchdogs.shutdownNow();
         }
 
