@@ -21,6 +21,7 @@ import forge.ai.anvil.AnvilBridge;
 import forge.ai.anvil.AnvilLobbyPlayer;
 import forge.ai.anvil.Census;
 import forge.ai.anvil.LocalRandomBridge;
+import forge.ai.anvil.Obs;
 import forge.ai.anvil.PlayerControllerAnvil;
 import forge.deck.Deck;
 import forge.game.Game;
@@ -41,7 +42,7 @@ import forge.util.MyRandom;
  * function as the Python orchestrator (anvil/bridge/harness/seeds.py).
  *
  * Syntax: forge anvil -d <deck1> <deck2> [-f <format>] [-b local-random|grpc:host:port]
- *   [-tags <csv>] [-census <out.jsonl>]
+ *   [-tags <csv>] [-census <out.jsonl>] [-obs <out.zst>]
  *   chunk mode:  -range <start> <count> -seedbase <long> [-results <games.jsonl>] [-stopfile <path>]
  *   legacy mode: [-n <games>] [-s <baseSeed>]
  */
@@ -71,7 +72,7 @@ public final class AnvilRun {
         Map<String, List<String>> params = parseParams(args);
         if (params == null || !params.containsKey("d") || params.get("d").size() != 2) {
             System.out.println("Syntax: forge anvil -d <deck1> <deck2> [-f <format>] "
-                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-census <out.jsonl>] "
+                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
@@ -154,6 +155,16 @@ public final class AnvilRun {
             if (params.containsKey("census")) {
                 Census.open(params.get("census").get(0));
             }
+            if (params.containsKey("obs")) {
+                try {
+                    Obs.open(params.get("obs").get(0));
+                } catch (java.io.IOException e) {
+                    // The observation log is the corpus artifact — same rule as
+                    // the results file: fail loud, never play unaccounted games.
+                    System.err.println("FATAL: cannot open obs file: " + e);
+                    System.exit(2);
+                }
+            }
             for (int g = 0; g < nGames; g++) {
                 if (stopFile != null && stopFile.exists()) {
                     stopped = true;
@@ -178,6 +189,7 @@ public final class AnvilRun {
                 Match mc = new Match(rules, pp, "Anvil");
                 Game game = mc.createGame();
                 Census.startGame(idx, seed);
+                Obs.startGame(idx, seed, game, type.toString());
                 long gameT0 = System.currentTimeMillis();
                 bridge.gameStart("g" + idx, seed);
                 final boolean[] drawClockHit = {false};
@@ -201,6 +213,16 @@ public final class AnvilRun {
                         ? game.getOutcome().getWinningLobbyPlayer().getName() : null;
                 int turns = game.getOutcome() != null ? game.getOutcome().getLastTurnNumber() : -1;
                 Census.endGame(winner, turns);
+                int winnerIdx = -1;
+                if (winner != null) {
+                    for (int wi = 0; wi < game.getPlayers().size(); wi++) {
+                        if (game.getPlayers().get(wi).getName().equals(winner)) {
+                            winnerIdx = wi;
+                            break;
+                        }
+                    }
+                }
+                Obs.endGame(status, winnerIdx, turns, wallMs, drawClockHit[0]);
                 bridge.gameEnd("g" + idx, winner, turns, wallMs);
                 tally.merge(status, 1, Integer::sum);
                 if (results != null) {
@@ -220,6 +242,7 @@ public final class AnvilRun {
                 results.close();
             }
             Census.close();
+            Obs.close();
             bridge.close();
             watchdogs.shutdownNow();
         }

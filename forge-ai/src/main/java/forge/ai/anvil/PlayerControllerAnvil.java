@@ -88,10 +88,12 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         for (SpellAbility sa : options) {
             labels.add(Census.str(sa));
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "chooseSpellAbilityToPlay", labels);
         int pick = bridge.selectOne(TAG_PRIORITY, labels);
         if (pick == 0) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                     "by", "bridge", "options", options.size(), "pick", "pass");
+            Obs.ret(getGame(), obsSeq, null);
             return null;
         }
         SpellAbility chosen = options.get(pick - 1);
@@ -100,10 +102,12 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             // veto rate is visible (it biases the pick toward AI-playable).
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                     "by", "bridge", "options", options.size(), "pick", Census.str(chosen), "veto", true);
+            Obs.ret(getGame(), obsSeq, null);
             return null;
         }
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                 "by", "bridge", "options", options.size(), "pick", Census.str(chosen));
+        Obs.ret(getGame(), obsSeq, chosen);
         return Lists.newArrayList(chosen);
     }
 
@@ -112,8 +116,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_MULLIGAN)) {
             return super.mulliganKeepHand(firstPlayer, cardsToReturn);
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "mulliganKeepHand", null);
         boolean keep = bridge.bool(TAG_MULLIGAN);
         Census.rec(getGame(), getPlayer(), "mulliganKeepHand", "by", "bridge", "keep", keep);
+        Obs.ret(getGame(), obsSeq, keep);
         return keep;
     }
 
@@ -122,12 +128,18 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_TUCK)) {
             return super.tuckCardsViaMulligan(hand, cardsToReturn);
         }
+        List<String> handLabels = Lists.newArrayListWithCapacity(hand.size());
+        for (Card c : hand) {
+            handLabels.add(Census.str(c));
+        }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "tuckCardsViaMulligan", handLabels);
         int[] picks = bridge.selectK(TAG_TUCK, hand.size(), cardsToReturn);
         CardCollection tuck = new CardCollection();
         for (int i : picks) {
             tuck.add(hand.get(i));
         }
         Census.rec(getGame(), getPlayer(), "tuckCardsViaMulligan", "by", "bridge", "n", tuck.size());
+        Obs.ret(getGame(), obsSeq, tuck);
         return tuck;
     }
 
@@ -136,8 +148,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_TRIGGER)) {
             return super.confirmTrigger(sa);
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "confirmTrigger", null, "sa", Census.str(sa));
         boolean yes = bridge.bool(TAG_TRIGGER);
         Census.rec(getGame(), getPlayer(), "confirmTrigger", "by", "bridge", "yes", yes);
+        Obs.ret(getGame(), obsSeq, yes);
         return yes;
     }
 
@@ -146,8 +160,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (isMandatory || !bridged(TAG_TRIGGER)) {
             return super.playTrigger(host, wrapperAbility, isMandatory);
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "playTrigger", null,
+                "host", Census.str(host), "wrapperAbility", Census.str(wrapperAbility));
         boolean yes = bridge.bool(TAG_TRIGGER);
         Census.rec(getGame(), getPlayer(), "playTrigger", "by", "bridge", "yes", yes);
+        Obs.ret(getGame(), obsSeq, yes);
         return yes && super.playTrigger(host, wrapperAbility, true);
     }
 
@@ -156,8 +173,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_BINARY)) {
             return super.chooseBinary(sa, question, kindOfChoice, defaultVal);
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "chooseBinary", null,
+                "question", question, "kind", String.valueOf(kindOfChoice));
         boolean v = bridge.bool(TAG_BINARY);
         Census.rec(getGame(), getPlayer(), "chooseBinary", "by", "bridge", "v", v);
+        Obs.ret(getGame(), obsSeq, v);
         return v;
     }
 
@@ -166,8 +186,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_NUMBER)) {
             return super.chooseNumber(sa, title, min, max);
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "chooseNumber", null,
+                "title", title, "min", min, "max", max);
         int v = bridge.intInRange(TAG_NUMBER, min, max);
         Census.rec(getGame(), getPlayer(), "chooseNumber", "by", "bridge", "v", v);
+        Obs.ret(getGame(), obsSeq, v);
         return v;
     }
 
@@ -180,8 +203,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         for (Integer n : values) {
             valueLabels.add(String.valueOf(n));
         }
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "chooseNumber", valueLabels, "title", title);
         int v = values.get(bridge.selectOne(TAG_NUMBER, valueLabels));
         Census.rec(getGame(), getPlayer(), "chooseNumber", "by", "bridge", "v", v);
+        Obs.ret(getGame(), obsSeq, v);
         return v;
     }
 }

@@ -50,654 +50,955 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public SpellAbility getAbilityToPlay(Card hostCard, List<SpellAbility> abilities, ITriggerEvent triggerEvent) {
         Census.rec(getGame(), getPlayer(), "getAbilityToPlay", "hostCard", Census.str(hostCard), "abilities", Census.sz(abilities));
-        return super.getAbilityToPlay(hostCard, abilities, triggerEvent);
+        long __s = Obs.dec(getGame(), getPlayer(), "getAbilityToPlay", "hostCard", Census.str(hostCard), "abilities", Census.sz(abilities));
+        SpellAbility __r = super.getAbilityToPlay(hostCard, abilities, triggerEvent);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void playSpellAbilityNoStack(SpellAbility effectSA, boolean mayChoseNewTargets) {
         Census.rec(getGame(), getPlayer(), "playSpellAbilityNoStack", "effectSA", Census.str(effectSA), "mayChoseNewTargets", mayChoseNewTargets);
+        Obs.dec(getGame(), getPlayer(), "playSpellAbilityNoStack", "effectSA", Census.str(effectSA), "mayChoseNewTargets", mayChoseNewTargets);
         super.playSpellAbilityNoStack(effectSA, mayChoseNewTargets);
     }
 
     @Override
     public List<SpellAbility> orderSimultaneousSa(List<SpellAbility> activePlayerSAs) {
         Census.rec(getGame(), getPlayer(), "orderSimultaneousSa", "activePlayerSAs", Census.sz(activePlayerSAs));
-        return super.orderSimultaneousSa(activePlayerSAs);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderSimultaneousSa", "activePlayerSAs", Census.sz(activePlayerSAs));
+        List<SpellAbility> __r = super.orderSimultaneousSa(activePlayerSAs);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void orderAndPlaySimultaneousSa(List<SpellAbility> activePlayerSAs) {
         Census.rec(getGame(), getPlayer(), "orderAndPlaySimultaneousSa", "activePlayerSAs", Census.sz(activePlayerSAs));
+        Obs.dec(getGame(), getPlayer(), "orderAndPlaySimultaneousSa", "activePlayerSAs", Census.sz(activePlayerSAs));
         super.orderAndPlaySimultaneousSa(activePlayerSAs);
     }
 
     @Override
     public boolean playTrigger(Card host, WrappedAbility wrapperAbility, boolean isMandatory) {
         Census.rec(getGame(), getPlayer(), "playTrigger", "host", Census.str(host), "wrapperAbility", Census.str(wrapperAbility), "isMandatory", isMandatory);
-        return super.playTrigger(host, wrapperAbility, isMandatory);
+        long __s = Obs.dec(getGame(), getPlayer(), "playTrigger", "host", Census.str(host), "wrapperAbility", Census.str(wrapperAbility), "isMandatory", isMandatory);
+        boolean __r = super.playTrigger(host, wrapperAbility, isMandatory);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean playSaFromPlayEffect(SpellAbility tgtSA) {
         Census.rec(getGame(), getPlayer(), "playSaFromPlayEffect", "tgtSA", Census.str(tgtSA));
-        return super.playSaFromPlayEffect(tgtSA);
+        long __s = Obs.dec(getGame(), getPlayer(), "playSaFromPlayEffect", "tgtSA", Census.str(tgtSA));
+        boolean __r = super.playSaFromPlayEffect(tgtSA);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<PaperCard> sideboard(Deck deck, GameType gameType, String message) {
         Census.rec(getGame(), getPlayer(), "sideboard", "message", message);
-        return super.sideboard(deck, gameType, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "sideboard", "message", message);
+        List<PaperCard> __r = super.sideboard(deck, gameType, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<PaperCard> chooseCardsYouWonToAddToDeck(List<PaperCard> losses) {
         Census.rec(getGame(), getPlayer(), "chooseCardsYouWonToAddToDeck", "losses", Census.sz(losses));
-        return super.chooseCardsYouWonToAddToDeck(losses);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsYouWonToAddToDeck", "losses", Census.sz(losses));
+        List<PaperCard> __r = super.chooseCardsYouWonToAddToDeck(losses);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Map<Card, Integer> assignCombatDamage(Card attacker, CardCollectionView blockers, CardCollectionView remaining, int damageDealt, GameEntity defender, boolean overrideOrder) {
         Census.rec(getGame(), getPlayer(), "assignCombatDamage", "attacker", Census.str(attacker), "blockers", Census.sz(blockers), "remaining", Census.sz(remaining), "damageDealt", damageDealt, "defender", Census.str(defender), "overrideOrder", overrideOrder);
-        return super.assignCombatDamage(attacker, blockers, remaining, damageDealt, defender, overrideOrder);
+        long __s = Obs.dec(getGame(), getPlayer(), "assignCombatDamage", "attacker", Census.str(attacker), "blockers", Census.sz(blockers), "remaining", Census.sz(remaining), "damageDealt", damageDealt, "defender", Census.str(defender), "overrideOrder", overrideOrder);
+        Map<Card, Integer> __r = super.assignCombatDamage(attacker, blockers, remaining, damageDealt, defender, overrideOrder);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Map<GameEntity, Integer> divideShield(Card effectSource, Map<GameEntity, Integer> affected, int shieldAmount) {
         Census.rec(getGame(), getPlayer(), "divideShield", "effectSource", Census.str(effectSource), "affected", Census.sz(affected), "shieldAmount", shieldAmount);
-        return super.divideShield(effectSource, affected, shieldAmount);
+        long __s = Obs.dec(getGame(), getPlayer(), "divideShield", "effectSource", Census.str(effectSource), "affected", Census.sz(affected), "shieldAmount", shieldAmount);
+        Map<GameEntity, Integer> __r = super.divideShield(effectSource, affected, shieldAmount);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Map<Byte, Integer> specifyManaCombo(SpellAbility sa, ColorSet colorSet, int manaAmount, boolean different) {
         Census.rec(getGame(), getPlayer(), "specifyManaCombo", "sa", Census.str(sa), "manaAmount", manaAmount, "different", different);
-        return super.specifyManaCombo(sa, colorSet, manaAmount, different);
+        long __s = Obs.dec(getGame(), getPlayer(), "specifyManaCombo", "sa", Census.str(sa), "manaAmount", manaAmount, "different", different);
+        Map<Byte, Integer> __r = super.specifyManaCombo(sa, colorSet, manaAmount, different);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView choosePermanentsToSacrifice(SpellAbility sa, int min, int max, CardCollectionView validTargets, String message) {
         Census.rec(getGame(), getPlayer(), "choosePermanentsToSacrifice", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
-        return super.choosePermanentsToSacrifice(sa, min, max, validTargets, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "choosePermanentsToSacrifice", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
+        CardCollectionView __r = super.choosePermanentsToSacrifice(sa, min, max, validTargets, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView choosePermanentsToDestroy(SpellAbility sa, int min, int max, CardCollectionView validTargets, String message) {
         Census.rec(getGame(), getPlayer(), "choosePermanentsToDestroy", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
-        return super.choosePermanentsToDestroy(sa, min, max, validTargets, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "choosePermanentsToDestroy", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
+        CardCollectionView __r = super.choosePermanentsToDestroy(sa, min, max, validTargets, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Integer announceRequirements(SpellAbility ability, int min, int max, String announce) {
         Census.rec(getGame(), getPlayer(), "announceRequirements", "ability", Census.str(ability), "min", min, "max", max, "announce", announce);
-        return super.announceRequirements(ability, min, max, announce);
+        long __s = Obs.dec(getGame(), getPlayer(), "announceRequirements", "ability", Census.str(ability), "min", min, "max", max, "announce", announce);
+        Integer __r = super.announceRequirements(ability, min, max, announce);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public TargetChoices chooseNewTargetsFor(SpellAbility ability, Predicate<GameObject> filter, boolean optional) {
         Census.rec(getGame(), getPlayer(), "chooseNewTargetsFor", "ability", Census.str(ability), "optional", optional);
-        return super.chooseNewTargetsFor(ability, filter, optional);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseNewTargetsFor", "ability", Census.str(ability), "optional", optional);
+        TargetChoices __r = super.chooseNewTargetsFor(ability, filter, optional);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean chooseTargetsFor(SpellAbility currentAbility) {
         Census.rec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));
-        return super.chooseTargetsFor(currentAbility);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));
+        boolean __r = super.chooseTargetsFor(currentAbility);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Pair<SpellAbilityStackInstance, GameObject> chooseTarget(SpellAbility sa, List<Pair<SpellAbilityStackInstance, GameObject>> allTargets) {
         Census.rec(getGame(), getPlayer(), "chooseTarget", "sa", Census.str(sa), "allTargets", Census.sz(allTargets));
-        return super.chooseTarget(sa, allTargets);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseTarget", "sa", Census.str(sa), "allTargets", Census.sz(allTargets));
+        Pair<SpellAbilityStackInstance, GameObject> __r = super.chooseTarget(sa, allTargets);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean helpPayForAssistSpell(ManaCostBeingPaid cost, SpellAbility sa, int max, int requested) {
         Census.rec(getGame(), getPlayer(), "helpPayForAssistSpell", "sa", Census.str(sa), "max", max, "requested", requested);
-        return super.helpPayForAssistSpell(cost, sa, max, requested);
+        long __s = Obs.dec(getGame(), getPlayer(), "helpPayForAssistSpell", "sa", Census.str(sa), "max", max, "requested", requested);
+        boolean __r = super.helpPayForAssistSpell(cost, sa, max, requested);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Player choosePlayerToAssistPayment(FCollectionView<Player> optionList, SpellAbility sa, String title, int max) {
         Census.rec(getGame(), getPlayer(), "choosePlayerToAssistPayment", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "max", max);
-        return super.choosePlayerToAssistPayment(optionList, sa, title, max);
+        long __s = Obs.dec(getGame(), getPlayer(), "choosePlayerToAssistPayment", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "max", max);
+        Player __r = super.choosePlayerToAssistPayment(optionList, sa, title, max);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsForEffect(CardCollectionView sourceList, SpellAbility sa, String title, int min, int max, boolean isOptional, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForEffect", "sourceList", Census.sz(sourceList), "sa", Census.str(sa), "title", title, "min", min, "max", max, "isOptional", isOptional, "params", Census.sz(params));
-        return super.chooseCardsForEffect(sourceList, sa, title, min, max, isOptional, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForEffect", "sourceList", Census.sz(sourceList), "sa", Census.str(sa), "title", title, "min", min, "max", max, "isOptional", isOptional, "params", Census.sz(params));
+        CardCollectionView __r = super.chooseCardsForEffect(sourceList, sa, title, min, max, isOptional, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollection chooseCardsForEffectMultiple(Map<String, CardCollection> validMap, SpellAbility sa, String title, boolean isOptional) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForEffectMultiple", "validMap", Census.sz(validMap), "sa", Census.str(sa), "title", title, "isOptional", isOptional);
-        return super.chooseCardsForEffectMultiple(validMap, sa, title, isOptional);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForEffectMultiple", "validMap", Census.sz(validMap), "sa", Census.str(sa), "title", title, "isOptional", isOptional);
+        CardCollection __r = super.chooseCardsForEffectMultiple(validMap, sa, title, isOptional);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public <T extends GameEntity> T chooseSingleEntityForEffect(FCollectionView<T> optionList, DelayedReveal delayedReveal, SpellAbility sa, String title, boolean isOptional, Player relatedPlayer, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleEntityForEffect", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
-        return super.chooseSingleEntityForEffect(optionList, delayedReveal, sa, title, isOptional, relatedPlayer, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleEntityForEffect", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
+        T __r = super.chooseSingleEntityForEffect(optionList, delayedReveal, sa, title, isOptional, relatedPlayer, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public <T extends GameEntity> List<T> chooseEntitiesForEffect(FCollectionView<T> optionList, int min, int max, DelayedReveal delayedReveal, SpellAbility sa, String title, Player relatedPlayer, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseEntitiesForEffect", "optionList", Census.sz(optionList), "min", min, "max", max, "sa", Census.str(sa), "title", title, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
-        return super.chooseEntitiesForEffect(optionList, min, max, delayedReveal, sa, title, relatedPlayer, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseEntitiesForEffect", "optionList", Census.sz(optionList), "min", min, "max", max, "sa", Census.str(sa), "title", title, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
+        List<T> __r = super.chooseEntitiesForEffect(optionList, min, max, delayedReveal, sa, title, relatedPlayer, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<SpellAbility> chooseSpellAbilitiesForEffect(List<SpellAbility> spells, SpellAbility sa, String title, int num, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilitiesForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "num", num, "params", Census.sz(params));
-        return super.chooseSpellAbilitiesForEffect(spells, sa, title, num, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSpellAbilitiesForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "num", num, "params", Census.sz(params));
+        List<SpellAbility> __r = super.chooseSpellAbilitiesForEffect(spells, sa, title, num, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public SpellAbility chooseSingleSpellForEffect(List<SpellAbility> spells, SpellAbility sa, String title, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleSpellForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "params", Census.sz(params));
-        return super.chooseSingleSpellForEffect(spells, sa, title, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleSpellForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "params", Census.sz(params));
+        SpellAbility __r = super.chooseSingleSpellForEffect(spells, sa, title, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmAction(SpellAbility sa, PlayerActionConfirmMode mode, String message, List<String> options, Card cardToShow, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "confirmAction", "sa", Census.str(sa), "message", message, "options", Census.sz(options), "cardToShow", Census.str(cardToShow), "params", Census.sz(params));
-        return super.confirmAction(sa, mode, message, options, cardToShow, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmAction", "sa", Census.str(sa), "message", message, "options", Census.sz(options), "cardToShow", Census.str(cardToShow), "params", Census.sz(params));
+        boolean __r = super.confirmAction(sa, mode, message, options, cardToShow, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmBidAction(SpellAbility sa, PlayerActionConfirmMode bidlife, String string, int bid, Player winner) {
         Census.rec(getGame(), getPlayer(), "confirmBidAction", "sa", Census.str(sa), "string", string, "bid", bid, "winner", Census.str(winner));
-        return super.confirmBidAction(sa, bidlife, string, bid, winner);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmBidAction", "sa", Census.str(sa), "string", string, "bid", bid, "winner", Census.str(winner));
+        boolean __r = super.confirmBidAction(sa, bidlife, string, bid, winner);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmReplacementEffect(ReplacementEffect replacementEffect, SpellAbility effectSA, GameEntity affected, String question) {
         Census.rec(getGame(), getPlayer(), "confirmReplacementEffect", "effectSA", Census.str(effectSA), "affected", Census.str(affected), "question", question);
-        return super.confirmReplacementEffect(replacementEffect, effectSA, affected, question);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmReplacementEffect", "effectSA", Census.str(effectSA), "affected", Census.str(affected), "question", question);
+        boolean __r = super.confirmReplacementEffect(replacementEffect, effectSA, affected, question);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmStaticApplication(Card hostCard, PlayerActionConfirmMode mode, String message, String logic) {
         Census.rec(getGame(), getPlayer(), "confirmStaticApplication", "hostCard", Census.str(hostCard), "message", message, "logic", logic);
-        return super.confirmStaticApplication(hostCard, mode, message, logic);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmStaticApplication", "hostCard", Census.str(hostCard), "message", message, "logic", logic);
+        boolean __r = super.confirmStaticApplication(hostCard, mode, message, logic);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmTrigger(WrappedAbility sa) {
         Census.rec(getGame(), getPlayer(), "confirmTrigger", "sa", Census.str(sa));
-        return super.confirmTrigger(sa);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmTrigger", "sa", Census.str(sa));
+        boolean __r = super.confirmTrigger(sa);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Card> exertAttackers(List<Card> attackers) {
         Census.rec(getGame(), getPlayer(), "exertAttackers", "attackers", Census.sz(attackers));
-        return super.exertAttackers(attackers);
+        long __s = Obs.dec(getGame(), getPlayer(), "exertAttackers", "attackers", Census.sz(attackers));
+        List<Card> __r = super.exertAttackers(attackers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Card> enlistAttackers(List<Card> attackers) {
         Census.rec(getGame(), getPlayer(), "enlistAttackers", "attackers", Census.sz(attackers));
-        return super.enlistAttackers(attackers);
+        long __s = Obs.dec(getGame(), getPlayer(), "enlistAttackers", "attackers", Census.sz(attackers));
+        List<Card> __r = super.enlistAttackers(attackers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void declareAttackers(Player attacker, Combat combat) {
         Census.rec(getGame(), getPlayer(), "declareAttackers", "attacker", Census.str(attacker));
+        Obs.dec(getGame(), getPlayer(), "declareAttackers", "attacker", Census.str(attacker));
         super.declareAttackers(attacker, combat);
     }
 
     @Override
     public void declareBlockers(Player defender, Combat combat) {
         Census.rec(getGame(), getPlayer(), "declareBlockers", "defender", Census.str(defender));
+        Obs.dec(getGame(), getPlayer(), "declareBlockers", "defender", Census.str(defender));
         super.declareBlockers(defender, combat);
     }
 
     @Override
     public CardCollection orderBlockers(Card attacker, CardCollection blockers) {
         Census.rec(getGame(), getPlayer(), "orderBlockers", "attacker", Census.str(attacker), "blockers", Census.sz(blockers));
-        return super.orderBlockers(attacker, blockers);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderBlockers", "attacker", Census.str(attacker), "blockers", Census.sz(blockers));
+        CardCollection __r = super.orderBlockers(attacker, blockers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollection orderBlocker(Card attacker, Card blocker, CardCollection oldBlockers) {
         Census.rec(getGame(), getPlayer(), "orderBlocker", "attacker", Census.str(attacker), "blocker", Census.str(blocker), "oldBlockers", Census.sz(oldBlockers));
-        return super.orderBlocker(attacker, blocker, oldBlockers);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderBlocker", "attacker", Census.str(attacker), "blocker", Census.str(blocker), "oldBlockers", Census.sz(oldBlockers));
+        CardCollection __r = super.orderBlocker(attacker, blocker, oldBlockers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollection orderAttackers(Card blocker, CardCollection attackers) {
         Census.rec(getGame(), getPlayer(), "orderAttackers", "blocker", Census.str(blocker), "attackers", Census.sz(attackers));
-        return super.orderAttackers(blocker, attackers);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderAttackers", "blocker", Census.str(blocker), "attackers", Census.sz(attackers));
+        CardCollection __r = super.orderAttackers(blocker, attackers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void reveal(CardCollectionView cards, ZoneType zone, Player owner, String messagePrefix, boolean addMsgSuffix) {
         Census.rec(getGame(), getPlayer(), "reveal", "cards", Census.sz(cards), "owner", Census.str(owner), "messagePrefix", messagePrefix, "addMsgSuffix", addMsgSuffix);
+        Obs.dec(getGame(), getPlayer(), "reveal", "cards", Census.sz(cards), "owner", Census.str(owner), "messagePrefix", messagePrefix, "addMsgSuffix", addMsgSuffix);
         super.reveal(cards, zone, owner, messagePrefix, addMsgSuffix);
     }
 
     @Override
     public void reveal(List<CardView> cards, ZoneType zone, PlayerView owner, String messagePrefix, boolean addMsgSuffix) {
         Census.rec(getGame(), getPlayer(), "reveal", "cards", Census.sz(cards), "messagePrefix", messagePrefix, "addMsgSuffix", addMsgSuffix);
+        Obs.dec(getGame(), getPlayer(), "reveal", "cards", Census.sz(cards), "messagePrefix", messagePrefix, "addMsgSuffix", addMsgSuffix);
         super.reveal(cards, zone, owner, messagePrefix, addMsgSuffix);
     }
 
     @Override
     public void notifyOfValue(SpellAbility saSource, GameObject realtedTarget, String value) {
         Census.rec(getGame(), getPlayer(), "notifyOfValue", "saSource", Census.str(saSource), "value", value);
+        Obs.dec(getGame(), getPlayer(), "notifyOfValue", "saSource", Census.str(saSource), "value", value);
         super.notifyOfValue(saSource, realtedTarget, value);
     }
 
     @Override
     public ImmutablePair<CardCollection, CardCollection> arrangeForScry(CardCollection topN) {
         Census.rec(getGame(), getPlayer(), "arrangeForScry", "topN", Census.sz(topN));
-        return super.arrangeForScry(topN);
+        long __s = Obs.dec(getGame(), getPlayer(), "arrangeForScry", "topN", Census.sz(topN));
+        ImmutablePair<CardCollection, CardCollection> __r = super.arrangeForScry(topN);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public ImmutablePair<CardCollection, CardCollection> arrangeForSurveil(CardCollection topN) {
         Census.rec(getGame(), getPlayer(), "arrangeForSurveil", "topN", Census.sz(topN));
-        return super.arrangeForSurveil(topN);
+        long __s = Obs.dec(getGame(), getPlayer(), "arrangeForSurveil", "topN", Census.sz(topN));
+        ImmutablePair<CardCollection, CardCollection> __r = super.arrangeForSurveil(topN);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean willPutCardOnTop(Card c) {
         Census.rec(getGame(), getPlayer(), "willPutCardOnTop", "c", Census.str(c));
-        return super.willPutCardOnTop(c);
+        long __s = Obs.dec(getGame(), getPlayer(), "willPutCardOnTop", "c", Census.str(c));
+        boolean __r = super.willPutCardOnTop(c);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView orderMoveToZoneList(CardCollectionView cards, ZoneType destinationZone, SpellAbility source) {
         Census.rec(getGame(), getPlayer(), "orderMoveToZoneList", "cards", Census.sz(cards), "source", Census.str(source));
-        return super.orderMoveToZoneList(cards, destinationZone, source);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderMoveToZoneList", "cards", Census.sz(cards), "source", Census.str(source));
+        CardCollectionView __r = super.orderMoveToZoneList(cards, destinationZone, source);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollection chooseCardsToDiscardFrom(Player playerDiscard, SpellAbility sa, CardCollection validCards, int min, int max, CardCollectionView visibleToChooser) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDiscardFrom", "playerDiscard", Census.str(playerDiscard), "sa", Census.str(sa), "validCards", Census.sz(validCards), "min", min, "max", max, "visibleToChooser", Census.sz(visibleToChooser));
-        return super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, min, max, visibleToChooser);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToDiscardFrom", "playerDiscard", Census.str(playerDiscard), "sa", Census.str(sa), "validCards", Census.sz(validCards), "min", min, "max", max, "visibleToChooser", Census.sz(visibleToChooser));
+        CardCollection __r = super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, min, max, visibleToChooser);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsToDiscardUnlessType(int min, CardCollectionView hand, String[] unlessTypes, SpellAbility sa) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDiscardUnlessType", "min", min, "hand", Census.sz(hand), "sa", Census.str(sa));
-        return super.chooseCardsToDiscardUnlessType(min, hand, unlessTypes, sa);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToDiscardUnlessType", "min", min, "hand", Census.sz(hand), "sa", Census.str(sa));
+        CardCollectionView __r = super.chooseCardsToDiscardUnlessType(min, hand, unlessTypes, sa);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsToDiscardToMaximumHandSize(int numDiscard) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDiscardToMaximumHandSize", "numDiscard", numDiscard);
-        return super.chooseCardsToDiscardToMaximumHandSize(numDiscard);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToDiscardToMaximumHandSize", "numDiscard", numDiscard);
+        CardCollectionView __r = super.chooseCardsToDiscardToMaximumHandSize(numDiscard);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDelve", "genericAmount", genericAmount, "grave", Census.sz(grave));
-        return super.chooseCardsToDelve(genericAmount, grave);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToDelve", "genericAmount", genericAmount, "grave", Census.sz(grave));
+        CardCollectionView __r = super.chooseCardsToDelve(genericAmount, grave);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Map<Card, ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa, ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures, Integer maxReduction) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForConvokeOrImprovise", "sa", Census.str(sa), "untappedCards", Census.sz(untappedCards), "artifacts", artifacts, "creatures", creatures, "maxReduction", maxReduction);
-        return super.chooseCardsForConvokeOrImprovise(sa, manaCost, untappedCards, artifacts, creatures, maxReduction);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForConvokeOrImprovise", "sa", Census.str(sa), "untappedCards", Census.sz(untappedCards), "artifacts", artifacts, "creatures", creatures, "maxReduction", maxReduction);
+        Map<Card, ManaCostShard> __r = super.chooseCardsForConvokeOrImprovise(sa, manaCost, untappedCards, artifacts, creatures, maxReduction);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Card> chooseCardsForSplice(SpellAbility sa, List<Card> cards) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForSplice", "sa", Census.str(sa), "cards", Census.sz(cards));
-        return super.chooseCardsForSplice(sa, cards);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForSplice", "sa", Census.str(sa), "cards", Census.sz(cards));
+        List<Card> __r = super.chooseCardsForSplice(sa, cards);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsToRevealFromHand(int min, int max, CardCollectionView valid) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToRevealFromHand", "min", min, "max", max, "valid", Census.sz(valid));
-        return super.chooseCardsToRevealFromHand(min, max, valid);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToRevealFromHand", "min", min, "max", max, "valid", Census.sz(valid));
+        CardCollectionView __r = super.chooseCardsToRevealFromHand(min, max, valid);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<SpellAbility> chooseSaToActivateFromOpeningHand(List<SpellAbility> usableFromOpeningHand) {
         Census.rec(getGame(), getPlayer(), "chooseSaToActivateFromOpeningHand", "usableFromOpeningHand", Census.sz(usableFromOpeningHand));
-        return super.chooseSaToActivateFromOpeningHand(usableFromOpeningHand);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSaToActivateFromOpeningHand", "usableFromOpeningHand", Census.sz(usableFromOpeningHand));
+        List<SpellAbility> __r = super.chooseSaToActivateFromOpeningHand(usableFromOpeningHand);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Player chooseStartingPlayer(boolean isFirstGame) {
         Census.rec(getGame(), getPlayer(), "chooseStartingPlayer", "isFirstGame", isFirstGame);
-        return super.chooseStartingPlayer(isFirstGame);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseStartingPlayer", "isFirstGame", isFirstGame);
+        Player __r = super.chooseStartingPlayer(isFirstGame);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public PlayerZone chooseStartingHand(List<PlayerZone> zones) {
         Census.rec(getGame(), getPlayer(), "chooseStartingHand", "zones", Census.sz(zones));
-        return super.chooseStartingHand(zones);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseStartingHand", "zones", Census.sz(zones));
+        PlayerZone __r = super.chooseStartingHand(zones);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Mana chooseManaFromPool(List<Mana> manaChoices) {
         Census.rec(getGame(), getPlayer(), "chooseManaFromPool", "manaChoices", Census.sz(manaChoices));
-        return super.chooseManaFromPool(manaChoices);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseManaFromPool", "manaChoices", Census.sz(manaChoices));
+        Mana __r = super.chooseManaFromPool(manaChoices);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseSomeType(String kindOfType, SpellAbility sa, Collection<String> validTypes, boolean isOptional) {
         Census.rec(getGame(), getPlayer(), "chooseSomeType", "kindOfType", kindOfType, "sa", Census.str(sa), "validTypes", Census.sz(validTypes), "isOptional", isOptional);
-        return super.chooseSomeType(kindOfType, sa, validTypes, isOptional);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSomeType", "kindOfType", kindOfType, "sa", Census.str(sa), "validTypes", Census.sz(validTypes), "isOptional", isOptional);
+        String __r = super.chooseSomeType(kindOfType, sa, validTypes, isOptional);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseSector(Card assignee, String ai, List<String> sectors) {
         Census.rec(getGame(), getPlayer(), "chooseSector", "assignee", Census.str(assignee), "ai", ai, "sectors", Census.sz(sectors));
-        return super.chooseSector(assignee, ai, sectors);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSector", "assignee", Census.str(assignee), "ai", ai, "sectors", Census.sz(sectors));
+        String __r = super.chooseSector(assignee, ai, sectors);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Card> chooseContraptionsToCrank(List<Card> contraptions) {
         Census.rec(getGame(), getPlayer(), "chooseContraptionsToCrank", "contraptions", Census.sz(contraptions));
-        return super.chooseContraptionsToCrank(contraptions);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseContraptionsToCrank", "contraptions", Census.sz(contraptions));
+        List<Card> __r = super.chooseContraptionsToCrank(contraptions);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public int chooseSprocket(Card assignee, List<Integer> sprockets) {
         Census.rec(getGame(), getPlayer(), "chooseSprocket", "assignee", Census.str(assignee), "sprockets", Census.sz(sprockets));
-        return super.chooseSprocket(assignee, sprockets);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSprocket", "assignee", Census.str(assignee), "sprockets", Census.sz(sprockets));
+        int __r = super.chooseSprocket(assignee, sprockets);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public PlanarDice choosePDRollToIgnore(List<PlanarDice> rolls) {
         Census.rec(getGame(), getPlayer(), "choosePDRollToIgnore", "rolls", Census.sz(rolls));
-        return super.choosePDRollToIgnore(rolls);
+        long __s = Obs.dec(getGame(), getPlayer(), "choosePDRollToIgnore", "rolls", Census.sz(rolls));
+        PlanarDice __r = super.choosePDRollToIgnore(rolls);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Integer chooseRollToIgnore(List<Integer> rolls) {
         Census.rec(getGame(), getPlayer(), "chooseRollToIgnore", "rolls", Census.sz(rolls));
-        return super.chooseRollToIgnore(rolls);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseRollToIgnore", "rolls", Census.sz(rolls));
+        Integer __r = super.chooseRollToIgnore(rolls);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Integer> chooseDiceToReroll(List<Integer> rolls) {
         Census.rec(getGame(), getPlayer(), "chooseDiceToReroll", "rolls", Census.sz(rolls));
-        return super.chooseDiceToReroll(rolls);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseDiceToReroll", "rolls", Census.sz(rolls));
+        List<Integer> __r = super.chooseDiceToReroll(rolls);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Integer chooseRollToModify(List<Integer> rolls) {
         Census.rec(getGame(), getPlayer(), "chooseRollToModify", "rolls", Census.sz(rolls));
-        return super.chooseRollToModify(rolls);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseRollToModify", "rolls", Census.sz(rolls));
+        Integer __r = super.chooseRollToModify(rolls);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public RollDiceEffect.DieRollResult chooseRollToSwap(List<RollDiceEffect.DieRollResult> rolls) {
         Census.rec(getGame(), getPlayer(), "chooseRollToSwap", "rolls", Census.sz(rolls));
-        return super.chooseRollToSwap(rolls);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseRollToSwap", "rolls", Census.sz(rolls));
+        RollDiceEffect.DieRollResult __r = super.chooseRollToSwap(rolls);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseRollSwapValue(List<String> swapChoices, Integer currentResult, int power, int toughness) {
         Census.rec(getGame(), getPlayer(), "chooseRollSwapValue", "swapChoices", Census.sz(swapChoices), "currentResult", currentResult, "power", power, "toughness", toughness);
-        return super.chooseRollSwapValue(swapChoices, currentResult, power, toughness);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseRollSwapValue", "swapChoices", Census.sz(swapChoices), "currentResult", currentResult, "power", power, "toughness", toughness);
+        String __r = super.chooseRollSwapValue(swapChoices, currentResult, power, toughness);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Object vote(SpellAbility sa, String prompt, List<Object> options, ListMultimap<Object, Player> votes, Player forPlayer, boolean optional) {
         Census.rec(getGame(), getPlayer(), "vote", "sa", Census.str(sa), "prompt", prompt, "options", Census.sz(options), "votes", Census.sz(votes), "forPlayer", Census.str(forPlayer), "optional", optional);
-        return super.vote(sa, prompt, options, votes, forPlayer, optional);
+        long __s = Obs.dec(getGame(), getPlayer(), "vote", "sa", Census.str(sa), "prompt", prompt, "options", Census.sz(options), "votes", Census.sz(votes), "forPlayer", Census.str(forPlayer), "optional", optional);
+        Object __r = super.vote(sa, prompt, options, votes, forPlayer, optional);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean mulliganKeepHand(Player player, int cardsToReturn) {
         Census.rec(getGame(), getPlayer(), "mulliganKeepHand", "player", Census.str(player), "cardsToReturn", cardsToReturn);
-        return super.mulliganKeepHand(player, cardsToReturn);
+        long __s = Obs.dec(getGame(), getPlayer(), "mulliganKeepHand", "player", Census.str(player), "cardsToReturn", cardsToReturn);
+        boolean __r = super.mulliganKeepHand(player, cardsToReturn);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView tuckCardsViaMulligan(CardCollectionView hand, int cardsToReturn) {
         Census.rec(getGame(), getPlayer(), "tuckCardsViaMulligan", "hand", Census.sz(hand), "cardsToReturn", cardsToReturn);
-        return super.tuckCardsViaMulligan(hand, cardsToReturn);
+        long __s = Obs.dec(getGame(), getPlayer(), "tuckCardsViaMulligan", "hand", Census.sz(hand), "cardsToReturn", cardsToReturn);
+        CardCollectionView __r = super.tuckCardsViaMulligan(hand, cardsToReturn);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay");
-        return super.chooseSpellAbilityToPlay();
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSpellAbilityToPlay");
+        List<SpellAbility> __r = super.chooseSpellAbilityToPlay();
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean playChosenSpellAbility(SpellAbility sa) {
         Census.rec(getGame(), getPlayer(), "playChosenSpellAbility", "sa", Census.str(sa));
-        return super.playChosenSpellAbility(sa);
+        long __s = Obs.dec(getGame(), getPlayer(), "playChosenSpellAbility", "sa", Census.str(sa));
+        boolean __r = super.playChosenSpellAbility(sa);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<AbilitySub> chooseModeForAbility(SpellAbility sa, List<AbilitySub> possible, int min, int num, boolean allowRepeat) {
         Census.rec(getGame(), getPlayer(), "chooseModeForAbility", "sa", Census.str(sa), "possible", Census.sz(possible), "min", min, "num", num, "allowRepeat", allowRepeat);
-        return super.chooseModeForAbility(sa, possible, min, num, allowRepeat);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseModeForAbility", "sa", Census.str(sa), "possible", Census.sz(possible), "min", min, "num", num, "allowRepeat", allowRepeat);
+        List<AbilitySub> __r = super.chooseModeForAbility(sa, possible, min, num, allowRepeat);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public int chooseNumberForCostReduction(SpellAbility sa, int min, int max) {
         Census.rec(getGame(), getPlayer(), "chooseNumberForCostReduction", "sa", Census.str(sa), "min", min, "max", max);
-        return super.chooseNumberForCostReduction(sa, min, max);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseNumberForCostReduction", "sa", Census.str(sa), "min", min, "max", max);
+        int __r = super.chooseNumberForCostReduction(sa, min, max);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public int chooseNumberForKeywordCost(SpellAbility sa, Cost cost, KeywordInterface keyword, String prompt, int max) {
         Census.rec(getGame(), getPlayer(), "chooseNumberForKeywordCost", "sa", Census.str(sa), "prompt", prompt, "max", max);
-        return super.chooseNumberForKeywordCost(sa, cost, keyword, prompt, max);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseNumberForKeywordCost", "sa", Census.str(sa), "prompt", prompt, "max", max);
+        int __r = super.chooseNumberForKeywordCost(sa, cost, keyword, prompt, max);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public int chooseNumber(SpellAbility sa, String title, int min, int max) {
         Census.rec(getGame(), getPlayer(), "chooseNumber", "sa", Census.str(sa), "title", title, "min", min, "max", max);
-        return super.chooseNumber(sa, title, min, max);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseNumber", "sa", Census.str(sa), "title", title, "min", min, "max", max);
+        int __r = super.chooseNumber(sa, title, min, max);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public int chooseNumber(SpellAbility sa, String title, List<Integer> values, Player relatedPlayer) {
         Census.rec(getGame(), getPlayer(), "chooseNumber", "sa", Census.str(sa), "title", title, "values", Census.sz(values), "relatedPlayer", Census.str(relatedPlayer));
-        return super.chooseNumber(sa, title, values, relatedPlayer);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseNumber", "sa", Census.str(sa), "title", title, "values", Census.sz(values), "relatedPlayer", Census.str(relatedPlayer));
+        int __r = super.chooseNumber(sa, title, values, relatedPlayer);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Boolean defaultChoice) {
         Census.rec(getGame(), getPlayer(), "chooseBinary", "sa", Census.str(sa), "question", question, "defaultChoice", defaultChoice);
-        return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseBinary", "sa", Census.str(sa), "question", question, "defaultChoice", defaultChoice);
+        boolean __r = super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean chooseFlipResult(SpellAbility sa, Player flipper, boolean call) {
         Census.rec(getGame(), getPlayer(), "chooseFlipResult", "sa", Census.str(sa), "flipper", Census.str(flipper), "call", call);
-        return super.chooseFlipResult(sa, flipper, call);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseFlipResult", "sa", Census.str(sa), "flipper", Census.str(flipper), "call", call);
+        boolean __r = super.chooseFlipResult(sa, flipper, call);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public byte chooseColor(String message, SpellAbility sa, ColorSet colors) {
         Census.rec(getGame(), getPlayer(), "chooseColor", "message", message, "sa", Census.str(sa));
-        return super.chooseColor(message, sa, colors);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseColor", "message", message, "sa", Census.str(sa));
+        byte __r = super.chooseColor(message, sa, colors);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public byte chooseColorAllowColorless(String message, Card c, ColorSet colors) {
         Census.rec(getGame(), getPlayer(), "chooseColorAllowColorless", "message", message, "c", Census.str(c));
-        return super.chooseColorAllowColorless(message, c, colors);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseColorAllowColorless", "message", message, "c", Census.str(c));
+        byte __r = super.chooseColorAllowColorless(message, c, colors);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public ColorSet chooseColors(String message, SpellAbility sa, int min, int max, ColorSet options) {
         Census.rec(getGame(), getPlayer(), "chooseColors", "message", message, "sa", Census.str(sa), "min", min, "max", max);
-        return super.chooseColors(message, sa, min, max, options);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseColors", "message", message, "sa", Census.str(sa), "min", min, "max", max);
+        ColorSet __r = super.chooseColors(message, sa, min, max, options);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public ICardFace chooseSingleCardFace(SpellAbility sa, String message, Predicate<ICardFace> cpp, String name) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardFace", "sa", Census.str(sa), "message", message, "name", name);
-        return super.chooseSingleCardFace(sa, message, cpp, name);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleCardFace", "sa", Census.str(sa), "message", message, "name", name);
+        ICardFace __r = super.chooseSingleCardFace(sa, message, cpp, name);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public ICardFace chooseSingleCardFace(SpellAbility sa, List<ICardFace> faces, String message) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardFace", "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
-        return super.chooseSingleCardFace(sa, faces, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleCardFace", "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
+        ICardFace __r = super.chooseSingleCardFace(sa, faces, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardState chooseSingleCardState(SpellAbility sa, List<CardState> states, String message, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardState", "sa", Census.str(sa), "states", Census.sz(states), "message", message, "params", Census.sz(params));
-        return super.chooseSingleCardState(sa, states, message, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleCardState", "sa", Census.str(sa), "states", Census.sz(states), "message", message, "params", Census.sz(params));
+        CardState __r = super.chooseSingleCardState(sa, states, message, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean chooseCardsPile(SpellAbility sa, CardCollectionView pile1, CardCollectionView pile2, String faceUp) {
         Census.rec(getGame(), getPlayer(), "chooseCardsPile", "sa", Census.str(sa), "pile1", Census.sz(pile1), "pile2", Census.sz(pile2), "faceUp", faceUp);
-        return super.chooseCardsPile(sa, pile1, pile2, faceUp);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsPile", "sa", Census.str(sa), "pile1", Census.sz(pile1), "pile2", Census.sz(pile2), "faceUp", faceUp);
+        boolean __r = super.chooseCardsPile(sa, pile1, pile2, faceUp);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CounterType chooseCounterType(List<CounterType> options, SpellAbility sa, String prompt, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseCounterType", "options", Census.sz(options), "sa", Census.str(sa), "prompt", prompt, "params", Census.sz(params));
-        return super.chooseCounterType(options, sa, prompt, params);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCounterType", "options", Census.sz(options), "sa", Census.str(sa), "prompt", prompt, "params", Census.sz(params));
+        CounterType __r = super.chooseCounterType(options, sa, prompt, params);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseKeywordForPump(List<String> options, SpellAbility sa, String prompt, Card tgtCard) {
         Census.rec(getGame(), getPlayer(), "chooseKeywordForPump", "options", Census.sz(options), "sa", Census.str(sa), "prompt", prompt, "tgtCard", Census.str(tgtCard));
-        return super.chooseKeywordForPump(options, sa, prompt, tgtCard);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseKeywordForPump", "options", Census.sz(options), "sa", Census.str(sa), "prompt", prompt, "tgtCard", Census.str(tgtCard));
+        String __r = super.chooseKeywordForPump(options, sa, prompt, tgtCard);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean confirmPayment(CostPart costPart, String string, SpellAbility sa) {
         Census.rec(getGame(), getPlayer(), "confirmPayment", "string", string, "sa", Census.str(sa));
-        return super.confirmPayment(costPart, string, sa);
+        long __s = Obs.dec(getGame(), getPlayer(), "confirmPayment", "string", string, "sa", Census.str(sa));
+        boolean __r = super.confirmPayment(costPart, string, sa);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public ReplacementEffect chooseSingleReplacementEffect(List<ReplacementEffect> possibleReplacers) {
         Census.rec(getGame(), getPlayer(), "chooseSingleReplacementEffect", "possibleReplacers", Census.sz(possibleReplacers));
-        return super.chooseSingleReplacementEffect(possibleReplacers);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleReplacementEffect", "possibleReplacers", Census.sz(possibleReplacers));
+        ReplacementEffect __r = super.chooseSingleReplacementEffect(possibleReplacers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public StaticAbility chooseSingleStaticAbility(List<StaticAbility> possibleReplacers) {
         Census.rec(getGame(), getPlayer(), "chooseSingleStaticAbility", "possibleReplacers", Census.sz(possibleReplacers));
-        return super.chooseSingleStaticAbility(possibleReplacers);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleStaticAbility", "possibleReplacers", Census.sz(possibleReplacers));
+        StaticAbility __r = super.chooseSingleStaticAbility(possibleReplacers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseProtectionType(SpellAbility sa, List<String> choices) {
         Census.rec(getGame(), getPlayer(), "chooseProtectionType", "sa", Census.str(sa), "choices", Census.sz(choices));
-        return super.chooseProtectionType(sa, choices);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseProtectionType", "sa", Census.str(sa), "choices", Census.sz(choices));
+        String __r = super.chooseProtectionType(sa, choices);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void revealAnte(String message, Multimap<Player, PaperCard> removedAnteCards) {
         Census.rec(getGame(), getPlayer(), "revealAnte", "message", message, "removedAnteCards", Census.sz(removedAnteCards));
+        Obs.dec(getGame(), getPlayer(), "revealAnte", "message", message, "removedAnteCards", Census.sz(removedAnteCards));
         super.revealAnte(message, removedAnteCards);
     }
 
     @Override
     public void revealAISkipCards(String message, Map<Player, Map<DeckSection, List<? extends PaperCard>>> deckCards) {
         Census.rec(getGame(), getPlayer(), "revealAISkipCards", "message", message, "deckCards", Census.sz(deckCards));
+        Obs.dec(getGame(), getPlayer(), "revealAISkipCards", "message", message, "deckCards", Census.sz(deckCards));
         super.revealAISkipCards(message, deckCards);
     }
 
     @Override
     public void revealUnsupported(Map<Player, List<PaperCard>> unsupported) {
         Census.rec(getGame(), getPlayer(), "revealUnsupported", "unsupported", Census.sz(unsupported));
+        Obs.dec(getGame(), getPlayer(), "revealUnsupported", "unsupported", Census.sz(unsupported));
         super.revealUnsupported(unsupported);
     }
 
     @Override
     public List<OptionalCostValue> chooseOptionalCosts(SpellAbility choosen, List<OptionalCostValue> optionalCostValues) {
         Census.rec(getGame(), getPlayer(), "chooseOptionalCosts", "choosen", Census.str(choosen), "optionalCostValues", Census.sz(optionalCostValues));
-        return super.chooseOptionalCosts(choosen, optionalCostValues);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseOptionalCosts", "choosen", Census.str(choosen), "optionalCostValues", Census.sz(optionalCostValues));
+        List<OptionalCostValue> __r = super.chooseOptionalCosts(choosen, optionalCostValues);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<CostPart> orderCosts(List<CostPart> costs) {
         Census.rec(getGame(), getPlayer(), "orderCosts", "costs", Census.sz(costs));
-        return super.orderCosts(costs);
+        long __s = Obs.dec(getGame(), getPlayer(), "orderCosts", "costs", Census.sz(costs));
+        List<CostPart> __r = super.orderCosts(costs);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean payCostToPreventEffect(Cost cost, SpellAbility sa, boolean alreadyPaid, FCollectionView<Player> allPayers) {
         Census.rec(getGame(), getPlayer(), "payCostToPreventEffect", "sa", Census.str(sa), "alreadyPaid", alreadyPaid, "allPayers", Census.sz(allPayers));
-        return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
+        long __s = Obs.dec(getGame(), getPlayer(), "payCostToPreventEffect", "sa", Census.str(sa), "alreadyPaid", alreadyPaid, "allPayers", Census.sz(allPayers));
+        boolean __r = super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean payCostDuringRoll(Cost cost, SpellAbility sa) {
         Census.rec(getGame(), getPlayer(), "payCostDuringRoll", "sa", Census.str(sa));
-        return super.payCostDuringRoll(cost, sa);
+        long __s = Obs.dec(getGame(), getPlayer(), "payCostDuringRoll", "sa", Census.str(sa));
+        boolean __r = super.payCostDuringRoll(cost, sa);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean payCombatCost(Card card, Cost cost, SpellAbility sa, String prompt) {
         Census.rec(getGame(), getPlayer(), "payCombatCost", "card", Census.str(card), "sa", Census.str(sa), "prompt", prompt);
-        return super.payCombatCost(card, cost, sa, prompt);
+        long __s = Obs.dec(getGame(), getPlayer(), "payCombatCost", "card", Census.str(card), "sa", Census.str(sa), "prompt", prompt);
+        boolean __r = super.payCombatCost(card, cost, sa, prompt);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean payManaCost(ManaCost toPay, CostPartMana costPartMana, SpellAbility sa, String prompt, ManaConversionMatrix matrix, boolean effect) {
         Census.rec(getGame(), getPlayer(), "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
-        return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
+        long __s = Obs.dec(getGame(), getPlayer(), "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
+        boolean __r = super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public boolean applyManaToCost(ManaCostBeingPaid toPay, SpellAbility ability, String prompt, ManaConversionMatrix matrix, boolean effect) {
         Census.rec(getGame(), getPlayer(), "applyManaToCost", "ability", Census.str(ability), "prompt", prompt, "effect", effect);
-        return super.applyManaToCost(toPay, ability, prompt, matrix, effect);
+        long __s = Obs.dec(getGame(), getPlayer(), "applyManaToCost", "ability", Census.str(ability), "prompt", prompt, "effect", effect);
+        boolean __r = super.applyManaToCost(toPay, ability, prompt, matrix, effect);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CardCollectionView chooseCardsForCost(CardCollectionView optionList, SpellAbility sa, CostPartWithList cpl, int amount, boolean isOptional, String prompt) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForCost", "optionList", Census.sz(optionList), "sa", Census.str(sa), "amount", amount, "isOptional", isOptional, "prompt", prompt);
-        return super.chooseCardsForCost(optionList, sa, cpl, amount, isOptional, prompt);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForCost", "optionList", Census.sz(optionList), "sa", Census.str(sa), "amount", amount, "isOptional", isOptional, "prompt", prompt);
+        CardCollectionView __r = super.chooseCardsForCost(optionList, sa, cpl, amount, isOptional, prompt);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public CostDecisionMakerBase getCostDecisionMaker(Player player, SpellAbility ability, boolean effect, String prompt) {
         Census.rec(getGame(), getPlayer(), "getCostDecisionMaker", "player", Census.str(player), "ability", Census.str(ability), "effect", effect, "prompt", prompt);
-        return super.getCostDecisionMaker(player, ability, effect, prompt);
+        long __s = Obs.dec(getGame(), getPlayer(), "getCostDecisionMaker", "player", Census.str(player), "ability", Census.str(ability), "effect", effect, "prompt", prompt);
+        CostDecisionMakerBase __r = super.getCostDecisionMaker(player, ability, effect, prompt);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseCardName(SpellAbility sa, Predicate<ICardFace> cpp, String valid, String message) {
         Census.rec(getGame(), getPlayer(), "chooseCardName", "sa", Census.str(sa), "valid", valid, "message", message);
-        return super.chooseCardName(sa, cpp, valid, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardName", "sa", Census.str(sa), "valid", valid, "message", message);
+        String __r = super.chooseCardName(sa, cpp, valid, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public String chooseCardName(SpellAbility sa, List<ICardFace> faces, String message) {
         Census.rec(getGame(), getPlayer(), "chooseCardName", "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
-        return super.chooseCardName(sa, faces, message);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardName", "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
+        String __r = super.chooseCardName(sa, faces, message);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
-        return super.chooseSingleCardForZoneChange(destination, origin, sa, fetchList, delayedReveal, selectPrompt, isOptional, decider);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
+        Card __r = super.chooseSingleCardForZoneChange(destination, origin, sa, fetchList, delayedReveal, selectPrompt, isOptional, decider);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public List<Card> chooseCardsForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, int min, int max, DelayedReveal delayedReveal, String selectPrompt, Player decider) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "min", min, "max", max, "selectPrompt", selectPrompt, "decider", Census.str(decider));
-        return super.chooseCardsForZoneChange(destination, origin, sa, fetchList, min, max, delayedReveal, selectPrompt, decider);
+        long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "min", min, "max", max, "selectPrompt", selectPrompt, "decider", Census.str(decider));
+        List<Card> __r = super.chooseCardsForZoneChange(destination, origin, sa, fetchList, min, max, delayedReveal, selectPrompt, decider);
+        Obs.ret(getGame(), __s, __r);
+        return __r;
     }
 
     @Override
     public void autoPassCancel() {
         Census.rec(getGame(), getPlayer(), "autoPassCancel");
+        Obs.dec(getGame(), getPlayer(), "autoPassCancel");
         super.autoPassCancel();
     }
 
     @Override
     public void awaitNextInput() {
         Census.rec(getGame(), getPlayer(), "awaitNextInput");
+        Obs.dec(getGame(), getPlayer(), "awaitNextInput");
         super.awaitNextInput();
     }
 
     @Override
     public void cancelAwaitNextInput() {
         Census.rec(getGame(), getPlayer(), "cancelAwaitNextInput");
+        Obs.dec(getGame(), getPlayer(), "cancelAwaitNextInput");
         super.cancelAwaitNextInput();
     }
 }
