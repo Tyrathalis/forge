@@ -13,7 +13,8 @@ import java.util.Arrays;
  */
 public final class LocalRandomBridge implements AnvilBridge {
     @Override
-    public int selectOne(String tag, int n) {
+    public int selectOne(String tag, java.util.List<String> optionLabels) {
+        int n = optionLabels.size();
         return n <= 1 ? 0 : MyRandom.getRandom().nextInt(n);
     }
 
