@@ -5,11 +5,16 @@ import forge.LobbyPlayer;
 import forge.ai.LobbyPlayerAi;
 import forge.game.Game;
 import forge.game.card.Card;
+import forge.game.keyword.Keyword;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
+import forge.game.spellability.AbilitySub;
+import forge.game.spellability.AlternativeCost;
+import forge.game.spellability.OptionalCost;
 import forge.game.spellability.SpellAbility;
+import forge.game.spellability.TargetChoices;
 import forge.item.PaperCard;
 
 import java.io.FileOutputStream;
@@ -60,6 +65,13 @@ public final class Obs {
 
     public static synchronized boolean isOpen() {
         return file != null;
+    }
+
+    /** True when records for this Game would actually be written (frame open,
+     *  not a stale post-hard-cap thread). Lets callers skip expensive
+     *  materialization work that only feeds the log. */
+    public static synchronized boolean isLogging(Game g) {
+        return frame != null && g == currentGame;
     }
 
     public static synchronized void open(String path) throws IOException {
@@ -172,16 +184,47 @@ public final class Obs {
      * heuristic/bridge answers (some callbacks resolve their own effects).
      */
     public static long dec(Game g, Player p, String m, Object... kv) {
-        return decInternal(g, p, m, null, null, kv);
+        return decInternal(g, p, m, null, null, false, kv);
     }
 
     /** Bridged variant: provenance tag + materialized option labels. */
     public static long decBridged(Game g, Player p, String m, java.util.List<String> opts, Object... kv) {
-        return decInternal(g, p, m, "bridge", opts, kv);
+        return decInternal(g, p, m, "bridge", opts, false, kv);
+    }
+
+    /**
+     * Priority-window dec (M1 D2): materializes the engine-legal option set
+     * (same scan as the bridged path — legal-actions-only invariant) into
+     * structured opts entries {"e":hostId,"sa":str,"kind":...} so the label
+     * has a logged legality basis (replay drift forbids recomputing it later;
+     * the gate metric's single-legal-option exclusion needs it). Pass is not
+     * an entry: a null ret IS the pass. Options are scanned only when this
+     * game is actually being logged.
+     */
+    public static long decPriority(Game g, Player p) {
+        if (!isLogging(g)) {
+            return -1;
+        }
+        java.util.List<String> opts = null;
+        try {
+            java.util.List<SpellAbility> options = AnvilOptions.priorityOptions(g, p);
+            opts = new java.util.ArrayList<>(options.size());
+            for (SpellAbility sa : options) {
+                StringBuilder ob = new StringBuilder(96);
+                ob.append("{\"e\":").append(sa.getHostCard() == null ? -1 : sa.getHostCard().getId())
+                        .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
+                        .append(",\"kind\":\"").append(kind(sa)).append("\"}");
+                opts.add(ob.toString());
+            }
+        } catch (Exception e) {
+            opts = null; // options are diagnostic-critical but not corpus-fatal
+            obsErrors++;
+        }
+        return decInternal(g, p, "chooseSpellAbilityToPlay", null, opts, true);
     }
 
     private static synchronized long decInternal(Game g, Player p, String m, String by,
-            java.util.List<String> opts, Object... kv) {
+            java.util.List<String> opts, boolean optsRaw, Object... kv) {
         if (frame == null || g != currentGame) {
             return -1;
         }
@@ -223,7 +266,9 @@ public final class Obs {
                 if (i > 0) {
                     sb.append(',');
                 }
-                sb.append(q(opts.get(i)));
+                // raw entries are pre-rendered JSON objects (decPriority);
+                // otherwise plain labels, quoted
+                sb.append(optsRaw ? opts.get(i) : q(opts.get(i)));
             }
             sb.append(']');
         }
@@ -274,12 +319,7 @@ public final class Obs {
             Player p = (Player) v;
             sb.append("{\"pi\":").append(p.getGame().getRegisteredPlayers().indexOf(p)).append('}');
         } else if (v instanceof SpellAbility) {
-            SpellAbility sa = (SpellAbility) v;
-            sb.append("{");
-            if (sa.getHostCard() != null) {
-                sb.append("\"e\":").append(sa.getHostCard().getId()).append(',');
-            }
-            sb.append("\"sa\":").append(q(trunc(String.valueOf(sa)))).append('}');
+            castPlan(sb, (SpellAbility) v, depth);
         } else if (v.getClass().isEnum()) {
             sb.append(q(((Enum<?>) v).name()));
         } else if (v instanceof Map) {
@@ -324,6 +364,109 @@ public final class Obs {
         } else {
             sb.append("{\"str\":").append(q(trunc(String.valueOf(v)))).append('}');
         }
+    }
+
+    /**
+     * CastPlan-shaped serialization of a chosen SpellAbility (M1 D2, schema
+     * doc "CastPlan ret"): everything the heuristic decided at cast-decision
+     * time that never surfaces as a callback (census): targets and X read off
+     * the SA; optional costs already baked in (the SA the AI returns is the
+     * copy GameActionUtil.addOptionalCosts built); modes only when already
+     * bound — for cast spells they usually bind later at chooseModeForAbility,
+     * which is logged as its own dec/ret. Sub-abilities contribute their own
+     * pre-set targets.
+     */
+    private static void castPlan(StringBuilder sb, SpellAbility sa, int depth) {
+        sb.append('{');
+        if (sa.getHostCard() != null) {
+            sb.append("\"e\":").append(sa.getHostCard().getId()).append(',');
+        }
+        sb.append("\"sa\":").append(q(trunc(String.valueOf(sa))))
+                .append(",\"kind\":\"").append(kind(sa)).append('"');
+        targets(sb, sa);
+        Integer x = sa.getXManaCostPaid();
+        if (x != null) {
+            sb.append(",\"x\":").append(x);
+        }
+        AlternativeCost alt = sa.getAlternativeCost();
+        if (alt != null) {
+            sb.append(",\"alt\":").append(q(alt.name()));
+        }
+        int nOpt = 0;
+        for (OptionalCost oc : sa.getOptionalCosts()) {
+            sb.append(nOpt++ == 0 ? ",\"opt\":[" : ",").append(q(oc.name()));
+        }
+        if (nOpt > 0) {
+            sb.append(']');
+        }
+        int mk = sa.getOptionalKeywordAmount(Keyword.MULTIKICKER);
+        if (mk > 0) {
+            sb.append(",\"mk\":").append(mk);
+        }
+        java.util.List<AbilitySub> modes = sa.getChosenList();
+        if (modes != null && !modes.isEmpty() && depth < 3) {
+            sb.append(",\"modes\":[");
+            int j = 0;
+            for (AbilitySub mode : modes) {
+                if (j++ > 0) {
+                    sb.append(',');
+                }
+                castPlan(sb, mode, depth + 1);
+            }
+            sb.append(']');
+        }
+        // sub-ability chain: only links that carry their own targets, indexed
+        // by chain position (bounded — chains are hand-authored card script)
+        int link = 0;
+        int emitted = 0;
+        for (SpellAbility sub = sa.getSubAbility(); sub != null && link < 16; sub = sub.getSubAbility(), link++) {
+            TargetChoices tc = sub.getTargets();
+            if (tc == null || tc.isEmpty()) {
+                continue;
+            }
+            sb.append(emitted++ == 0 ? ",\"sub\":[" : ",").append("{\"i\":").append(link);
+            targets(sb, sub);
+            sb.append('}');
+        }
+        if (emitted > 0) {
+            sb.append(']');
+        }
+        sb.append('}');
+    }
+
+    private static String kind(SpellAbility sa) {
+        return sa.isLandAbility() ? "land" : sa.isSpell() ? "spell"
+                : sa.isActivatedAbility() ? "ability" : "other";
+    }
+
+    /** Root-level targets in the observation idiom: {"e":id} / {"pi":seat} /
+     *  {"e":hostId,"stk":1} for a targeted stack SA (stack entries are keyed
+     *  by host card id in ObsSnapshot, so this joins). */
+    private static void targets(StringBuilder sb, SpellAbility sa) {
+        TargetChoices tc = sa.getTargets();
+        if (tc == null || tc.isEmpty()) {
+            return;
+        }
+        sb.append(",\"tgt\":[");
+        int i = 0;
+        for (Object t : tc) {
+            if (i++ > 0) {
+                sb.append(',');
+            }
+            if (t instanceof Card) {
+                sb.append("{\"e\":").append(((Card) t).getId()).append('}');
+            } else if (t instanceof Player) {
+                Player tp = (Player) t;
+                sb.append("{\"pi\":").append(tp.getGame().getRegisteredPlayers().indexOf(tp)).append('}');
+            } else if (t instanceof SpellAbility) {
+                SpellAbility ts = (SpellAbility) t;
+                sb.append("{\"e\":").append(ts.getHostCard() == null ? -1 : ts.getHostCard().getId())
+                        .append(",\"stk\":1}");
+            } else {
+                sb.append("{\"str\":").append(q(trunc(String.valueOf(t)))).append('}');
+            }
+        }
+        sb.append(']');
     }
 
     private static String scalar(Object o) {

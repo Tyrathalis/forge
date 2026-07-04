@@ -648,7 +648,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay");
-        long __s = Obs.dec(getGame(), getPlayer(), "chooseSpellAbilityToPlay");
+        long __s = Obs.decPriority(getGame(), getPlayer());
         List<SpellAbility> __r = super.chooseSpellAbilityToPlay();
         Obs.ret(getGame(), __s, __r);
         return __r;
