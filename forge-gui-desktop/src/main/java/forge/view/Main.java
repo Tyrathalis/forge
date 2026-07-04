@@ -85,6 +85,10 @@ public final class Main {
                 CensusRun.run(args);
                 break;
 
+            case "anvil":
+                AnvilRun.run(args);
+                break;
+
             case "parse":
                 CardReaderExperiments.parseAllCards(args);
                 break;
