@@ -438,13 +438,13 @@ public final class Obs {
         int link = 0;
         int emitted = 0;
         for (SpellAbility sub = sa.getSubAbility(); sub != null && link < 16; sub = sub.getSubAbility(), link++) {
-            TargetChoices tc = sub.getTargets();
-            if (tc == null || tc.isEmpty()) {
-                continue;
+            StringBuilder tsb = new StringBuilder(64);
+            targets(tsb, sub);
+            if (tsb.length() == 0) {
+                continue; // no live targets (all stale-filtered or none set)
             }
-            sb.append(emitted++ == 0 ? ",\"sub\":[" : ",").append("{\"i\":").append(link);
-            targets(sb, sub);
-            sb.append('}');
+            sb.append(emitted++ == 0 ? ",\"sub\":[" : ",").append("{\"i\":").append(link)
+                    .append(tsb).append('}');
         }
         if (emitted > 0) {
             sb.append(']');
@@ -465,24 +465,45 @@ public final class Obs {
         if (tc == null || tc.isEmpty()) {
             return;
         }
-        sb.append(",\"tgt\":[");
-        int i = 0;
+        java.util.List<String> refs = new java.util.ArrayList<>(4);
         for (Object t : tc) {
-            if (i++ > 0) {
-                sb.append(',');
-            }
             if (t instanceof Card) {
-                sb.append("{\"e\":").append(((Card) t).getId()).append('}');
+                Card c = (Card) t;
+                // Stale-evaluation guard (D3 validation batch): a modal
+                // spell's sub-chain can retain TargetChoices from an earlier
+                // AI pass, pointing at an entity that no longer exists (dead
+                // token). Resolution re-binds targets, so a ref to a card in
+                // no zone is noise that would dangle in the label.
+                if (c.getZone() == null || !c.getZone().contains(c)) {
+                    continue;
+                }
+                refs.add("{\"e\":" + c.getId() + '}');
             } else if (t instanceof Player) {
                 Player tp = (Player) t;
-                sb.append("{\"pi\":").append(tp.getGame().getRegisteredPlayers().indexOf(tp)).append('}');
+                refs.add("{\"pi\":" + tp.getGame().getRegisteredPlayers().indexOf(tp) + '}');
             } else if (t instanceof SpellAbility) {
-                SpellAbility ts = (SpellAbility) t;
-                sb.append("{\"e\":").append(ts.getHostCard() == null ? -1 : ts.getHostCard().getId())
-                        .append(",\"stk\":1}");
+                // A stack-SA target joins on its host card id; stale if that
+                // spell is no longer on the stack.
+                Card h = ((SpellAbility) t).getHostCard();
+                if (h == null || h.getZone() == null
+                        || h.getZone().getZoneType() != forge.game.zone.ZoneType.Stack
+                        || !h.getZone().contains(h)) {
+                    continue;
+                }
+                refs.add("{\"e\":" + h.getId() + ",\"stk\":1}");
             } else {
-                sb.append("{\"str\":").append(q(trunc(String.valueOf(t)))).append('}');
+                refs.add("{\"str\":" + q(trunc(String.valueOf(t))) + '}');
             }
+        }
+        if (refs.isEmpty()) {
+            return;
+        }
+        sb.append(",\"tgt\":[");
+        for (int i = 0; i < refs.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(refs.get(i));
         }
         sb.append(']');
     }
