@@ -29,6 +29,14 @@ import java.util.Map;
  * Libraries are deliberately not walked (schema decision 5): remaining-library
  * counts are derivable transform-side from decklist minus observed owned,
  * non-token entities. Absent = false/0/null throughout.
+ *
+ * v1 amendment (M1 D3): each player's library TOP card is serialized when the
+ * engine grants look permission (mayPlayerLook — Courser/Mul Daya reveal to
+ * all, Mystic Forge-class to the controller), because top-castable cards are
+ * real information in every decision and CastPlan labels reference them as
+ * hosts. Deeper library knowledge (scry-to-top etc.) remains the named v2
+ * gap. Callers may also pass extra cards (option hosts outside the walked
+ * zones) so the label's host is in its own observation by construction.
  */
 final class ObsSnapshot {
     /** Walk order; also the sort key so record bytes are replay-stable. */
@@ -42,6 +50,10 @@ final class ObsSnapshot {
     }
 
     static void write(StringBuilder sb, Game g) {
+        write(sb, g, null);
+    }
+
+    static void write(StringBuilder sb, Game g, List<Card> extras) {
         // Registered players, not getPlayers(): the latter drops losers, which
         // would shrink and REINDEX seats mid-record. Seat order is frame-stable.
         List<Player> players = new ArrayList<>();
@@ -122,6 +134,7 @@ final class ObsSnapshot {
         // ---- entities: per-player zones + the shared stack zone, sorted (zone, id) ----
         sb.append(",\"ents\":[");
         boolean first = true;
+        java.util.Set<Integer> written = new java.util.HashSet<>();
         for (ZoneType z : ZONES) {
             List<Card> cards = new ArrayList<>();
             for (Player p : players) {
@@ -135,8 +148,23 @@ final class ObsSnapshot {
                     sb.append(',');
                 }
                 first = false;
+                written.add(c.getId());
                 entity(sb, c, z, players, atk, blk);
             }
+        }
+        // Library tops with engine look permission (seat order, ≤1 per player)
+        for (Player p : players) {
+            Card top = p.getCardsIn(ZoneType.Library).isEmpty() ? null
+                    : p.getCardsIn(ZoneType.Library).get(0);
+            if (top == null || !top.mayPlayerLook(p) || written.contains(top.getId())) {
+                continue;
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            written.add(top.getId());
+            entity(sb, top, ZoneType.Library, players, atk, blk);
         }
         List<Card> stackCards = new ArrayList<>();
         for (Card c : g.getCardsIn(ZoneType.Stack)) {
@@ -148,7 +176,29 @@ final class ObsSnapshot {
                 sb.append(',');
             }
             first = false;
+            written.add(c.getId());
             entity(sb, c, ZoneType.Stack, players, atk, blk);
+        }
+        // Extra cards (e.g. legality-option hosts castable from an unwalked
+        // zone without look permission): the label's host must be in its own
+        // observation by construction, whatever the engine does next year.
+        if (extras != null) {
+            List<Card> ex = new ArrayList<>();
+            for (Card c : extras) {
+                if (!written.contains(c.getId())) {
+                    ex.add(c);
+                }
+            }
+            ex.sort((a, b) -> Integer.compare(a.getId(), b.getId()));
+            for (Card c : ex) {
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                written.add(c.getId());
+                entity(sb, c, c.getZone() == null ? ZoneType.Library : c.getZone().getZoneType(),
+                        players, atk, blk);
+            }
         }
         sb.append(']');
 
@@ -257,6 +307,21 @@ final class ObsSnapshot {
      * and face-down knowledge via mayPlayerLook.
      */
     private static String visDeviation(Card c, ZoneType z, List<Player> players) {
+        if (z == ZoneType.Library || z == ZoneType.Sideboard || z == ZoneType.Flashback) {
+            // Library rows only exist when someone may look (or as label-host
+            // extras); default for the zone is hidden, so vis is always stated.
+            boolean all = players.size() > 1;
+            for (Player p : players) {
+                if (!c.mayPlayerLook(p)) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all) {
+                return "all";
+            }
+            return c.mayPlayerLook(c.getController()) ? "c" : "none";
+        }
         if (z == ZoneType.Hand) {
             for (Player p : players) {
                 if (p != c.getController() && !c.mayPlayerLook(p)) {
