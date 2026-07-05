@@ -15,16 +15,35 @@ import forge.game.spellability.SpellAbility;
 import java.util.List;
 
 /**
- * Engine-legal priority options, materialized once per window (the
+ * Priority option candidates, materialized once per window (the
  * legal-actions-only invariant, ADR-0001). Shared by the bridged path
  * (PlayerControllerAnvil, M0) and the corpus label path (Obs.decPriority,
- * M1 D2) so both log the same legality basis: engine-legal, payable spell
- * abilities plus legal land drops. Pass is not an option here — callers
- * represent it themselves (index 0 on the bridge; a null answer in the log).
+ * M1 D2) so both log the same basis: timing-legal spell abilities (see
+ * PAYCHECK note — payability is deliberately NOT filtered) plus legal land
+ * drops. Pass is not an option here — callers represent it themselves
+ * (index 0 on the bridge; a null answer in the log).
  */
 public final class AnvilOptions {
     private AnvilOptions() {
     }
+
+    /**
+     * The logged option set is TIMING-LEGAL CANDIDATES, not payable actions
+     * (M1 D3 decision). Exact payability is not cheaply computable at scan
+     * time: cost reductions/additional costs are priced only after the AI's
+     * canPlaySa sets up targets and X ("can only be checked late" —
+     * AiController.canPlayAndPayForFace), which is why the old canPayCost
+     * filter both diverged from the expert's own picks (Mystical Dispute,
+     * Dargo, X spells — D3's 320-game validation, 11 errors) and duplicated
+     * the AI's most expensive work per window. canPlay() is the same
+     * predicate the AI itself requires (Spell.canPlay == canPlayFromHost
+     * != null), so the set is a superset of the expert's castable actions
+     * by construction; affordability is the model's to learn (it must price
+     * costs anyway to emit CastPlans). -Danvil.scan.paycheck=on restores the
+     * old filter for comparison runs only.
+     */
+    private static final boolean PAYCHECK =
+            "on".equals(System.getProperty("anvil.scan.paycheck", "off"));
 
     public static List<SpellAbility> priorityOptions(Game game, Player player) {
         List<SpellAbility> options = Lists.newArrayList();
@@ -38,7 +57,8 @@ public final class AnvilOptions {
         // the heuristic's own pick (found by the D2 smoke validator).
         for (SpellAbility sa : ComputerUtilAbility.getOriginalAndAltCostAbilities(
                 ComputerUtilAbility.getSpellAbilities(cards, player), player)) {
-            if (!sa.isLandAbility() && sa.canPlay() && ComputerUtilCost.canPayCost(sa, player, false)) {
+            if (!sa.isLandAbility() && sa.canPlay()
+                    && (!PAYCHECK || ComputerUtilCost.canPayCost(sa, player, false))) {
                 options.add(sa);
             }
         }

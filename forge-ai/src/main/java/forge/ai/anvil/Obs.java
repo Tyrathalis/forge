@@ -206,25 +206,43 @@ public final class Obs {
             return -1;
         }
         java.util.List<String> opts = null;
+        java.util.List<Card> extraEnts = null;
         try {
             java.util.List<SpellAbility> options = AnvilOptions.priorityOptions(g, p);
             opts = new java.util.ArrayList<>(options.size());
             for (SpellAbility sa : options) {
                 StringBuilder ob = new StringBuilder(96);
-                ob.append("{\"e\":").append(sa.getHostCard() == null ? -1 : sa.getHostCard().getId())
+                Card h = sa.getHostCard();
+                ob.append("{\"e\":").append(h == null ? -1 : h.getId())
                         .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
                         .append(",\"kind\":\"").append(kind(sa)).append("\"}");
                 opts.add(ob.toString());
+                // Hosts castable from an unwalked zone (library top): the
+                // snapshot must contain them or the label references nothing.
+                if (h != null && h.getZone() != null
+                        && h.getZone().getZoneType() == forge.game.zone.ZoneType.Library
+                        && (extraEnts == null || !extraEnts.contains(h))) {
+                    if (extraEnts == null) {
+                        extraEnts = new java.util.ArrayList<>(2);
+                    }
+                    extraEnts.add(h);
+                }
             }
         } catch (Exception e) {
             opts = null; // options are diagnostic-critical but not corpus-fatal
             obsErrors++;
         }
-        return decInternal(g, p, "chooseSpellAbilityToPlay", null, opts, true);
+        return decInternal(g, p, "chooseSpellAbilityToPlay", null, opts, true, extraEnts);
     }
 
     private static synchronized long decInternal(Game g, Player p, String m, String by,
             java.util.List<String> opts, boolean optsRaw, Object... kv) {
+        return decInternal(g, p, m, by, opts, optsRaw, null, kv);
+    }
+
+    private static synchronized long decInternal(Game g, Player p, String m, String by,
+            java.util.List<String> opts, boolean optsRaw, java.util.List<Card> extraEnts,
+            Object... kv) {
         if (frame == null || g != currentGame) {
             return -1;
         }
@@ -275,7 +293,7 @@ public final class Obs {
         sb.append(",\"obs\":");
         int obsStart = sb.length();
         try {
-            ObsSnapshot.write(sb, g);
+            ObsSnapshot.write(sb, g, extraEnts);
         } catch (Exception e) {
             sb.setLength(obsStart);
             sb.append("null,\"err\":").append(q(e.toString()));
