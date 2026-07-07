@@ -41,10 +41,20 @@ import java.util.Map;
  * abandoned game thread can keep firing callbacks while the runner has moved
  * on (the no-interrupts rule means it is never killed); those records must not
  * leak into the next game's frame.
+ *
+ * Runaway guard: a wedged post-hard-cap thread can write observations
+ * indefinitely (pilot: one game wrote 24.6 GB raw in ~6 min against a legit
+ * max of 571 MB before the worker was killed mid-write, leaving a truncated
+ * frame). RAW_CAP truncates the frame with a loud "obs_cap" end record —
+ * policy labels up to the cut stay usable; the status keeps the game out of
+ * the value loss. The cap firing also releases the Obs lock promptly so the
+ * runner's endGame/close are never starved by a wedge.
  */
 public final class Obs {
     public static final int SCHEMA_VERSION = 1;
     private static final int ZSTD_LEVEL = 3;
+    /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
+    private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
 
     private static FileOutputStream file;
     private static PrintWriter idx;
@@ -532,9 +542,22 @@ public final class Obs {
             rawBytes += bytes.length;
             recs++;
         } catch (IOException e) {
-            System.err.println("Obs: write failed, disabling for this run: " + e);
-            frame = null;
-            currentGame = null;
+            // close + account the partial frame; dropping it with no idx row
+            // would leave fileOffset stale and misalign every later frame
+            System.err.println("Obs: write failed for game " + gameIdx + ", closing frame: " + e);
+            endGameFrame();
+            return;
+        }
+        if (rawBytes > RAW_CAP) {
+            System.err.println("Obs: game " + gameIdx + " hit raw cap ("
+                    + rawBytes + " > " + RAW_CAP + " bytes), truncating frame");
+            try {
+                frame.write("{\"k\":\"end\",\"status\":\"obs_cap\",\"winner\":-1,\"turns\":-1,\"ms\":0}\n"
+                        .getBytes(StandardCharsets.UTF_8));
+                recs++;
+            } catch (IOException ignored) {
+            }
+            endGameFrame();
         }
     }
 
@@ -553,6 +576,14 @@ public final class Obs {
             idx.flush();
         }
         fileOffset += counting.count;
+        if (file != null) {
+            try {
+                // channel position is ground truth (append mode, single writer);
+                // self-heals drift when a failed write landed partial bytes
+                fileOffset = file.getChannel().position();
+            } catch (IOException ignored) {
+            }
+        }
         frame = null;
         counting = null;
         currentGame = null;
