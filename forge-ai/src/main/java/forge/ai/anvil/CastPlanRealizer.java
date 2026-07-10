@@ -1,0 +1,254 @@
+package forge.ai.anvil;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import forge.ai.ComputerUtilCost;
+import forge.game.Game;
+import forge.game.GameObject;
+import forge.game.card.Card;
+import forge.game.card.CardCopyService;
+import forge.game.player.Player;
+import forge.game.spellability.SpellAbility;
+import forge.game.spellability.SpellAbilityStackInstance;
+import forge.game.spellability.TargetRestrictions;
+
+/**
+ * Realizes a rung-1 CastPlanAnswer against the chosen host's candidate SAs
+ * and adjudicates LEGALITY ONLY (M1 D8). The M0 65% veto rate was
+ * canPlaySa's heuristic *judgment* gating random proposals; a learned policy
+ * must not be gated by the heuristic's opinion, so this deliberately never
+ * calls the per-API AI (which is also where the AI sets targets/X — the model
+ * supplies both, making that path unnecessary as well as unwanted).
+ *
+ * Host-level disambiguation ladder (model candidates are dedup host rows, so
+ * several SAs can share the chosen host — measured 23.6% of expert actions on
+ * the pilot): shape-fit (targets/X compatibility) -> legality+payability ->
+ * kind preference (land > spell > ability; measured expert prior on
+ * cross-kind ties) -> scan order. Every realization reports its rung and the
+ * surviving-fit count so D8 telemetry can size the true ambiguity residue.
+ *
+ * The fit pass is side-effect-free: targets/X are cleared after each trial
+ * and re-applied only to the final pick.
+ */
+public final class CastPlanRealizer {
+
+    public static final class Result {
+        public final SpellAbility sa;  // null = veto -> the window passes
+        public final String veto;      // reason code when sa == null
+        public final String rung;      // single|shape|pay|kind|order
+        public final int hostSas;      // options sharing the chosen host
+        public final int fitCount;     // SAs that passed shape-fit
+
+        private Result(SpellAbility sa, String veto, String rung, int hostSas, int fitCount) {
+            this.sa = sa;
+            this.veto = veto;
+            this.rung = rung;
+            this.hostSas = hostSas;
+            this.fitCount = fitCount;
+        }
+
+        private static Result veto(String reason, int hostSas, int fitCount) {
+            return new Result(null, reason, null, hostSas, fitCount);
+        }
+    }
+
+    private CastPlanRealizer() {
+    }
+
+    public static Result realize(Game game, Player player, List<SpellAbility> hostSas,
+            CastPlanAnswer ans) {
+        List<GameObject> refs = resolveRefs(game, ans.targets);
+        if (refs == null) {
+            return Result.veto("dangling_ref", hostSas.size(), 0);
+        }
+        List<SpellAbility> fits = new ArrayList<>(2);
+        for (SpellAbility sa : hostSas) {
+            boolean ok = tryApply(sa, refs, ans);
+            clear(sa);
+            if (ok) {
+                fits.add(sa);
+            }
+        }
+        if (fits.isEmpty()) {
+            return Result.veto("no_shape_fit", hostSas.size(), 0);
+        }
+        List<SpellAbility> playable = new ArrayList<>(fits.size());
+        String lastReason = null;
+        for (SpellAbility sa : fits) {
+            tryApply(sa, refs, ans); // legality/payability judged with targets+X set
+            String why = legality(game, player, sa);
+            if (why == null && !sa.isLandAbility()
+                    && !ComputerUtilCost.canPayCost(sa, player, false)) {
+                why = "unpayable";
+            }
+            clear(sa);
+            if (why == null) {
+                playable.add(sa);
+            } else {
+                lastReason = why;
+            }
+        }
+        if (playable.isEmpty()) {
+            return Result.veto(lastReason == null ? "illegal" : lastReason,
+                    hostSas.size(), fits.size());
+        }
+        String rung;
+        SpellAbility pick;
+        if (hostSas.size() == 1) {
+            rung = "single";
+            pick = playable.get(0);
+        } else if (fits.size() == 1) {
+            rung = "shape";
+            pick = playable.get(0);
+        } else if (playable.size() == 1) {
+            rung = "pay";
+            pick = playable.get(0);
+        } else {
+            pick = preferByKind(playable);
+            rung = sameKind(playable) ? "order" : "kind";
+        }
+        tryApply(pick, refs, ans); // leave the pick armed for the engine
+        return new Result(pick, null, rung, hostSas.size(), fits.size());
+    }
+
+    /** Model refs -> engine objects; null on any dangling ref. */
+    private static List<GameObject> resolveRefs(Game game, List<CastPlanAnswer.Ref> refs) {
+        List<GameObject> out = new ArrayList<>(refs.size());
+        for (CastPlanAnswer.Ref r : refs) {
+            if (r.isPlayer) {
+                List<Player> ps = game.getRegisteredPlayers();
+                if (r.player < 0 || r.player >= ps.size()) {
+                    return null;
+                }
+                out.add(ps.get(r.player));
+            } else if (r.onStack) {
+                SpellAbility hit = null;
+                for (SpellAbilityStackInstance si : game.getStack()) {
+                    Card h = si.getSourceCard();
+                    if (h != null && h.getId() == r.entity) {
+                        hit = si.getSpellAbility();
+                        break;
+                    }
+                }
+                if (hit == null) {
+                    return null;
+                }
+                out.add(hit);
+            } else {
+                Card c = game.findById(r.entity);
+                if (c == null) {
+                    return null;
+                }
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Distribute refs across the SA chain's targeting nodes in label-extractor
+     * order (main SA first, then sub-abilities), greedily per node; set X.
+     * True iff every node reaches a valid target count and every ref is
+     * consumed. Mutates the SA — callers pair with clear().
+     */
+    private static boolean tryApply(SpellAbility sa, List<GameObject> refs, CastPlanAnswer ans) {
+        boolean saHasX = !sa.isLandAbility() && sa.getPayCosts() != null
+                && sa.getPayCosts().getTotalMana() != null
+                && sa.getPayCosts().getTotalMana().countX() > 0;
+        if (ans.hasX != saHasX) {
+            return false;
+        }
+        if (ans.hasX) {
+            sa.setXManaCostPaid(ans.x);
+        }
+        int ri = 0;
+        for (SpellAbility node = sa; node != null; node = node.getSubAbility()) {
+            if (!node.usesTargeting()) {
+                continue;
+            }
+            node.resetTargets();
+            TargetRestrictions tr = node.getTargetRestrictions();
+            int min = tr.getMinTargets(node.getHostCard(), node);
+            int max = tr.getMaxTargets(node.getHostCard(), node);
+            int added = 0;
+            while (ri < refs.size() && added < max && node.canTarget(refs.get(ri))) {
+                node.getTargets().add(refs.get(ri));
+                ri++;
+                added++;
+            }
+            if (added < min || !node.isTargetNumberValid()) {
+                return false;
+            }
+        }
+        return ri == refs.size();
+    }
+
+    private static void clear(SpellAbility sa) {
+        for (SpellAbility node = sa; node != null; node = node.getSubAbility()) {
+            if (node.usesTargeting()) {
+                node.resetTargets();
+            }
+        }
+        sa.setXManaCostPaid(null);
+    }
+
+    /**
+     * The legality subset of AiController.canPlaySa — timing, casting
+     * restrictions (with the same LKI stack-zone dance for spells), and
+     * post-stack legality. Deliberately none of its judgment calls.
+     */
+    private static String legality(Game game, Player player, SpellAbility sa) {
+        if (!sa.canPlay()) {
+            return "timing";
+        }
+        if (!sa.canCastTiming(player)) {
+            return "timing";
+        }
+        if (!sa.isLegalAfterStack()) {
+            return "after_stack";
+        }
+        Card host = sa.getHostCard();
+        Card spellHost = host;
+        if (sa.isSpell() && host != null) {
+            spellHost = CardCopyService.getLKICopy(host);
+            spellHost.setLKICMC(-1);
+            spellHost.setLastKnownZone(game.getStackZone());
+            spellHost.setCastFrom(host.getZone());
+        }
+        if (!sa.checkRestrictions(spellHost, player)) {
+            return "restrictions";
+        }
+        return null;
+    }
+
+    // Measured expert prior on cross-kind host ties (pilot, 5K games):
+    // land beats ability 3,175:<56, land beats spell 1,457:222, spell beats
+    // ability 1,627:341. Within a kind, scan order (stable sort).
+    private static int kindRank(SpellAbility sa) {
+        if (sa.isLandAbility()) {
+            return 0;
+        }
+        return sa.isSpell() ? 1 : 2;
+    }
+
+    private static SpellAbility preferByKind(List<SpellAbility> sas) {
+        SpellAbility best = sas.get(0);
+        for (SpellAbility sa : sas) {
+            if (kindRank(sa) < kindRank(best)) {
+                best = sa;
+            }
+        }
+        return best;
+    }
+
+    private static boolean sameKind(List<SpellAbility> sas) {
+        int k = kindRank(sas.get(0));
+        for (SpellAbility sa : sas) {
+            if (kindRank(sa) != k) {
+                return false;
+            }
+        }
+        return true;
+    }
+}

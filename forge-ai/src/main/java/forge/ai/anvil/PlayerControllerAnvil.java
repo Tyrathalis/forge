@@ -65,7 +65,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         for (SpellAbility sa : options) {
             labels.add(Census.str(sa));
         }
-        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "chooseSpellAbilityToPlay", labels);
+        // Structured-opts dec (same basis as the corpus label path) so D8 eval
+        // games are analyzable trajectories and ret() can label "oi".
+        long obsSeq = Obs.decPriority(getGame(), getPlayer(), "bridge", options);
+
+        // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
+        CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
+                Obs.lastDecForBridge());
+        if (plan != null) {
+            return oneShotCast(options, plan, obsSeq);
+        }
         int pick = bridge.selectOne(TAG_PRIORITY, labels);
         if (pick == 0) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
@@ -86,6 +95,48 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 "by", "bridge", "options", options.size(), "pick", Census.str(chosen));
         Obs.ret(getGame(), obsSeq, chosen);
         return Lists.newArrayList(chosen);
+    }
+
+    /**
+     * M1 D8: realize a composite CastPlan answer. The realizer adjudicates
+     * legality only (never the heuristic's judgment — the M0 65% veto class);
+     * a veto passes the window, with the reason in the census/provenance log.
+     */
+    private List<SpellAbility> oneShotCast(List<SpellAbility> options, CastPlanAnswer plan,
+            long obsSeq) {
+        if (plan.optionIndex <= 0 || plan.optionIndex > options.size()) {
+            boolean oor = plan.optionIndex != 0;
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "bridge", "options", options.size(), "pick", "pass",
+                    "oneshot", true, "oor", oor);
+            Obs.ret(getGame(), obsSeq, null);
+            return null;
+        }
+        SpellAbility picked = options.get(plan.optionIndex - 1);
+        List<SpellAbility> hostSas;
+        if (plan.hostLevel && picked.getHostCard() != null) {
+            hostSas = Lists.newArrayListWithCapacity(2);
+            for (SpellAbility sa : options) {
+                if (sa.getHostCard() == picked.getHostCard()) {
+                    hostSas.add(sa);
+                }
+            }
+        } else {
+            hostSas = Lists.newArrayList(picked);
+        }
+        CastPlanRealizer.Result r = CastPlanRealizer.realize(getGame(), player, hostSas, plan);
+        if (r.sa == null) {
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "bridge", "options", options.size(), "pick", Census.str(picked),
+                    "oneshot", true, "veto", r.veto, "hostSas", r.hostSas, "fits", r.fitCount);
+            Obs.ret(getGame(), obsSeq, null);
+            return null;
+        }
+        Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                "by", "bridge", "options", options.size(), "pick", Census.str(r.sa),
+                "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount);
+        Obs.ret(getGame(), obsSeq, Lists.newArrayList(r.sa));
+        return Lists.newArrayList(r.sa);
     }
 
     @Override

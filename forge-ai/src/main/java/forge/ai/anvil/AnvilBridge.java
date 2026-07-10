@@ -26,6 +26,18 @@ public interface AnvilBridge {
     /** INT_IN_RANGE: inclusive bounds. */
     int intInRange(String tag, int min, int max);
 
+    /**
+     * M1 one-shot cast: composite answer to a priority window
+     * (bridge-protocol-v0 CastPlan; ServerHello.one_shot_cast). Null means
+     * this bridge doesn't answer the composite shape — the caller falls back
+     * to the M0 selectOne path (local-random and echo arms stay unchanged).
+     * observation is Obs.lastDecForBridge() (null when obs logging is off).
+     */
+    default CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation) {
+        return null;
+    }
+
     /** Lifecycle notifications (no-ops for the local arm). */
     default void gameStart(String gameId, long seed) {
     }
