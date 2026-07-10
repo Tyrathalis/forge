@@ -71,6 +71,30 @@ public final class CastPlanRealizer {
             }
         }
         if (fits.isEmpty()) {
+            // Modal spells (Charm api): the targeting lives inside modes that
+            // bind at cast time, so the model's refs describe mode targets the
+            // bare chain can't hold (smoke 3: 226/227 no-fit vetoes were
+            // charms/commands). Cast mode-less — refs discarded, modes and
+            // their targets fall to the heuristic interception points (M1
+            // scope: modes are cut from rung 1; census rung "modal" sizes the
+            // capability gap for the D8 report).
+            List<GameObject> none = java.util.Collections.emptyList();
+            for (SpellAbility sa : hostSas) {
+                if (!isModal(sa) || !tryApply(sa, none, ans)) {
+                    clear(sa);
+                    continue;
+                }
+                String why = legality(game, player, sa);
+                if (why == null && !sa.isLandAbility()
+                        && !ComputerUtilCost.canPayCost(sa, player, false)) {
+                    why = "unpayable";
+                }
+                if (why != null) {
+                    clear(sa);
+                    continue;
+                }
+                return new Result(sa, null, "modal", hostSas.size(), 0);
+            }
             return Result.veto("no_shape_fit", hostSas.size(), 0);
         }
         List<SpellAbility> playable = new ArrayList<>(fits.size());
@@ -224,6 +248,15 @@ public final class CastPlanRealizer {
             return "restrictions";
         }
         return null;
+    }
+
+    private static boolean isModal(SpellAbility sa) {
+        for (SpellAbility node = sa; node != null; node = node.getSubAbility()) {
+            if (node.getApi() == forge.game.ability.ApiType.Charm) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Measured expert prior on cross-kind host ties (pilot, 5K games):
