@@ -72,14 +72,34 @@ public final class Obs {
 
     // ---- M1 D8 bridge support: wire-record capture, oi labels, history ring ----
     /** = anvil.encoder.transform.HISTORY_K; the wire observation carries the
-     *  last K completed decisions so the server featurizes identically to
-     *  training (info-set rule applied Python-side, where it is leak-tested). */
+     *  last K prior decisions so the server featurizes identically to
+     *  training (info-set rule applied Python-side, where it is leak-tested).
+     *  Entries append at dec time and back-fill the host at ret time,
+     *  matching the training loader's view (it joins rets into decs over the
+     *  whole game, so "prior" decs carry their answers even when the ret
+     *  lands later in the stream). Residual skew: a window nested inside a
+     *  still-open entity-answering parent trains against that parent's
+     *  future host but serves -1 — loader-side fix queued with the M2
+     *  schema work. */
     private static final int HIST_CAP = 8;
-    private static final java.util.ArrayDeque<String> histRing = new java.util.ArrayDeque<>();
-    private static final java.util.LinkedHashMap<Long, String[]> pendingDec = new java.util.LinkedHashMap<>();
+
+    private static final class HistEntry {
+        final String m;
+        final int p;
+        long host = -1;
+
+        HistEntry(String m, int p) {
+            this.m = m;
+            this.p = p;
+        }
+    }
+
+    private static final java.util.ArrayDeque<HistEntry> histRing = new java.util.ArrayDeque<>();
+    private static final java.util.LinkedHashMap<Long, HistEntry> pendingDec = new java.util.LinkedHashMap<>();
     private static long prioSeq = -1;
     private static java.util.List<SpellAbility> prioOptions;
     private static String lastDecRecord;
+    private static String lastHistJson;
     private static String lastHeaderRecord;
 
     private Obs() {
@@ -139,6 +159,7 @@ public final class Obs {
         prioSeq = -1;
         prioOptions = null;
         lastDecRecord = null;
+        lastHistJson = null;
         lastHeaderRecord = null;
         counting = new CountingStream(file);
         try {
@@ -353,12 +374,32 @@ public final class Obs {
         }
         sb.append('}');
         lastDecRecord = sb.toString();
-        pendingDec.put(s, new String[]{m, String.valueOf(pIdx)});
+        lastHistJson = histJson(); // prior decs only: snapshot BEFORE appending this one
+        HistEntry entry = new HistEntry(m, pIdx);
+        histRing.addLast(entry);
+        if (histRing.size() > HIST_CAP) {
+            histRing.removeFirst();
+        }
+        pendingDec.put(s, entry);
         if (pendingDec.size() > 64) { // crash-path leak bound; normal nesting is shallow
             pendingDec.remove(pendingDec.keySet().iterator().next());
         }
         write(sb);
         return s;
+    }
+
+    private static String histJson() {
+        StringBuilder sb = new StringBuilder(64 * histRing.size() + 2);
+        sb.append('[');
+        int i = 0;
+        for (HistEntry h : histRing) {
+            if (i++ > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"m\":").append(q(h.m)).append(",\"p\":").append(h.p)
+                    .append(",\"e\":").append(h.host).append('}');
+        }
+        return sb.append(']').toString();
     }
 
     /** Answer record at callback exit; joined to its dec on "s". */
@@ -374,13 +415,9 @@ public final class Obs {
         }
         sb.append('}');
         write(sb);
-        String[] mp = pendingDec.remove(s);
-        if (mp != null) {
-            histRing.addLast("{\"m\":" + q(mp[0]) + ",\"p\":" + mp[1]
-                    + ",\"e\":" + retHostId(v) + '}');
-            if (histRing.size() > HIST_CAP) {
-                histRing.removeFirst();
-            }
+        HistEntry entry = pendingDec.remove(s);
+        if (entry != null) {
+            entry.host = retHostId(v); // back-fill; may already be ring-evicted
         }
         if (s == prioSeq) {
             prioSeq = -1;
@@ -454,16 +491,9 @@ public final class Obs {
         if (lastDecRecord == null) {
             return null;
         }
-        StringBuilder sb = new StringBuilder(lastDecRecord.length() + 64 * histRing.size() + 16);
-        sb.append(lastDecRecord, 0, lastDecRecord.length() - 1).append(",\"hist\":[");
-        int i = 0;
-        for (String h : histRing) {
-            if (i++ > 0) {
-                sb.append(',');
-            }
-            sb.append(h);
-        }
-        sb.append("]}");
+        StringBuilder sb = new StringBuilder(lastDecRecord.length() + lastHistJson.length() + 16);
+        sb.append(lastDecRecord, 0, lastDecRecord.length() - 1)
+                .append(",\"hist\":").append(lastHistJson).append('}');
         return sb.toString();
     }
 
