@@ -156,10 +156,14 @@ public final class CastPlanRealizer {
         boolean saHasX = !sa.isLandAbility() && sa.getPayCosts() != null
                 && sa.getPayCosts().getTotalMana() != null
                 && sa.getPayCosts().getTotalMana().countX() > 0;
-        if (ans.hasX != saHasX) {
+        // The server can't see which of a host's SAs is an X spell (rung-1
+        // candidates are host-level), so it attaches its X reading to every
+        // plan: an X-less plan can't power an X spell, but a plan's X is
+        // simply ignored by non-X siblings rather than rejecting them.
+        if (saHasX && !ans.hasX) {
             return false;
         }
-        if (ans.hasX) {
+        if (saHasX) {
             sa.setXManaCostPaid(ans.x);
         }
         int ri = 0;
