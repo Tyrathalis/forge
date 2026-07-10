@@ -274,6 +274,9 @@ public final class AnvilRun {
                 } catch (Exception | StackOverflowError e) {
                     game.setGameOver(GameEndReason.Draw);
                     status = "crash_or_hang:" + e.getClass().getSimpleName();
+                    if (Boolean.getBoolean("anvil.crash.trace")) {
+                        e.printStackTrace();
+                    }
                 } finally {
                     drawClock.cancel(false);
                 }
