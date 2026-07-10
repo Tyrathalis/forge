@@ -49,6 +49,7 @@ public final class GrpcBridge implements AnvilBridge {
     private long seq;
     private String gameId = "";
     private int transportFailures;
+    private int serverFallbacks;
 
     public GrpcBridge(String host, int port, String workerId, String forkCommit) {
         channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
@@ -109,12 +110,26 @@ public final class GrpcBridge implements AnvilBridge {
                 req.addOptions(Option.newBuilder().setId(i).setLabel(label == null ? "" : label));
             }
         }
+        // M1: every bridged decision carries its observation (the model server
+        // answers one-field tags from the same record the obs log writes).
+        // Cheap when logging is on (string already built); null when off.
+        String obs = Obs.lastDecForBridge();
+        if (obs != null) {
+            req.setObservation(ByteString.copyFromUtf8(obs));
+        }
         out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
         ServerMsg msg = await();
         if (msg == null || !msg.hasResponse()) {
             transportFailures++;
             System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
                     + " (total " + transportFailures + "); using local answer");
+            return echo;
+        }
+        // A fallback response means "answer locally, tagged" — reading the
+        // oneof's default value instead looped mulligans forever (D8 smoke 1:
+        // default flag=false read as never-keep, 14.8K mulligans, obs cap).
+        if (msg.getResponse().getFallback()) {
+            serverFallbacks++;
             return echo;
         }
         return msg.getResponse();

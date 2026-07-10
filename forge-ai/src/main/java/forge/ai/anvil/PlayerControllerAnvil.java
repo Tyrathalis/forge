@@ -139,6 +139,12 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return Lists.newArrayList(r.sa);
     }
 
+    /** London mulligans are rules-unbounded (hand redraws to 7 every time), so
+     *  a pathological bridge answer loops the game forever at turn 0 (D8
+     *  smoke 1). Insurance cap, far beyond any sane line. */
+    private static final int MULLIGAN_CAP = 12;
+    private int mulligansAsked;
+
     @Override
     public boolean mulliganKeepHand(Player firstPlayer, int cardsToReturn) {
         if (!bridged(TAG_MULLIGAN)) {
@@ -146,7 +152,13 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
         long obsSeq = Obs.decBridged(getGame(), getPlayer(), "mulliganKeepHand", null);
         boolean keep = bridge.bool(TAG_MULLIGAN);
-        Census.rec(getGame(), getPlayer(), "mulliganKeepHand", "by", "bridge", "keep", keep);
+        if (!keep && ++mulligansAsked >= MULLIGAN_CAP) {
+            keep = true;
+            Census.rec(getGame(), getPlayer(), "mulliganKeepHand", "by", "bridge",
+                    "keep", true, "mull_cap", true);
+        } else {
+            Census.rec(getGame(), getPlayer(), "mulliganKeepHand", "by", "bridge", "keep", keep);
+        }
         Obs.ret(getGame(), obsSeq, keep);
         return keep;
     }
