@@ -70,6 +70,18 @@ public final class Obs {
     private static long rawBytes;
     private static long obsErrors;
 
+    // ---- M1 D8 bridge support: wire-record capture, oi labels, history ring ----
+    /** = anvil.encoder.transform.HISTORY_K; the wire observation carries the
+     *  last K completed decisions so the server featurizes identically to
+     *  training (info-set rule applied Python-side, where it is leak-tested). */
+    private static final int HIST_CAP = 8;
+    private static final java.util.ArrayDeque<String> histRing = new java.util.ArrayDeque<>();
+    private static final java.util.LinkedHashMap<Long, String[]> pendingDec = new java.util.LinkedHashMap<>();
+    private static long prioSeq = -1;
+    private static java.util.List<SpellAbility> prioOptions;
+    private static String lastDecRecord;
+    private static String lastHeaderRecord;
+
     private Obs() {
     }
 
@@ -122,6 +134,12 @@ public final class Obs {
         seq = 0;
         recs = 0;
         rawBytes = 0;
+        histRing.clear();
+        pendingDec.clear();
+        prioSeq = -1;
+        prioOptions = null;
+        lastDecRecord = null;
+        lastHeaderRecord = null;
         counting = new CountingStream(file);
         try {
             frame = new ZstdOutputStream(counting, ZSTD_LEVEL);
@@ -168,6 +186,7 @@ public final class Obs {
             sb.append('}');
         }
         sb.append("]}");
+        lastHeaderRecord = sb.toString(); // GameStart.header for the M1 bridge
         write(sb);
     }
 
@@ -212,13 +231,29 @@ public final class Obs {
      * game is actually being logged.
      */
     public static long decPriority(Game g, Player p) {
+        return decPriority(g, p, null);
+    }
+
+    /** Bridged variant carries provenance; both stash the scanned options so
+     *  ret() can label the chosen option index ("oi" — exact SA-level labels
+     *  for future corpora; the sa-string join is ambiguous for ~31% of
+     *  multi-SA hosts, measured 2026-07-10). */
+    public static long decPriority(Game g, Player p, String by) {
+        return decPriority(g, p, by, null);
+    }
+
+    /** preScanned lets the bridged path reuse its own option scan (the scan
+     *  is the D3-measured haircut; scanning twice per window would double it). */
+    public static long decPriority(Game g, Player p, String by,
+            java.util.List<SpellAbility> preScanned) {
         if (!isLogging(g)) {
             return -1;
         }
         java.util.List<String> opts = null;
         java.util.List<Card> extraEnts = null;
+        java.util.List<SpellAbility> options = null;
         try {
-            java.util.List<SpellAbility> options = AnvilOptions.priorityOptions(g, p);
+            options = preScanned != null ? preScanned : AnvilOptions.priorityOptions(g, p);
             opts = new java.util.ArrayList<>(options.size());
             for (SpellAbility sa : options) {
                 StringBuilder ob = new StringBuilder(96);
@@ -240,9 +275,15 @@ public final class Obs {
             }
         } catch (Exception e) {
             opts = null; // options are diagnostic-critical but not corpus-fatal
+            options = null;
             obsErrors++;
         }
-        return decInternal(g, p, "chooseSpellAbilityToPlay", null, opts, true, extraEnts);
+        long s = decInternal(g, p, "chooseSpellAbilityToPlay", by, opts, true, extraEnts);
+        if (s >= 0) {
+            prioSeq = s;
+            prioOptions = options;
+        }
+        return s;
     }
 
     private static synchronized long decInternal(Game g, Player p, String m, String by,
@@ -270,9 +311,10 @@ public final class Obs {
             }
         } catch (Exception ignored) {
         }
+        int pIdx = p == null ? -1 : g.getRegisteredPlayers().indexOf(p);
         sb.append(",\"t\":").append(turn)
                 .append(",\"ph\":").append(q(phase))
-                .append(",\"p\":").append(p == null ? -1 : g.getRegisteredPlayers().indexOf(p))
+                .append(",\"p\":").append(pIdx)
                 .append(",\"m\":\"").append(m).append('"')
                 .append(",\"d\":").append(Thread.currentThread().getStackTrace().length);
         if (by != null) {
@@ -310,6 +352,11 @@ public final class Obs {
             obsErrors++;
         }
         sb.append('}');
+        lastDecRecord = sb.toString();
+        pendingDec.put(s, new String[]{m, String.valueOf(pIdx)});
+        if (pendingDec.size() > 64) { // crash-path leak bound; normal nesting is shallow
+            pendingDec.remove(pendingDec.keySet().iterator().next());
+        }
         write(sb);
         return s;
     }
@@ -322,8 +369,107 @@ public final class Obs {
         StringBuilder sb = new StringBuilder(160);
         sb.append("{\"k\":\"ret\",\"s\":").append(s).append(",\"v\":");
         value(sb, v, 0);
+        if (s == prioSeq && prioOptions != null && v != null) {
+            sb.append(",\"oi\":").append(optionIndexOf(v));
+        }
         sb.append('}');
         write(sb);
+        String[] mp = pendingDec.remove(s);
+        if (mp != null) {
+            histRing.addLast("{\"m\":" + q(mp[0]) + ",\"p\":" + mp[1]
+                    + ",\"e\":" + retHostId(v) + '}');
+            if (histRing.size() > HIST_CAP) {
+                histRing.removeFirst();
+            }
+        }
+        if (s == prioSeq) {
+            prioSeq = -1;
+            prioOptions = null;
+        }
+    }
+
+    /**
+     * Index of the chosen SA in the stashed option scan, or -1. Identity
+     * first; alt-cost variants are fresh copies each scan, so fall back to a
+     * composite key (host + rendered string + alternative cost) and stay
+     * honest on ambiguity (-1) rather than guess.
+     */
+    private static int optionIndexOf(Object v) {
+        SpellAbility chosen = null;
+        if (v instanceof SpellAbility) {
+            chosen = (SpellAbility) v;
+        } else if (v instanceof java.util.List && !((java.util.List<?>) v).isEmpty()
+                && ((java.util.List<?>) v).get(0) instanceof SpellAbility) {
+            chosen = (SpellAbility) ((java.util.List<?>) v).get(0);
+        }
+        if (chosen == null) {
+            return -1;
+        }
+        for (int i = 0; i < prioOptions.size(); i++) {
+            if (prioOptions.get(i) == chosen) {
+                return i;
+            }
+        }
+        int hit = -1;
+        int n = 0;
+        for (int i = 0; i < prioOptions.size(); i++) {
+            SpellAbility o = prioOptions.get(i);
+            if (o.getHostCard() == chosen.getHostCard()
+                    && o.getAlternativeCost() == chosen.getAlternativeCost()
+                    && String.valueOf(o).equals(String.valueOf(chosen))) {
+                hit = i;
+                n++;
+            }
+        }
+        return n == 1 ? hit : -1;
+    }
+
+    /** Chosen-host id for a history entry, mirroring what the Python side
+     *  reads off ret[0] (SpellAbility/Card answers; -1 otherwise). */
+    private static long retHostId(Object v) {
+        Object first = v;
+        if (v instanceof java.util.List) {
+            java.util.List<?> l = (java.util.List<?>) v;
+            first = l.isEmpty() ? null : l.get(0);
+        }
+        if (first instanceof SpellAbility) {
+            Card h = ((SpellAbility) first).getHostCard();
+            return h == null ? -1 : h.getId();
+        }
+        if (first instanceof Card) {
+            return ((Card) first).getId();
+        }
+        return -1;
+    }
+
+    /**
+     * The dec record just written, with the last-K completed-decision history
+     * spliced in — the M1 bridge observation payload. The server featurizes
+     * it with the same transform as training; the information-set rule is
+     * applied Python-side, where it is leak-tested. Null when not logging
+     * (D8 eval games run with --obs on; the wire payload rides the same
+     * serialization the corpus uses).
+     */
+    public static synchronized String lastDecForBridge() {
+        if (lastDecRecord == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(lastDecRecord.length() + 64 * histRing.size() + 16);
+        sb.append(lastDecRecord, 0, lastDecRecord.length() - 1).append(",\"hist\":[");
+        int i = 0;
+        for (String h : histRing) {
+            if (i++ > 0) {
+                sb.append(',');
+            }
+            sb.append(h);
+        }
+        sb.append("]}");
+        return sb.toString();
+    }
+
+    /** The game header record (GameStart.header wire field). Null when not logging. */
+    public static synchronized String lastHeaderForBridge() {
+        return lastHeaderRecord;
     }
 
     // ---------- answer-value serialization (best-effort v1; see schema doc) ----------
