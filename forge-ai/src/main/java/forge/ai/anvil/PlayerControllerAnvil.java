@@ -134,7 +134,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                 "by", "bridge", "options", options.size(), "pick", Census.str(r.sa),
-                "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount);
+                "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount,
+                "divided", r.divided);
         Obs.ret(getGame(), obsSeq, Lists.newArrayList(r.sa));
         return Lists.newArrayList(r.sa);
     }

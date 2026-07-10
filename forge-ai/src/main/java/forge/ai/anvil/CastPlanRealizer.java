@@ -36,9 +36,10 @@ public final class CastPlanRealizer {
     public static final class Result {
         public final SpellAbility sa;  // null = veto -> the window passes
         public final String veto;      // reason code when sa == null
-        public final String rung;      // single|shape|pay|kind|order
+        public final String rung;      // single|shape|pay|kind|order|modal
         public final int hostSas;      // options sharing the chosen host
         public final int fitCount;     // SAs that passed shape-fit
+        public final boolean divided;  // even-split divided allocation applied
 
         private Result(SpellAbility sa, String veto, String rung, int hostSas, int fitCount) {
             this.sa = sa;
@@ -46,6 +47,7 @@ public final class CastPlanRealizer {
             this.rung = rung;
             this.hostSas = hostSas;
             this.fitCount = fitCount;
+            this.divided = sa != null && isDivided(sa);
         }
 
         private static Result veto(String reason, int hostSas, int fitCount) {
@@ -195,7 +197,7 @@ public final class CastPlanRealizer {
             if (!node.usesTargeting()) {
                 continue;
             }
-            node.resetTargets();
+            node.clearTargets(); // also initializes dividedValue (X already set above)
             TargetRestrictions tr = node.getTargetRestrictions();
             int min = tr.getMinTargets(node.getHostCard(), node);
             int max = tr.getMaxTargets(node.getHostCard(), node);
@@ -208,6 +210,22 @@ public final class CastPlanRealizer {
             if (added < min || !node.isTargetNumberValid()) {
                 return false;
             }
+            if (node.isDividedAsYouChoose() && added > 0) {
+                // The model doesn't predict allocations at rung 1; resolution
+                // NPEs without them (smoke 3). Deterministic legal default:
+                // even split, remainder to the first target. Result.divided
+                // marks these for the census.
+                int total = node.getStillToDivide();
+                if (total < added) {
+                    return false; // can't give every target >= 1
+                }
+                int base = total / added;
+                int rem = total % added;
+                int i = 0;
+                for (GameObject t : node.getTargets()) {
+                    node.addDividedAllocation(t, base + (i++ == 0 ? rem : 0));
+                }
+            }
         }
         return ri == refs.size();
     }
@@ -215,10 +233,19 @@ public final class CastPlanRealizer {
     private static void clear(SpellAbility sa) {
         for (SpellAbility node = sa; node != null; node = node.getSubAbility()) {
             if (node.usesTargeting()) {
-                node.resetTargets();
+                node.clearTargets();
             }
         }
         sa.setXManaCostPaid(null);
+    }
+
+    private static boolean isDivided(SpellAbility sa) {
+        for (SpellAbility node = sa; node != null; node = node.getSubAbility()) {
+            if (node.usesTargeting() && node.isDividedAsYouChoose()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
