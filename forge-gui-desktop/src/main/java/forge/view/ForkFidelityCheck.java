@@ -92,6 +92,12 @@ public final class ForkFidelityCheck {
         // canonicalization (copy-of-copy is faithful → search trees are internally
         // consistent); F2 ≠ F1 means every copy introduces fresh drift.
         boolean chain = params.containsKey("chain");
+        // Twin mode: F2 = a second independent copy of the MAINLINE at the same
+        // point, replayed from the same RNG snapshot as F1. F1 ≡ F2 is the
+        // rollout-contract determinism check: identical state + identical seed
+        // must reproduce the identical trajectory, or rollout value labels are
+        // not replayable. (Chain reuses the same plumbing with source = F1.)
+        boolean twin = params.containsKey("twin");
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
@@ -109,10 +115,25 @@ public final class ForkFidelityCheck {
         System.out.printf("Fork-fidelity check: %d games, %s, baseSeed=%d, forkTurn in [%d,%d]%n",
                 nGames, type, baseSeed, MIN_FORK_TURN, MAX_FORK_TURN);
 
+        // -seeds <s1,s2,...> runs an explicit seed list (e.g. a repro set)
+        // instead of the contiguous baseSeed..baseSeed+n-1 range.
+        List<Long> seeds = new ArrayList<>();
+        if (params.containsKey("seeds")) {
+            for (String part : String.join(",", params.get("seeds")).split(",")) {
+                if (!part.isBlank()) {
+                    seeds.add(Long.parseLong(part.trim()));
+                }
+            }
+        } else {
+            for (int i = 0; i < nGames; i++) {
+                seeds.add(baseSeed + i);
+            }
+        }
+
         Map<String, Integer> tally = new TreeMap<>();
         try (PrintWriter out = new PrintWriter(new FileWriter(outPath, true))) {
-            for (int i = 0; i < nGames; i++) {
-                GameResult r = runOneGame(rules, type, decks, baseSeed + i, perturb, freshRng, chain);
+            for (int i = 0; i < seeds.size(); i++) {
+                GameResult r = runOneGame(rules, type, decks, seeds.get(i), perturb, freshRng, chain, twin);
                 out.println(r.toJson());
                 out.flush();
                 tally.merge(r.status, 1, Integer::sum);
@@ -120,7 +141,7 @@ public final class ForkFidelityCheck {
                     tally.merge("chain:" + r.chainStatus, 1, Integer::sum);
                 }
                 System.out.printf("game %d/%d seed=%d forkTurn=%d -> %s%n",
-                        i + 1, nGames, r.seed, r.forkTurn, r.summaryLine());
+                        i + 1, seeds.size(), r.seed, r.forkTurn, r.summaryLine());
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -148,7 +169,7 @@ public final class ForkFidelityCheck {
         return params;
     }
 
-    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain) {
+    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain, boolean twin) {
         GameResult result = new GameResult(seed);
         // Fork turn drawn from a meta-RNG so it never perturbs game randomness.
         Random meta = new Random(seed * 6364136223846793005L + 1442695040888963407L);
@@ -171,6 +192,8 @@ public final class ForkFidelityCheck {
         monitor.perturb = perturb;
         monitor.freshRng = freshRng;
         monitor.chain = chain;
+        monitor.twin = twin;
+        result.mode = twin ? "twin" : chain ? "chain" : "";
         game.subscribeToEvents(monitor);
 
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -203,7 +226,7 @@ public final class ForkFidelityCheck {
         result.mainTraceHash = traceHash(monitor.mainTrace, result.forkTurn);
         result.forkTraceHash = traceHash(monitor.forkTrace, result.forkTurn);
         classify(result, monitor);
-        if (chain) {
+        if (chain || twin) {
             result.chainTraceHash = traceHash(monitor.chainTrace, result.forkTurn);
             classifyChain(result, monitor);
         }
@@ -298,6 +321,7 @@ public final class ForkFidelityCheck {
         boolean perturb = false;
         boolean freshRng = false;
         boolean chain = false;
+        boolean twin = false;
 
         Monitor(Game game, GameResult result) {
             this.game = game;
@@ -367,12 +391,14 @@ public final class ForkFidelityCheck {
                 result.divergenceSample = firstDiff(dMain, dFork);
             }
 
-            // Chain mode: F2 = copy(F1), made at the same point BEFORE F1 plays anything.
+            // Chain mode: F2 = copy(F1); twin mode: F2 = a second copy of the
+            // mainline. Both made at the same point BEFORE F1 plays anything,
+            // both compared against F1 (digest now, trace after replay).
             Game copy2 = null;
-            if (chain) {
+            if (chain || twin) {
                 long t1 = System.nanoTime();
                 try {
-                    copy2 = new GameCopier(copy).makeCopy();
+                    copy2 = new GameCopier(twin ? game : copy).makeCopy();
                     result.copy2Ms = (System.nanoTime() - t1) / 1_000_000;
                     result.chainStaticMatch = dFork.equals(digest(copy2));
                 } catch (Throwable t) {
@@ -607,6 +633,7 @@ public final class ForkFidelityCheck {
         String mainOutcome = "";
         String forkOutcome = "";
         String notes = "";
+        String mode = "";
         int mainTurns;
         int forkTurns;
         String mainTraceHash = "";
@@ -653,6 +680,7 @@ public final class ForkFidelityCheck {
                         + ",\"chainOutcome\":\"" + esc(chainOutcome) + '"'
                         + ",\"chainSample\":\"" + esc(chainSample) + '"'
                         + ",\"chainTraceHash\":\"" + chainTraceHash + '"')
+                    + (mode.isEmpty() ? "" : ",\"mode\":\"" + mode + '"')
                     + ",\"notes\":\"" + esc(notes) + "\"}";
         }
 
