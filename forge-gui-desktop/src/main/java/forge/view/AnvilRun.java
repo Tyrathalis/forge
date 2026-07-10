@@ -86,7 +86,8 @@ public final class AnvilRun {
         boolean pairFile = params != null && params.containsKey("pairs");
         if (params == null || fixedPair == pairFile) {
             System.out.println("Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <n>]) [-f <format>] "
-                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-census <out.jsonl>] [-obs <out.zst>] "
+                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] "
+                    + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
@@ -97,6 +98,14 @@ public final class AnvilRun {
         String bridgeMode = params.containsKey("b") ? params.get("b").get(0) : "local-random";
         Set<String> tags = params.containsKey("tags")
                 ? new HashSet<>(Arrays.asList(params.get("tags").get(0).split(","))) : DEFAULT_TAGS;
+        // null = all seats bridged (self-play); "-bridgeseats 0" = seat 0 vs heuristic
+        Set<Integer> bridgeSeats = null;
+        if (params.containsKey("bridgeseats")) {
+            bridgeSeats = new HashSet<>();
+            for (String s : params.get("bridgeseats").get(0).split(",")) {
+                bridgeSeats.add(Integer.parseInt(s.trim()));
+            }
+        }
 
         int rangeStart = 0;
         int nGames;
@@ -248,8 +257,14 @@ public final class AnvilRun {
                             splitmix64(seed + (j + 1) * 0x9E3779B97F4A7C15L), profiles.size()));
                     RegisteredPlayer rp = type.equals(GameType.Commander)
                             ? RegisteredPlayer.forCommander(d) : new RegisteredPlayer(d);
+                    // Mixed-seat arms (M1 D8): seats outside -bridgeseats get an
+                    // empty tag set — every decision falls through to the
+                    // inherited heuristic (provenance rule intact), and the name
+                    // prefix makes games.jsonl winners parseable per arm.
+                    boolean seatBridged = bridgeSeats == null || bridgeSeats.contains(j);
                     AnvilLobbyPlayer lp = new AnvilLobbyPlayer(
-                            "Anvil(" + (j + 1) + ")-" + d.getName(), bridge, tags);
+                            (seatBridged ? "Anvil(" : "Heur(") + (j + 1) + ")-" + d.getName(),
+                            bridge, seatBridged ? tags : java.util.Collections.emptySet());
                     lp.setAiProfile(seatProfiles[j]);
                     rp.setPlayer(lp);
                     pp.add(rp);
