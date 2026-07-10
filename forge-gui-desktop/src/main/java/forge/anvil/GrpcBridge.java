@@ -1,7 +1,13 @@
 package forge.anvil;
 
+import com.google.protobuf.ByteString;
+
 import forge.ai.anvil.AnvilBridge;
+import forge.ai.anvil.CastPlanAnswer;
+import forge.ai.anvil.Obs;
 import forge.anvil.bridge.v0.AnswerShape;
+import forge.anvil.bridge.v0.CastPlan;
+import forge.anvil.bridge.v0.EntityRef;
 import forge.anvil.bridge.v0.Constraints;
 import forge.anvil.bridge.v0.DecisionBridgeGrpc;
 import forge.anvil.bridge.v0.DecisionRequest;
@@ -39,6 +45,7 @@ public final class GrpcBridge implements AnvilBridge {
     private final StreamObserver<WorkerMsg> out;
     private final LinkedBlockingQueue<ServerMsg> in = new LinkedBlockingQueue<>();
     private final Set<String> serverTags;
+    private final boolean oneShotCast;
     private long seq;
     private String gameId = "";
     private int transportFailures;
@@ -67,6 +74,7 @@ public final class GrpcBridge implements AnvilBridge {
             throw new IllegalStateException("Anvil decision server handshake failed");
         }
         serverTags = Set.copyOf(hello.getHello().getBridgedTagsList());
+        oneShotCast = hello.getHello().getOneShotCast();
     }
 
     /** Server-driven coverage: the tag set this session answers over the wire. */
@@ -161,8 +169,71 @@ public final class GrpcBridge implements AnvilBridge {
     @Override
     public void gameStart(String id, long seed) {
         gameId = id;
-        out.onNext(WorkerMsg.newBuilder().setGameStart(
-                GameStart.newBuilder().setGameId(id).setSeed(seed).setFormatTag("mtg.commander")).build());
+        GameStart.Builder gs = GameStart.newBuilder()
+                .setGameId(id).setSeed(seed).setFormatTag("mtg.commander");
+        // M1: observation game header (AnvilRun calls Obs.startGame first, so
+        // it exists whenever obs logging is on; absent -> M0-shape session).
+        String header = Obs.lastHeaderForBridge();
+        if (header != null) {
+            gs.setHeader(ByteString.copyFromUtf8(header));
+        }
+        out.onNext(WorkerMsg.newBuilder().setGameStart(gs).build());
+    }
+
+    /**
+     * M1 one-shot cast. Active only when the server declared one_shot_cast in
+     * its hello; otherwise null routes the caller to the M0 selectOne path.
+     * Transport failure or server fallback answers PASS (counted): an eval
+     * arm must never silently substitute random or heuristic play for the
+     * model on a bridged tag.
+     */
+    @Override
+    public CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation) {
+        if (!oneShotCast) {
+            return null;
+        }
+        DecisionRequest.Builder req = DecisionRequest.newBuilder()
+                .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
+                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+        if (optionLabels != null) {
+            for (int i = 0; i < optionLabels.size(); i++) {
+                String label = optionLabels.get(i);
+                req.addOptions(Option.newBuilder().setId(i).setLabel(label == null ? "" : label));
+            }
+        }
+        if (observation != null) {
+            req.setObservation(ByteString.copyFromUtf8(observation));
+        }
+        out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
+        ServerMsg msg = await();
+        if (msg == null || !msg.hasResponse()) {
+            transportFailures++;
+            System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
+                    + " (total " + transportFailures + "); one-shot answers PASS");
+            return pass();
+        }
+        DecisionResponse resp = msg.getResponse();
+        if (resp.getFallback() || !resp.hasConstruct() || !resp.getConstruct().hasCastPlan()) {
+            transportFailures++;
+            return pass();
+        }
+        CastPlan cp = resp.getConstruct().getCastPlan();
+        java.util.List<CastPlanAnswer.Ref> refs =
+                new java.util.ArrayList<>(cp.getTargetRefsCount());
+        for (EntityRef r : cp.getTargetRefsList()) {
+            if (r.getRefCase() == EntityRef.RefCase.PLAYER) {
+                refs.add(new CastPlanAnswer.Ref(true, r.getPlayer(), -1, false));
+            } else {
+                refs.add(new CastPlanAnswer.Ref(false, -1, (int) r.getEntity(), r.getNs() == 1));
+            }
+        }
+        return new CastPlanAnswer((int) cp.getSpellOption(), cp.getHostLevel(), refs,
+                cp.getHasX(), (int) cp.getXValue());
+    }
+
+    private static CastPlanAnswer pass() {
+        return new CastPlanAnswer(0, false, java.util.Collections.emptyList(), false, 0);
     }
 
     @Override
