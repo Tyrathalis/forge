@@ -22,8 +22,10 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.eventbus.Subscribe;
 
+import forge.ai.anvil.AnvilBridge;
 import forge.ai.anvil.AnvilLobbyPlayer;
 import forge.ai.anvil.LocalRandomBridge;
+import forge.ai.anvil.Obs;
 import forge.ai.anvil.PlayerControllerAnvil;
 import forge.ai.simulation.GameCopier;
 import forge.deck.Deck;
@@ -55,6 +57,7 @@ import forge.util.MyRandom;
  * digests and identical outcomes. Divergences are classified per game.
  *
  * Syntax: forge forkcheck -d <deck1> <deck2> -f <format> -n <games> -s <baseSeed> -o <out.jsonl>
+ *   [-seeds <s1,s2,...>] [-perturb] [-freshrng] [-chain] [-twin] [-bridge] [-grpc <host:port>]
  */
 public final class ForkFidelityCheck {
     /** Turn window in which the fork point is (deterministically) drawn per game. */
@@ -108,6 +111,13 @@ public final class ForkFidelityCheck {
         // AnvilLobbyPlayer (a LobbyPlayerAi subclass); obs stays off, so the
         // isLogging(game) guard keeps forks out of any obs stream by design.
         boolean bridge = params.containsKey("bridge");
+        // -grpc host:port (M2 D1, the rollout-contract gRPC/model leg): seats
+        // on a real GrpcBridge; every game (mainline AND forks) gets a
+        // wire-only Obs session so the server featurizes it — store stays
+        // off. Forks announce derived game ids (fc<seed>.f1/.f2); the
+        // mainline is re-announced after each fork replay. Implies bridged
+        // seats; tag coverage is server-driven (its hello).
+        String grpcHostPort = params.containsKey("grpc") ? params.get("grpc").get(0) : null;
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
@@ -121,6 +131,20 @@ public final class ForkFidelityCheck {
             }
             decks.add(d);
         }
+
+        AnvilBridge runBridge = LOCAL_BRIDGE;
+        Set<String> runTags = BRIDGE_TAGS;
+        forge.anvil.GrpcBridge grpc = null;
+        if (grpcHostPort != null) {
+            String[] hp = grpcHostPort.split(":");
+            grpc = new forge.anvil.GrpcBridge(hp[0], Integer.parseInt(hp[1]), "forkcheck", "");
+            if (!grpc.serverBridgedTags().isEmpty()) {
+                runTags = grpc.serverBridgedTags(); // server-driven coverage
+            }
+            runBridge = grpc;
+            bridge = true;
+        }
+        final boolean wire = grpc != null;
 
         System.out.printf("Fork-fidelity check: %d games, %s, baseSeed=%d, forkTurn in [%d,%d]%n",
                 nGames, type, baseSeed, MIN_FORK_TURN, MAX_FORK_TURN);
@@ -143,7 +167,8 @@ public final class ForkFidelityCheck {
         Map<String, Integer> tally = new TreeMap<>();
         try (PrintWriter out = new PrintWriter(new FileWriter(outPath, true))) {
             for (int i = 0; i < seeds.size(); i++) {
-                GameResult r = runOneGame(rules, type, decks, seeds.get(i), perturb, freshRng, chain, twin, bridge);
+                GameResult r = runOneGame(rules, type, decks, seeds.get(i), perturb, freshRng,
+                        chain, twin, bridge, runBridge, runTags, wire);
                 out.println(r.toJson());
                 out.flush();
                 tally.merge(r.status, 1, Integer::sum);
@@ -155,6 +180,11 @@ public final class ForkFidelityCheck {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (grpc != null) {
+                System.out.printf("grpc: transportFailures=%d%n", grpc.transportFailures());
+                grpc.close();
+            }
         }
 
         System.out.println("=== fork-fidelity tally ===");
@@ -186,7 +216,9 @@ public final class ForkFidelityCheck {
             PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER));
     private static final LocalRandomBridge LOCAL_BRIDGE = new LocalRandomBridge();
 
-    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain, boolean twin, boolean bridge) {
+    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks,
+            long seed, boolean perturb, boolean freshRng, boolean chain, boolean twin,
+            boolean bridge, AnvilBridge runBridge, Set<String> runTags, boolean wire) {
         GameResult result = new GameResult(seed);
         // Fork turn drawn from a meta-RNG so it never perturbs game randomness.
         Random meta = new Random(seed * 6364136223846793005L + 1442695040888963407L);
@@ -201,7 +233,7 @@ public final class ForkFidelityCheck {
                     ? RegisteredPlayer.forCommander(d) : new RegisteredPlayer(d);
             if (bridge) {
                 rp.setPlayer(new AnvilLobbyPlayer(
-                        "Anvil(" + (i + 1) + ")-" + d.getName(), LOCAL_BRIDGE, BRIDGE_TAGS));
+                        "Anvil(" + (i + 1) + ")-" + d.getName(), runBridge, runTags));
             } else {
                 rp.setPlayer(GamePlayerUtil.createAiPlayer("Ai(" + (i + 1) + ")-" + d.getName(), i));
             }
@@ -215,9 +247,18 @@ public final class ForkFidelityCheck {
         monitor.freshRng = freshRng;
         monitor.chain = chain;
         monitor.twin = twin;
+        monitor.wire = wire;
+        monitor.bridgeImpl = runBridge;
+        monitor.mainId = "fc" + seed;
+        monitor.fmt = type.toString();
         result.mode = (twin ? "twin" : chain ? "chain" : "")
-                + (bridge ? (twin || chain ? "+bridge" : "bridge") : "");
+                + (wire ? (twin || chain ? "+grpc" : "grpc")
+                        : bridge ? (twin || chain ? "+bridge" : "bridge") : "");
         game.subscribeToEvents(monitor);
+        if (wire) {
+            Obs.startWireGame(game, monitor.mainId, seed, type.toString(), null);
+            runBridge.gameStart(monitor.mainId, seed, Obs.lastHeaderForBridge(game));
+        }
 
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "forkcheck-watchdog");
@@ -237,6 +278,9 @@ public final class ForkFidelityCheck {
         } finally {
             mainClock.cancel(false);
             watchdogs.shutdownNow();
+            if (wire) {
+                Obs.endWireGame(game);
+            }
         }
 
         result.mainTurns = monitor.mainTrace.size();
@@ -345,6 +389,11 @@ public final class ForkFidelityCheck {
         boolean freshRng = false;
         boolean chain = false;
         boolean twin = false;
+        // -grpc wiring: forks get wire-only Obs sessions + derived game ids.
+        boolean wire = false;
+        AnvilBridge bridgeImpl;
+        String mainId;
+        String fmt;
 
         Monitor(Game game, GameResult result) {
             this.game = game;
@@ -441,9 +490,17 @@ public final class ForkFidelityCheck {
             copy.getPhaseHandler().devResumeAtPriority();
             copy.copyLastState();
 
+            if (wire) {
+                // Fork-side re-binding: the fork announces itself under a
+                // derived game id with its own header; the model server
+                // featurizes its wire decs like any other game.
+                Obs.startWireGame(copy, mainId + ".f1", result.seed, fmt, game);
+                bridgeImpl.gameStart(mainId + ".f1", result.seed, Obs.lastHeaderForBridge(copy));
+            }
             MyRandom.setRandom(freshRng ? new Random(result.seed * 31 + 7) : restoreRng(rngState));
             ScheduledFuture<?> forkClock = watchdogs.schedule(
                     () -> copy.setGameOver(GameEndReason.Draw), FORK_TIMEOUT_S, TimeUnit.SECONDS);
+            long play0 = System.nanoTime();
             try {
                 copy.getPhaseHandler().mainGameLoop();
                 result.forkOutcome = outcomeString(copy);
@@ -451,11 +508,15 @@ public final class ForkFidelityCheck {
                 result.status = "resume_crash";
                 result.notes = String.valueOf(t);
             } finally {
+                result.forkPlayMs = (System.nanoTime() - play0) / 1_000_000;
                 forkClock.cancel(false);
                 if (!copy.isGameOver()) {
                     copy.setGameOver(GameEndReason.Draw);
                 }
                 MyRandom.setRandom(restoreRng(rngState));
+                if (wire) {
+                    Obs.endWireGame(copy);
+                }
             }
 
             // F2 replay from the same RNG snapshot; compare to F1 in classifyChain.
@@ -464,9 +525,18 @@ public final class ForkFidelityCheck {
                 f2.subscribeToEvents(new ForkRecorder(f2, chainTrace));
                 f2.getPhaseHandler().devResumeAtPriority();
                 f2.copyLastState();
+                if (wire) {
+                    // Ring parent is the mainline in BOTH modes: chain's F2 is
+                    // copied before F1 plays anything, so the fork-point
+                    // history is the mainline's (and F1's session is already
+                    // retired by now).
+                    Obs.startWireGame(f2, mainId + ".f2", result.seed, fmt, game);
+                    bridgeImpl.gameStart(mainId + ".f2", result.seed, Obs.lastHeaderForBridge(f2));
+                }
                 MyRandom.setRandom(freshRng ? new Random(result.seed * 31 + 7) : restoreRng(rngState));
                 ScheduledFuture<?> chainClock = watchdogs.schedule(
                         () -> f2.setGameOver(GameEndReason.Draw), FORK_TIMEOUT_S, TimeUnit.SECONDS);
+                long play1 = System.nanoTime();
                 try {
                     f2.getPhaseHandler().mainGameLoop();
                     result.chainOutcome = outcomeString(f2);
@@ -474,13 +544,22 @@ public final class ForkFidelityCheck {
                     result.chainStatus = "chain_resume_crash";
                     result.notes = result.notes + " chain: " + t;
                 } finally {
+                    result.chainPlayMs = (System.nanoTime() - play1) / 1_000_000;
                     chainClock.cancel(false);
                     if (!f2.isGameOver()) {
                         f2.setGameOver(GameEndReason.Draw);
                     }
                     // Mainline resumes from the exact RNG state the fork started with.
                     MyRandom.setRandom(restoreRng(rngState));
+                    if (wire) {
+                        Obs.endWireGame(f2);
+                    }
                 }
+            }
+            if (wire) {
+                // The mainline resumes: re-announce it so the server's
+                // per-stream header binding points back at the right game.
+                bridgeImpl.gameStart(mainId, result.seed, Obs.lastHeaderForBridge(game));
             }
         }
     }
@@ -651,6 +730,8 @@ public final class ForkFidelityCheck {
         String status; // clean | divergence | static_mismatch | outcome_mismatch | copy_crash | resume_crash | no_fork | main_crash_or_hang
         boolean staticMatch;
         long copyMs;
+        long forkPlayMs;  // fork replay-to-completion wall (the D4 rollout-pricing number)
+        long chainPlayMs;
         int divergenceTurn = -1;
         String divergenceSample;
         String mainOutcome = "";
@@ -687,6 +768,8 @@ public final class ForkFidelityCheck {
                     + ",\"status\":\"" + status + '"'
                     + ",\"staticMatch\":" + staticMatch
                     + ",\"copyMs\":" + copyMs
+                    + ",\"forkPlayMs\":" + forkPlayMs
+                    + ",\"chainPlayMs\":" + chainPlayMs
                     + ",\"divergenceTurn\":" + divergenceTurn
                     + ",\"mainTurns\":" + mainTurns
                     + ",\"forkTurns\":" + forkTurns
