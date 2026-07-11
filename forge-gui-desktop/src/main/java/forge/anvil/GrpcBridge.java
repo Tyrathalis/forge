@@ -183,12 +183,19 @@ public final class GrpcBridge implements AnvilBridge {
 
     @Override
     public void gameStart(String id, long seed) {
+        // M1: observation game header (AnvilRun calls Obs.startGame first, so
+        // it exists whenever obs logging is on; absent -> M0-shape session).
+        gameStart(id, seed, Obs.lastHeaderForBridge());
+    }
+
+    /** Explicit-header variant (M2 D1): fork drivers announce derived game
+     *  ids and re-announce the mainline after a fork replay — the header
+     *  they pass (per-game, session-routed) is authoritative. */
+    @Override
+    public void gameStart(String id, long seed, String header) {
         gameId = id;
         GameStart.Builder gs = GameStart.newBuilder()
                 .setGameId(id).setSeed(seed).setFormatTag("mtg.commander");
-        // M1: observation game header (AnvilRun calls Obs.startGame first, so
-        // it exists whenever obs logging is on; absent -> M0-shape session).
-        String header = Obs.lastHeaderForBridge();
         if (header != null) {
             gs.setHeader(ByteString.copyFromUtf8(header));
         }

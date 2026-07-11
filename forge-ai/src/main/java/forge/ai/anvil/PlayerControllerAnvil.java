@@ -71,7 +71,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
         // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
         CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
-                Obs.lastDecForBridge());
+                Obs.lastDecForBridge(getGame()));
         if (plan != null) {
             return oneShotCast(options, plan, obsSeq);
         }
