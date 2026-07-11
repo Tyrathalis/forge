@@ -42,6 +42,17 @@ public interface AnvilBridge {
     default void gameStart(String gameId, long seed) {
     }
 
+    /**
+     * Explicit-header variant (M2 D1): under fork nesting the zero-arg
+     * Obs.lastHeaderForBridge is ambiguous when the mainline is re-announced
+     * after a fork replay, so drivers that juggle sessions pass the header
+     * they mean (Obs.lastHeaderForBridge(game)). Null header falls back to
+     * the two-arg path's behavior.
+     */
+    default void gameStart(String gameId, long seed, String header) {
+        gameStart(gameId, seed);
+    }
+
     default void gameEnd(String gameId, String winner, int turns, long wallMs) {
     }
 

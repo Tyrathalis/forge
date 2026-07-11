@@ -42,6 +42,16 @@ import java.util.Map;
  * on (the no-interrupts rule means it is never killed); those records must not
  * leak into the next game's frame.
  *
+ * M2 D1 (fork-side re-binding): record building is per-Game "sessions" so a
+ * forked game can produce wire observations (the model server featurizes from
+ * them) without touching the store. The store frame stays a single static
+ * binding (one worker, one corpus game at a time); startWireGame opens a
+ * wire-only session for a fork, seeding its history ring from the parent's
+ * (valid because GameCopier now preserves card ids). Execution is strictly
+ * nested on the game thread (mainline blocks while a fork plays out), so the
+ * zero-arg lastDecForBridge — read immediately after each dec by the bridge —
+ * can safely resolve to the most recent dec across sessions.
+ *
  * Runaway guard: a wedged post-hard-cap thread can write observations
  * indefinitely (pilot: one game wrote 24.6 GB raw in ~6 min against a legit
  * max of 571 MB before the worker was killed mid-write, leaving a truncated
@@ -65,7 +75,6 @@ public final class Obs {
     private static Game currentGame;
     private static int gameIdx = -1;
     private static long gameSeed;
-    private static long seq;      // per-game; "s" joins dec/ret
     private static long recs;
     private static long rawBytes;
     private static long obsErrors;
@@ -94,13 +103,36 @@ public final class Obs {
         }
     }
 
-    private static final java.util.ArrayDeque<HistEntry> histRing = new java.util.ArrayDeque<>();
-    private static final java.util.LinkedHashMap<Long, HistEntry> pendingDec = new java.util.LinkedHashMap<>();
-    private static long prioSeq = -1;
-    private static java.util.List<SpellAbility> prioOptions;
-    private static String lastDecRecord;
-    private static String lastHistJson;
-    private static String lastHeaderRecord;
+    /** Per-game record-building state. store=true is the (single) corpus
+     *  game whose records go to the zstd frame; store=false is a wire-only
+     *  session (forked rollout) whose records exist only for the bridge. */
+    private static final class Session {
+        final boolean store;
+        final String wireId; // null for store sessions ("g<idx>" on the wire)
+        long seq;            // per-game; "s" joins dec/ret
+        final java.util.ArrayDeque<HistEntry> histRing = new java.util.ArrayDeque<>();
+        final java.util.LinkedHashMap<Long, HistEntry> pendingDec = new java.util.LinkedHashMap<>();
+        long prioSeq = -1;
+        java.util.List<SpellAbility> prioOptions;
+        String lastDecRecord;
+        String lastHistJson;
+        String headerRecord;
+
+        Session(boolean store, String wireId) {
+            this.store = store;
+            this.wireId = wireId;
+        }
+    }
+
+    /** Weak keys: sessions are removed at end-of-game, but crash paths must
+     *  not pin dead Game graphs (Game has identity equals). */
+    private static final java.util.WeakHashMap<Game, Session> sessions = new java.util.WeakHashMap<>();
+    /** Most recent dec across sessions; valid because execution is strictly
+     *  nested and the bridge reads it immediately after the dec it belongs to. */
+    private static Session lastDecSession;
+    /** Most recently started session (store or wire); backs the zero-arg
+     *  lastHeaderForBridge used right after startGame. */
+    private static Session lastStartedSession;
 
     private Obs() {
     }
@@ -109,11 +141,12 @@ public final class Obs {
         return file != null;
     }
 
-    /** True when records for this Game would actually be written (frame open,
-     *  not a stale post-hard-cap thread). Lets callers skip expensive
-     *  materialization work that only feeds the log. */
+    /** True when records for this Game are being built — store frame open or
+     *  a wire-only session active; false for a stale post-hard-cap thread
+     *  (its session is removed at frame end). Lets callers skip expensive
+     *  materialization work that only feeds the log/bridge. */
     public static synchronized boolean isLogging(Game g) {
-        return frame != null && g == currentGame;
+        return sessions.get(g) != null;
     }
 
     public static synchronized void open(String path) throws IOException {
@@ -151,16 +184,8 @@ public final class Obs {
         gameIdx = idx0;
         gameSeed = seed;
         currentGame = g;
-        seq = 0;
         recs = 0;
         rawBytes = 0;
-        histRing.clear();
-        pendingDec.clear();
-        prioSeq = -1;
-        prioOptions = null;
-        lastDecRecord = null;
-        lastHistJson = null;
-        lastHeaderRecord = null;
         counting = new CountingStream(file);
         try {
             frame = new ZstdOutputStream(counting, ZSTD_LEVEL);
@@ -170,11 +195,68 @@ public final class Obs {
             currentGame = null;
             return;
         }
+        Session s = new Session(true, null);
+        StringBuilder sb = buildHeader(idx0, seed, g, fmt, null);
+        s.headerRecord = sb.toString(); // GameStart.header for the M1 bridge
+        sessions.put(g, s);
+        lastStartedSession = s;
+        write(sb);
+    }
+
+    /**
+     * Wire-only session (M2 D1): records for this Game are built for the
+     * bridge (lastDecForBridge/lastHeaderForBridge) but never written to the
+     * store — the fork-side re-binding that lets the model policy drive a
+     * forked game without polluting the corpus. The history ring seeds from
+     * the parent's session (deep copy) so the fork's first window carries the
+     * same last-K view the mainline had at the fork point; host ids stay
+     * valid because GameCopier preserves card ids. wireId is the derived
+     * game id the driver announces via AnvilBridge.gameStart.
+     */
+    public static synchronized void startWireGame(Game g, String wireId, long seed, String fmt,
+            Game parent) {
+        Session s = new Session(false, wireId);
+        Session ps = parent == null ? null : sessions.get(parent);
+        if (ps != null) {
+            for (HistEntry h : ps.histRing) {
+                HistEntry c = new HistEntry(h.m, h.p);
+                c.host = h.host;
+                s.histRing.addLast(c);
+            }
+        }
+        s.headerRecord = buildHeader(-1, seed, g, fmt, wireId).toString();
+        sessions.put(g, s);
+        lastStartedSession = s;
+    }
+
+    /** Ends a wire-only session (fork completed/abandoned). Store sessions
+     *  end via endGame/endGameFrame. */
+    public static synchronized void endWireGame(Game g) {
+        Session s = sessions.get(g);
+        if (s == null || s.store) {
+            return;
+        }
+        sessions.remove(g);
+        if (lastDecSession == s) {
+            lastDecSession = null;
+        }
+        if (lastStartedSession == s) {
+            lastStartedSession = null;
+        }
+    }
+
+    /** The "game" header record; wire sessions carry a "wid" field (the
+     *  derived wire game id) and g=-1 (no store index). */
+    private static StringBuilder buildHeader(int idx0, long seed, Game g, String fmt,
+            String wireId) {
         StringBuilder sb = new StringBuilder(512);
         sb.append("{\"k\":\"game\",\"sv\":").append(SCHEMA_VERSION)
                 .append(",\"g\":").append(idx0)
-                .append(",\"seed\":").append(seed)
-                .append(",\"fmt\":").append(q(fmt))
+                .append(",\"seed\":").append(seed);
+        if (wireId != null) {
+            sb.append(",\"wid\":").append(q(wireId));
+        }
+        sb.append(",\"fmt\":").append(q(fmt))
                 .append(",\"players\":[");
         int i = 0;
         for (Player p : g.getRegisteredPlayers()) {
@@ -207,8 +289,7 @@ public final class Obs {
             sb.append('}');
         }
         sb.append("]}");
-        lastHeaderRecord = sb.toString(); // GameStart.header for the M1 bridge
-        write(sb);
+        return sb;
     }
 
     public static synchronized void endGame(String status, int winnerIdx, int turns, long ms, boolean drawClock) {
@@ -301,8 +382,13 @@ public final class Obs {
         }
         long s = decInternal(g, p, "chooseSpellAbilityToPlay", by, opts, true, extraEnts);
         if (s >= 0) {
-            prioSeq = s;
-            prioOptions = options;
+            synchronized (Obs.class) {
+                Session ses = sessions.get(g);
+                if (ses != null) {
+                    ses.prioSeq = s;
+                    ses.prioOptions = options;
+                }
+            }
         }
         return s;
     }
@@ -315,10 +401,11 @@ public final class Obs {
     private static synchronized long decInternal(Game g, Player p, String m, String by,
             java.util.List<String> opts, boolean optsRaw, java.util.List<Card> extraEnts,
             Object... kv) {
-        if (frame == null || g != currentGame) {
+        Session ses = sessions.get(g);
+        if (ses == null || (ses.store && frame == null)) {
             return -1;
         }
-        long s = seq++;
+        long s = ses.seq++;
         StringBuilder sb = new StringBuilder(8192);
         sb.append("{\"k\":\"dec\",\"s\":").append(s);
         int turn = -1;
@@ -373,26 +460,29 @@ public final class Obs {
             obsErrors++;
         }
         sb.append('}');
-        lastDecRecord = sb.toString();
-        lastHistJson = histJson(); // prior decs only: snapshot BEFORE appending this one
+        ses.lastDecRecord = sb.toString();
+        ses.lastHistJson = histJson(ses); // prior decs only: snapshot BEFORE appending this one
+        lastDecSession = ses;
         HistEntry entry = new HistEntry(m, pIdx);
-        histRing.addLast(entry);
-        if (histRing.size() > HIST_CAP) {
-            histRing.removeFirst();
+        ses.histRing.addLast(entry);
+        if (ses.histRing.size() > HIST_CAP) {
+            ses.histRing.removeFirst();
         }
-        pendingDec.put(s, entry);
-        if (pendingDec.size() > 64) { // crash-path leak bound; normal nesting is shallow
-            pendingDec.remove(pendingDec.keySet().iterator().next());
+        ses.pendingDec.put(s, entry);
+        if (ses.pendingDec.size() > 64) { // crash-path leak bound; normal nesting is shallow
+            ses.pendingDec.remove(ses.pendingDec.keySet().iterator().next());
         }
-        write(sb);
+        if (ses.store) {
+            write(sb);
+        }
         return s;
     }
 
-    private static String histJson() {
-        StringBuilder sb = new StringBuilder(64 * histRing.size() + 2);
+    private static String histJson(Session ses) {
+        StringBuilder sb = new StringBuilder(64 * ses.histRing.size() + 2);
         sb.append('[');
         int i = 0;
-        for (HistEntry h : histRing) {
+        for (HistEntry h : ses.histRing) {
             if (i++ > 0) {
                 sb.append(',');
             }
@@ -404,24 +494,27 @@ public final class Obs {
 
     /** Answer record at callback exit; joined to its dec on "s". */
     public static synchronized void ret(Game g, long s, Object v) {
-        if (frame == null || s < 0 || g != currentGame) {
+        Session ses = sessions.get(g);
+        if (ses == null || s < 0) {
             return;
         }
-        StringBuilder sb = new StringBuilder(160);
-        sb.append("{\"k\":\"ret\",\"s\":").append(s).append(",\"v\":");
-        value(sb, v, 0);
-        if (s == prioSeq && prioOptions != null && v != null) {
-            sb.append(",\"oi\":").append(optionIndexOf(v));
+        if (ses.store && frame != null) {
+            StringBuilder sb = new StringBuilder(160);
+            sb.append("{\"k\":\"ret\",\"s\":").append(s).append(",\"v\":");
+            value(sb, v, 0);
+            if (s == ses.prioSeq && ses.prioOptions != null && v != null) {
+                sb.append(",\"oi\":").append(optionIndexOf(ses.prioOptions, v));
+            }
+            sb.append('}');
+            write(sb);
         }
-        sb.append('}');
-        write(sb);
-        HistEntry entry = pendingDec.remove(s);
+        HistEntry entry = ses.pendingDec.remove(s);
         if (entry != null) {
             entry.host = retHostId(v); // back-fill; may already be ring-evicted
         }
-        if (s == prioSeq) {
-            prioSeq = -1;
-            prioOptions = null;
+        if (s == ses.prioSeq) {
+            ses.prioSeq = -1;
+            ses.prioOptions = null;
         }
     }
 
@@ -431,7 +524,7 @@ public final class Obs {
      * composite key (host + rendered string + alternative cost) and stay
      * honest on ambiguity (-1) rather than guess.
      */
-    private static int optionIndexOf(Object v) {
+    private static int optionIndexOf(java.util.List<SpellAbility> prioOptions, Object v) {
         SpellAbility chosen = null;
         if (v instanceof SpellAbility) {
             chosen = (SpellAbility) v;
@@ -488,18 +581,36 @@ public final class Obs {
      * serialization the corpus uses).
      */
     public static synchronized String lastDecForBridge() {
-        if (lastDecRecord == null) {
+        return lastDecOf(lastDecSession);
+    }
+
+    /** Per-game variant: the given Game's last dec (session-routed; use when
+     *  the caller holds the Game — unambiguous under fork nesting). */
+    public static synchronized String lastDecForBridge(Game g) {
+        return lastDecOf(sessions.get(g));
+    }
+
+    private static String lastDecOf(Session ses) {
+        if (ses == null || ses.lastDecRecord == null) {
             return null;
         }
-        StringBuilder sb = new StringBuilder(lastDecRecord.length() + lastHistJson.length() + 16);
-        sb.append(lastDecRecord, 0, lastDecRecord.length() - 1)
-                .append(",\"hist\":").append(lastHistJson).append('}');
+        StringBuilder sb = new StringBuilder(
+                ses.lastDecRecord.length() + ses.lastHistJson.length() + 16);
+        sb.append(ses.lastDecRecord, 0, ses.lastDecRecord.length() - 1)
+                .append(",\"hist\":").append(ses.lastHistJson).append('}');
         return sb.toString();
     }
 
-    /** The game header record (GameStart.header wire field). Null when not logging. */
+    /** The game header record (GameStart.header wire field) of the most
+     *  recently started session. Null when not logging. */
     public static synchronized String lastHeaderForBridge() {
-        return lastHeaderRecord;
+        return lastStartedSession == null ? null : lastStartedSession.headerRecord;
+    }
+
+    /** Per-game header (store or wire session). Null when no session. */
+    public static synchronized String lastHeaderForBridge(Game g) {
+        Session ses = sessions.get(g);
+        return ses == null ? null : ses.headerRecord;
     }
 
     // ---------- answer-value serialization (best-effort v1; see schema doc) ----------
@@ -762,6 +873,15 @@ public final class Obs {
         }
         frame = null;
         counting = null;
+        if (currentGame != null) {
+            Session s = sessions.remove(currentGame);
+            if (s != null && lastDecSession == s) {
+                lastDecSession = null;
+            }
+            if (s != null && lastStartedSession == s) {
+                lastStartedSession = null;
+            }
+        }
         currentGame = null;
     }
 
