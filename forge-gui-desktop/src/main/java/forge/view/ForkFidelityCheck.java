@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.eventbus.Subscribe;
 
+import forge.ai.anvil.AnvilLobbyPlayer;
+import forge.ai.anvil.LocalRandomBridge;
+import forge.ai.anvil.PlayerControllerAnvil;
 import forge.ai.simulation.GameCopier;
 import forge.deck.Deck;
 import forge.game.Game;
@@ -98,6 +101,13 @@ public final class ForkFidelityCheck {
         // must reproduce the identical trajectory, or rollout value labels are
         // not replayable. (Chain reuses the same plumbing with source = F1.)
         boolean twin = params.containsKey("twin");
+        // Bridge mode: seats are PlayerControllerAnvil answered by the
+        // in-process LocalRandomBridge (deterministic per seed, transport-free)
+        // — the rollout contract's "completion under the bridge" leg. Forked
+        // games inherit Anvil controllers because clonePlayer reuses the
+        // AnvilLobbyPlayer (a LobbyPlayerAi subclass); obs stays off, so the
+        // isLogging(game) guard keeps forks out of any obs stream by design.
+        boolean bridge = params.containsKey("bridge");
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
@@ -133,7 +143,7 @@ public final class ForkFidelityCheck {
         Map<String, Integer> tally = new TreeMap<>();
         try (PrintWriter out = new PrintWriter(new FileWriter(outPath, true))) {
             for (int i = 0; i < seeds.size(); i++) {
-                GameResult r = runOneGame(rules, type, decks, seeds.get(i), perturb, freshRng, chain, twin);
+                GameResult r = runOneGame(rules, type, decks, seeds.get(i), perturb, freshRng, chain, twin, bridge);
                 out.println(r.toJson());
                 out.flush();
                 tally.merge(r.status, 1, Integer::sum);
@@ -169,7 +179,14 @@ public final class ForkFidelityCheck {
         return params;
     }
 
-    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain, boolean twin) {
+    /** M0 tag set: what the LocalRandomBridge answers in -bridge mode. */
+    private static final Set<String> BRIDGE_TAGS = new HashSet<>(java.util.Arrays.asList(
+            PlayerControllerAnvil.TAG_PRIORITY, PlayerControllerAnvil.TAG_MULLIGAN,
+            PlayerControllerAnvil.TAG_TUCK, PlayerControllerAnvil.TAG_TRIGGER,
+            PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER));
+    private static final LocalRandomBridge LOCAL_BRIDGE = new LocalRandomBridge();
+
+    private static GameResult runOneGame(GameRules rules, GameType type, List<Deck> decks, long seed, boolean perturb, boolean freshRng, boolean chain, boolean twin, boolean bridge) {
         GameResult result = new GameResult(seed);
         // Fork turn drawn from a meta-RNG so it never perturbs game randomness.
         Random meta = new Random(seed * 6364136223846793005L + 1442695040888963407L);
@@ -182,7 +199,12 @@ public final class ForkFidelityCheck {
             Deck d = decks.get(i);
             RegisteredPlayer rp = type.equals(GameType.Commander)
                     ? RegisteredPlayer.forCommander(d) : new RegisteredPlayer(d);
-            rp.setPlayer(GamePlayerUtil.createAiPlayer("Ai(" + (i + 1) + ")-" + d.getName(), i));
+            if (bridge) {
+                rp.setPlayer(new AnvilLobbyPlayer(
+                        "Anvil(" + (i + 1) + ")-" + d.getName(), LOCAL_BRIDGE, BRIDGE_TAGS));
+            } else {
+                rp.setPlayer(GamePlayerUtil.createAiPlayer("Ai(" + (i + 1) + ")-" + d.getName(), i));
+            }
             pp.add(rp);
         }
 
@@ -193,7 +215,8 @@ public final class ForkFidelityCheck {
         monitor.freshRng = freshRng;
         monitor.chain = chain;
         monitor.twin = twin;
-        result.mode = twin ? "twin" : chain ? "chain" : "";
+        result.mode = (twin ? "twin" : chain ? "chain" : "")
+                + (bridge ? (twin || chain ? "+bridge" : "bridge") : "");
         game.subscribeToEvents(monitor);
 
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
