@@ -17,8 +17,10 @@ import forge.util.StreamUtil;
 import org.testng.AssertJUnit;
 import org.testng.annotations.Test;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -2688,6 +2690,105 @@ public class GameSimulationTest extends SimulationTest {
                 AssertJUnit.assertTrue(areWordsInIterable(words, card.getNotedTypes()));
             }
         }
+    }
+
+    @Test
+    public void testGameCopyPreservesFaceDownExileState() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
+
+        // A foretold card sits in exile face down; a copy rebuilt from the
+        // paper card would come back face up, leaking hidden information.
+        Card foretold = addCardToZone("Behold the Multiverse", p, ZoneType.Exile);
+        foretold.turnFaceDownNoUpdate();
+        foretold.setForetold(true);
+
+        GameCopier copier = new GameCopier(game);
+        copier.makeCopy();
+
+        Card foretoldCopy = (Card) copier.find(foretold);
+        AssertJUnit.assertNotNull(foretoldCopy);
+        AssertJUnit.assertTrue(foretoldCopy.isFaceDown());
+        AssertJUnit.assertTrue(foretoldCopy.isForetold());
+    }
+
+    @Test
+    public void testGameCopyWiresPlayerEffectCards() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
+
+        p.getKeywordCard();
+        p.setBlessing(true, null);
+        p.createMonarchEffect(null);
+        AssertJUnit.assertEquals(1, countCardsWithName(game, "Keyword Effects", ZoneType.Command));
+        AssertJUnit.assertEquals(1, countCardsWithName(game, "City's Blessing", ZoneType.Command));
+        AssertJUnit.assertEquals(1, countCardsWithName(game, "The Monarch", ZoneType.Command));
+
+        GameCopier copier = new GameCopier(game);
+        Game copy = copier.makeCopy();
+        Player copyP = copy.getPlayer(p.getId());
+
+        // The copied player's effect-card fields must point at the copies that
+        // arrived with the command zone: the lazy getter must return the
+        // existing card instead of creating a duplicate...
+        copyP.getKeywordCard();
+        AssertJUnit.assertEquals(1, countCardsWithName(copy, "Keyword Effects", ZoneType.Command));
+
+        // ...the blessing must survive without a second effect card...
+        AssertJUnit.assertTrue(copyP.hasBlessing());
+        AssertJUnit.assertEquals(1, countCardsWithName(copy, "City's Blessing", ZoneType.Command));
+
+        // ...and removal must find the copied card rather than orphan it.
+        copyP.removeMonarchEffect();
+        AssertJUnit.assertEquals(0, countCardsWithName(copy, "The Monarch", ZoneType.Command));
+    }
+
+    @Test
+    public void testGameCopyPreservesCardIds() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        Player opp = game.getPlayers().get(0);
+        game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
+
+        // Cards across zones and copy paths: battlefield, token, hand,
+        // graveyard, library. Ids are burned between adds (as happens in real
+        // games when tokens and effect cards come and go) so that the id
+        // sequence does not coincide with zone-traversal order — a copier that
+        // renumbers in traversal order then visibly compacts the ids.
+        addCards("Plains", 2, p);
+        game.nextCardId();
+        addCard("Runeclaw Bear", p);
+        game.nextCardId();
+        game.nextCardId();
+        addToken("c_a_treasure_sac", p);
+        addCardToZone("Island", opp, ZoneType.Hand);
+        game.nextCardId();
+        addCardToZone("Shock", opp, ZoneType.Graveyard);
+        game.nextCardId();
+        addCardToZone("Forest", p, ZoneType.Library);
+
+        GameCopier copier = new GameCopier(game);
+        Game copy = copier.makeCopy();
+
+        // Card ids are visible to the AI (Card.compareTo, id-keyed
+        // collections), so copies must keep them for simulations on the copy
+        // to play out like the original game.
+        Set<Integer> preservedIds = new HashSet<>();
+        for (ZoneType zone : new ZoneType[] { ZoneType.Battlefield, ZoneType.Hand,
+                ZoneType.Graveyard, ZoneType.Library, ZoneType.Command }) {
+            for (Card c : game.getCardsIn(zone)) {
+                Card cCopy = (Card) copier.find(c);
+                AssertJUnit.assertNotNull("no copy mapped for " + c, cCopy);
+                AssertJUnit.assertEquals("copy of " + c + " must keep its id", c.getId(), cCopy.getId());
+                preservedIds.add(cCopy.getId());
+            }
+        }
+
+        // Ids handed out in the copy after the fact must not collide with
+        // the preserved ones.
+        AssertJUnit.assertFalse(preservedIds.contains(copy.nextCardId()));
     }
 
     /**
