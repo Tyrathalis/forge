@@ -21,8 +21,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.eventbus.Subscribe;
+
 import forge.ai.AiProfileUtil;
 import forge.ai.anvil.AnvilBridge;
+import forge.ai.simulation.GameCopier;
 import forge.ai.anvil.AnvilLobbyPlayer;
 import forge.ai.anvil.Census;
 import forge.ai.anvil.LocalRandomBridge;
@@ -34,7 +37,13 @@ import forge.game.GameEndReason;
 import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.Match;
+import forge.game.card.Card;
+import forge.game.event.GameEventPlayerPriority;
+import forge.game.phase.PhaseHandler;
+import forge.game.phase.PhaseType;
+import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
+import forge.game.zone.ZoneType;
 import forge.model.FModel;
 import forge.util.MyRandom;
 
@@ -89,6 +98,7 @@ public final class AnvilRun {
                     + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] "
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
+                    + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -120,6 +130,21 @@ public final class AnvilRun {
             nGames = params.containsKey("n") ? Integer.parseInt(params.get("n").get(0)) : 10;
         }
         File stopFile = params.containsKey("stopfile") ? new File(params.get("stopfile").get(0)) : null;
+
+        // Rollout-label mode (M2 D4): at -points sampled quiescent MAIN1
+        // priority windows per game, fork the live game and complete -rollout
+        // copies to game end under the bridge (forks inherit Anvil
+        // controllers; wire-only obs sessions keep them out of the store).
+        // One labels-JSONL record per fork point; an Obs "mark" record keys
+        // the fork point to the next mainline priority window. Unless
+        // -noreshuffle, each rollout silently re-randomizes both libraries
+        // (determinization: the label approximates E over unseen order, not
+        // the outcome of the one concrete order nobody has seen).
+        int rolloutK = params.containsKey("rollout")
+                ? Integer.parseInt(params.get("rollout").get(0)) : 0;
+        int rolloutPoints = params.containsKey("points")
+                ? Integer.parseInt(params.get("points").get(0)) : 4;
+        boolean rolloutReshuffle = !params.containsKey("noreshuffle");
 
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
@@ -197,6 +222,7 @@ public final class AnvilRun {
         });
         long t0 = System.currentTimeMillis();
         PrintWriter results = null;
+        PrintWriter labels = null;
         boolean stopped = false;
         try {
             if (params.containsKey("results")) {
@@ -212,6 +238,25 @@ public final class AnvilRun {
             }
             if (params.containsKey("census")) {
                 Census.open(params.get("census").get(0));
+                if (rolloutK > 0) {
+                    // Fork copies share the census stream with their mainline
+                    // game index — rollout decisions would inflate per-run
+                    // veto/rung telemetry. Labeler runs go without census.
+                    System.err.println("WARNING: -census with -rollout pollutes "
+                            + "telemetry with fork decisions; prefer omitting it");
+                }
+            }
+            if (params.containsKey("labels")) {
+                try {
+                    labels = new PrintWriter(new FileWriter(params.get("labels").get(0), true));
+                } catch (java.io.IOException e) {
+                    System.err.println("FATAL: cannot open labels file: " + e);
+                    System.exit(2);
+                }
+            }
+            if (rolloutK > 0 && labels == null) {
+                System.err.println("FATAL: -rollout requires -labels <out.jsonl>");
+                System.exit(2);
             }
             if (params.containsKey("obs")) {
                 try {
@@ -288,14 +333,25 @@ public final class AnvilRun {
                 Obs.startGame(idx, seed, game, type.toString());
                 long gameT0 = System.currentTimeMillis();
                 bridge.gameStart("g" + idx, seed);
+                if (rolloutK > 0) {
+                    game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
+                            rolloutK, rolloutPoints, rolloutReshuffle, bridge,
+                            type.toString(), labels, watchdogs));
+                }
+                // Rollout forks run inside the game's wall — budget the clocks
+                // for them (45 s/rollout is far above the 4.4 s median but
+                // below the per-rollout timeout, so a pathological point can't
+                // eat the whole game budget).
+                int extraS = rolloutK > 0 ? rolloutPoints * rolloutK * 45 : 0;
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
                     drawClockHit[0] = true;
                     game.setGameOver(GameEndReason.Draw);
-                }, DRAW_CLOCK_S, TimeUnit.SECONDS);
+                }, DRAW_CLOCK_S + extraS, TimeUnit.SECONDS);
                 String status;
                 try {
-                    TimeLimitedCodeBlock.runWithTimeout(() -> mc.startGame(game), GAME_HARD_CAP_S, TimeUnit.SECONDS);
+                    TimeLimitedCodeBlock.runWithTimeout(() -> mc.startGame(game),
+                            GAME_HARD_CAP_S + extraS, TimeUnit.SECONDS);
                     status = game.getOutcome() == null ? "no_outcome"
                             : game.getOutcome().isDraw() ? "draw" : "won";
                 } catch (Throwable e) {
@@ -351,6 +407,9 @@ public final class AnvilRun {
             if (results != null) {
                 results.close();
             }
+            if (labels != null) {
+                labels.close();
+            }
             Census.close();
             Obs.close();
             bridge.close();
@@ -383,5 +442,206 @@ public final class AnvilRun {
             }
         }
         return params;
+    }
+
+    // ------------------------------------------------------------------
+    // Rollout-label mode (M2 D4): fork the live game at sampled quiescent
+    // MAIN1 priority windows, complete K copies to game end under the
+    // bridge, one labels-JSONL record per fork point. Fork discipline is
+    // ForkFidelityCheck's (quiescence drain, active-player priority only,
+    // RNG snapshot/restore around the block, wire-only obs sessions).
+    // ------------------------------------------------------------------
+
+    private static final int ROLLOUT_TIMEOUT_S = 120;
+
+    private static final class RolloutMonitor {
+        final Game game;
+        final int gameIdx;
+        final long seed;
+        final int k;
+        final boolean reshuffle;
+        final AnvilBridge bridge;
+        final String fmt;
+        final PrintWriter labels;
+        final ScheduledExecutorService watchdogs;
+        final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
+        int fp = 0;
+
+        RolloutMonitor(Game game, int gameIdx, long seed, int k, int points,
+                boolean reshuffle, AnvilBridge bridge, String fmt,
+                PrintWriter labels, ScheduledExecutorService watchdogs) {
+            this.game = game;
+            this.gameIdx = gameIdx;
+            this.seed = seed;
+            this.k = k;
+            this.reshuffle = reshuffle;
+            this.bridge = bridge;
+            this.fmt = fmt;
+            this.labels = labels;
+            this.watchdogs = watchdogs;
+            // Target turns from a meta-RNG (pure function of the game seed —
+            // never perturbs game randomness); distinct turns in [2, 16].
+            Random meta = new Random(splitmix64(seed ^ 0xD4D4D4D4D4D4D4D4L));
+            while (targets.size() < Math.min(points, 15)) {
+                targets.add(2 + meta.nextInt(15));
+            }
+        }
+
+        @Subscribe
+        public void onPriority(GameEventPlayerPriority ev) {
+            if (targets.isEmpty() || ev.phase() != PhaseType.MAIN1) {
+                return;
+            }
+            PhaseHandler ph = game.getPhaseHandler();
+            if (ph.getTurn() < targets.first() || !game.getStack().isEmpty()) {
+                return;
+            }
+            // Active player's priority only (GameCopier resets the copy's
+            // priority to the active player), quiescent stack only.
+            if (ph.getPriorityPlayer() != ph.getPlayerTurn()) {
+                return;
+            }
+            java.util.Set<Card> affected = new HashSet<>();
+            do {
+                game.getAction().checkStateEffects(false, affected);
+                if (game.isGameOver()) {
+                    return;
+                }
+            } while (game.getStack().addAllTriggeredAbilitiesToStack());
+            if (!game.getStack().isEmpty()) {
+                return;
+            }
+            int turn = ph.getTurn();
+            while (!targets.isEmpty() && targets.first() <= turn) {
+                targets.pollFirst();
+            }
+            doRollouts(turn);
+        }
+
+        private void doRollouts(int turn) {
+            int myFp = fp++;
+            // The mark keys this fork point to the NEXT mainline priority
+            // window in the obs stream (the label's training window).
+            Obs.mark(game, "fork", "fp", myFp, "kr", k);
+            byte[] rngState = snapshotRng();
+            int[] wins = new int[game.getRegisteredPlayers().size()];
+            int draws = 0;
+            int crashes = 0;
+            long block0 = System.nanoTime();
+            long copyMsTotal = 0;
+            for (int r = 0; r < k; r++) {
+                Game copy;
+                long c0 = System.nanoTime();
+                try {
+                    copy = new GameCopier(game).makeCopy();
+                } catch (Throwable t) {
+                    crashes++;
+                    MyRandom.setRandom(restoreRng(rngState));
+                    continue;
+                }
+                copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
+                Random rollRng = new Random(splitmix64(
+                        seed ^ (myFp * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L)));
+                if (reshuffle) {
+                    // Determinization: silently re-randomize both libraries
+                    // (Zone.setCards — no shuffle events/triggers) so the K
+                    // rollouts average over unseen order instead of replaying
+                    // the one concrete order nobody has observed. Known-order
+                    // states (scry tops, tucked bottoms) are knowingly
+                    // approximated — label quality, not ledger unbiasedness.
+                    for (Player p : copy.getPlayers()) {
+                        List<Card> lib = new ArrayList<>();
+                        for (Card c : p.getZone(ZoneType.Library)) {
+                            lib.add(c);
+                        }
+                        Collections.shuffle(lib, rollRng);
+                        p.getZone(ZoneType.Library).setCards(lib);
+                    }
+                }
+                copy.getPhaseHandler().devResumeAtPriority();
+                copy.copyLastState();
+                String wid = "g" + gameIdx + ".f" + myFp + "r" + r;
+                Obs.startWireGame(copy, wid, seed, fmt, game);
+                bridge.gameStart(wid, seed, Obs.lastHeaderForBridge(copy));
+                MyRandom.setRandom(rollRng);
+                ScheduledFuture<?> clock = watchdogs.schedule(
+                        () -> copy.setGameOver(GameEndReason.Draw),
+                        ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                try {
+                    copy.getPhaseHandler().mainGameLoop();
+                    if (copy.getOutcome() == null || copy.getOutcome().isDraw()) {
+                        draws++;
+                    } else {
+                        String w = copy.getOutcome().getWinningLobbyPlayer().getName();
+                        int wi = -1;
+                        for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                            if (copy.getRegisteredPlayers().get(j).getName().equals(w)) {
+                                wi = j;
+                                break;
+                            }
+                        }
+                        if (wi >= 0) {
+                            wins[wi]++;
+                        } else {
+                            draws++;
+                        }
+                    }
+                } catch (Throwable t) {
+                    crashes++;
+                } finally {
+                    clock.cancel(false);
+                    if (!copy.isGameOver()) {
+                        copy.setGameOver(GameEndReason.Draw);
+                    }
+                    MyRandom.setRandom(restoreRng(rngState));
+                    Obs.endWireGame(copy);
+                }
+            }
+            // Re-announce the mainline: the fork wire sessions re-bound the
+            // server's per-stream header.
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+            if (labels != null) {
+                StringBuilder sb = new StringBuilder(192);
+                sb.append("{\"i\":").append(gameIdx)
+                        .append(",\"seed\":").append(seed)
+                        .append(",\"fp\":").append(myFp)
+                        .append(",\"t\":").append(turn)
+                        .append(",\"k\":").append(k)
+                        .append(",\"w\":[");
+                for (int j = 0; j < wins.length; j++) {
+                    sb.append(j > 0 ? "," : "").append(wins[j]);
+                }
+                sb.append("],\"draw\":").append(draws)
+                        .append(",\"crash\":").append(crashes)
+                        .append(",\"copy_ms\":").append(copyMsTotal)
+                        .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000)
+                        .append('}');
+                synchronized (labels) {
+                    labels.println(sb);
+                    labels.flush();
+                }
+            }
+        }
+    }
+
+    private static byte[] snapshotRng() {
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            try (java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(bos)) {
+                oos.writeObject(MyRandom.getRandom());
+            }
+            return bos.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("RNG snapshot failed", e);
+        }
+    }
+
+    private static Random restoreRng(byte[] state) {
+        try (java.io.ObjectInputStream ois = new java.io.ObjectInputStream(
+                new java.io.ByteArrayInputStream(state))) {
+            return (Random) ois.readObject();
+        } catch (Exception e) {
+            throw new RuntimeException("RNG restore failed", e);
+        }
     }
 }
