@@ -292,6 +292,46 @@ public final class Obs {
         return sb;
     }
 
+    /**
+     * Store-frame marker record (M2 D4 rollout labels): {"k":"mark","s":seq,
+     * "m":kind,"t":turn, ...numeric kv}. Shares the dec seq counter so marks
+     * order strictly against decision records; readers that don't know the
+     * kind skip it (decode_frame handles dec/ret/end only). Store sessions
+     * only — wire sessions have nowhere to persist a mark.
+     */
+    public static synchronized void mark(Game g, String kind, Object... kv) {
+        Session ses = sessions.get(g);
+        if (ses == null || !ses.store || frame == null || g != currentGame) {
+            return;
+        }
+        long s = ses.seq++;
+        StringBuilder sb = new StringBuilder(192);
+        sb.append("{\"k\":\"mark\",\"s\":").append(s)
+                .append(",\"m\":").append(q(kind));
+        int turn = -1;
+        try {
+            PhaseHandler ph = g.getPhaseHandler();
+            if (ph != null) {
+                turn = ph.getTurn();
+            }
+        } catch (Exception ignored) {
+        }
+        sb.append(",\"t\":").append(turn);
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            String key = String.valueOf(kv[i]);
+            if (key.equals("k") || key.equals("s") || key.equals("m") || key.equals("t")) {
+                // duplicate JSON keys resolve to the LAST value in most
+                // parsers — a kv named "k" silently turned every mark into
+                // an unknown-kind record (found in the first labeler smoke)
+                System.err.println("Obs.mark: reserved key '" + key + "' skipped");
+                continue;
+            }
+            sb.append(",\"").append(key).append("\":").append(kv[i + 1]);
+        }
+        sb.append('}');
+        write(sb);
+    }
+
     public static synchronized void endGame(String status, int winnerIdx, int turns, long ms, boolean drawClock) {
         if (frame == null) {
             return;
