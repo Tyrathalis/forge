@@ -223,6 +223,18 @@ public final class AnvilRun {
                     System.exit(2);
                 }
             }
+            // Headless worker: never route uncaught throwables to Forge's GUI
+            // bug-report dialog — Main registers ExceptionHandler, and an
+            // OutOfMemoryError that escaped the per-game catch opened a modal
+            // Swing dialog that wedged workers forever (model-mirror run,
+            // 2026-07-12). Log and let the JVM policy decide (the harness runs
+            // workers with -XX:+ExitOnOutOfMemoryError; chunk re-issue covers
+            // a dead worker).
+            Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+                System.err.println("[anvil] uncaught " + e.getClass().getName()
+                        + " on thread " + t.getName() + " (headless: no dialog)");
+                e.printStackTrace();
+            });
             for (int g = 0; g < nGames; g++) {
                 if (stopFile != null && stopFile.exists()) {
                     stopped = true;
@@ -286,7 +298,12 @@ public final class AnvilRun {
                     TimeLimitedCodeBlock.runWithTimeout(() -> mc.startGame(game), GAME_HARD_CAP_S, TimeUnit.SECONDS);
                     status = game.getOutcome() == null ? "no_outcome"
                             : game.getOutcome().isDraw() ? "draw" : "won";
-                } catch (Exception | StackOverflowError e) {
+                } catch (Throwable e) {
+                    // Throwable, not Exception|StackOverflowError: any Error
+                    // class escaping here reaches the uncaught handler and
+                    // used to wedge the worker in a GUI dialog. OOM is the
+                    // exception — -XX:+ExitOnOutOfMemoryError kills the JVM
+                    // before this catch matters.
                     game.setGameOver(GameEndReason.Draw);
                     status = "crash_or_hang:" + e.getClass().getSimpleName();
                     if (Boolean.getBoolean("anvil.crash.trace")) {
@@ -328,7 +345,7 @@ public final class AnvilRun {
                 }
                 System.out.printf("game %d seed=%d -> %s (%d turns)%n", idx, seed, status, turns);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             e.printStackTrace();
         } finally {
             if (results != null) {
