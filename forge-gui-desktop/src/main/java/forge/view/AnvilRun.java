@@ -302,8 +302,12 @@ public final class AnvilRun {
                 Census.endGame(winner, turns);
                 int winnerIdx = -1;
                 if (winner != null) {
-                    for (int wi = 0; wi < game.getPlayers().size(); wi++) {
-                        if (game.getPlayers().get(wi).getName().equals(winner)) {
+                    // registered players, not getPlayers(): the live list drops
+                    // eliminated players, so at game end the winner is ~always
+                    // index 0 (same reindex class as the M1 D1 header fix).
+                    // Obs records index seats by getRegisteredPlayers throughout.
+                    for (int wi = 0; wi < game.getRegisteredPlayers().size(); wi++) {
+                        if (game.getRegisteredPlayers().get(wi).getName().equals(winner)) {
                             winnerIdx = wi;
                             break;
                         }
