@@ -8,6 +8,7 @@ import forge.game.Game;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
+import forge.game.combat.Combat;
 import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
 import forge.game.trigger.WrappedAbility;
@@ -38,6 +39,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     public static final String TAG_TRIGGER = "mtg.trigger";
     public static final String TAG_BINARY = "mtg.binary";
     public static final String TAG_NUMBER = "mtg.number";
+    public static final String TAG_ATTACK = "mtg.attack";   // M2 D5
+    public static final String TAG_BLOCK = "mtg.block";     // M2 D5
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;
@@ -249,5 +252,58 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         Census.rec(getGame(), getPlayer(), "chooseNumber", "by", "bridge", "v", v);
         Obs.ret(getGame(), obsSeq, v);
         return v;
+    }
+
+    /**
+     * M2 D5 combat declarations. Labels are obs-join (post-declaration windows
+     * carry the atk/blk flags), so no Obs.ret — same record shape as the
+     * heuristic corpus. The realizer is engine-legality-only with
+     * requirements repair (CombatRealizer); every deviation from the model's
+     * raw map is census-counted (applied/dropped/forced/fallback). If the
+     * bridge lacks the shape (misconfigured non-model arm), the AI brains
+     * answer directly — super would double-log the dec.
+     */
+    @Override
+    public void declareAttackers(Player attacker, Combat combat) {
+        if (!bridged(TAG_ATTACK)) {
+            super.declareAttackers(attacker, combat);
+            return;
+        }
+        Obs.decBridged(getGame(), getPlayer(), "declareAttackers", null,
+                "attacker", Census.str(attacker));
+        CombatMapAnswer ans = bridge.attackMap(TAG_ATTACK, Obs.lastDecForBridge(getGame()));
+        if (ans == null) {
+            Census.rec(getGame(), getPlayer(), "declareAttackers", "by", "bridge",
+                    "noShape", true);
+            getAi().declareAttackers(attacker, combat);
+            return;
+        }
+        CombatRealizer.Result r = CombatRealizer.realizeAttack(
+                getGame(), attacker, combat, getAi(), ans);
+        Census.rec(getGame(), getPlayer(), "declareAttackers", "by", "bridge",
+                "assign", ans.assignments.size(), "applied", r.applied,
+                "dropped", r.dropped, "forced", r.forced, "fallback", r.fallback);
+    }
+
+    @Override
+    public void declareBlockers(Player defender, Combat combat) {
+        if (!bridged(TAG_BLOCK)) {
+            super.declareBlockers(defender, combat);
+            return;
+        }
+        Obs.decBridged(getGame(), getPlayer(), "declareBlockers", null,
+                "defender", Census.str(defender));
+        CombatMapAnswer ans = bridge.blockMap(TAG_BLOCK, Obs.lastDecForBridge(getGame()));
+        if (ans == null) {
+            Census.rec(getGame(), getPlayer(), "declareBlockers", "by", "bridge",
+                    "noShape", true);
+            getAi().declareBlockersFor(defender, combat);
+            return;
+        }
+        CombatRealizer.Result r = CombatRealizer.realizeBlock(
+                getGame(), defender, combat, ans);
+        Census.rec(getGame(), getPlayer(), "declareBlockers", "by", "bridge",
+                "assign", ans.assignments.size(), "applied", r.applied,
+                "dropped", r.dropped, "forced", r.forced, "fallback", r.fallback);
     }
 }
