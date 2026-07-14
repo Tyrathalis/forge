@@ -38,6 +38,21 @@ public interface AnvilBridge {
         return null;
     }
 
+    /**
+     * M2 D5 combat declarations (bridge-protocol-v0 AttackMap/BlockMap,
+     * entity-ref form). Null means this bridge doesn't answer the shape —
+     * the caller keeps the heuristic path (local-random/echo arms, servers
+     * that never bridge the combat tags). observation is
+     * Obs.lastDecForBridge(game).
+     */
+    default CombatMapAnswer attackMap(String tag, String observation) {
+        return null;
+    }
+
+    default CombatMapAnswer blockMap(String tag, String observation) {
+        return null;
+    }
+
     /** Lifecycle notifications (no-ops for the local arm). */
     default void gameStart(String gameId, long seed) {
     }
