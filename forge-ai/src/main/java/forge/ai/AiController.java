@@ -1317,7 +1317,9 @@ public class AiController {
         }
     }
 
-    private void removeUnpayableAttackers(Combat combat) {
+    // public for Anvil's CombatRealizer (forge.ai.anvil): the bridged attack
+    // path mirrors this CR 508.1d pre-drop before validating (M2 D5)
+    public void removeUnpayableAttackers(Combat combat) {
         for (Card attacker : combat.getAttackers().threadSafeIterable()) {
             Cost attackCost = CombatUtil.getAttackCost(game, attacker, combat.getDefenderByAttacker(attacker));
             if (attackCost == null) {

@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 
 import forge.ai.anvil.AnvilBridge;
 import forge.ai.anvil.CastPlanAnswer;
+import forge.ai.anvil.CombatMapAnswer;
 import forge.ai.anvil.Obs;
 import forge.anvil.bridge.v0.AnswerShape;
 import forge.anvil.bridge.v0.CastPlan;
@@ -256,6 +257,77 @@ public final class GrpcBridge implements AnvilBridge {
 
     private static CastPlanAnswer pass() {
         return new CastPlanAnswer(0, false, java.util.Collections.emptyList(), false, 0);
+    }
+
+    /**
+     * M2 D5 combat declarations. Transport failure or server fallback answers
+     * the EMPTY map (counted) — the realizer's validate tiers repair upward
+     * only where the rules require it; never heuristic substitution on a
+     * bridged tag (same principle as the one-shot PASS above).
+     */
+    @Override
+    public CombatMapAnswer attackMap(String tag, String observation) {
+        forge.anvil.bridge.v0.Construct c = roundTripConstruct(tag, observation);
+        if (c == null || !c.hasAttackMap()) {
+            if (c != null) {
+                transportFailures++; // server answered the wrong construct kind
+            }
+            return CombatMapAnswer.empty();
+        }
+        java.util.List<CombatMapAnswer.Assignment> out =
+                new java.util.ArrayList<>(c.getAttackMap().getAssignmentsCount());
+        for (forge.anvil.bridge.v0.AttackMap.Assignment a : c.getAttackMap().getAssignmentsList()) {
+            out.add(new CombatMapAnswer.Assignment(toRef(a.getAttacker()), toRef(a.getDefender())));
+        }
+        return new CombatMapAnswer(out);
+    }
+
+    @Override
+    public CombatMapAnswer blockMap(String tag, String observation) {
+        forge.anvil.bridge.v0.Construct c = roundTripConstruct(tag, observation);
+        if (c == null || !c.hasBlockMap()) {
+            if (c != null) {
+                transportFailures++; // server answered the wrong construct kind
+            }
+            return CombatMapAnswer.empty();
+        }
+        java.util.List<CombatMapAnswer.Assignment> out =
+                new java.util.ArrayList<>(c.getBlockMap().getAssignmentsCount());
+        for (forge.anvil.bridge.v0.BlockMap.Assignment a : c.getBlockMap().getAssignmentsList()) {
+            out.add(new CombatMapAnswer.Assignment(toRef(a.getBlocker()), toRef(a.getAttacker())));
+        }
+        return new CombatMapAnswer(out);
+    }
+
+    /** One CONSTRUCT round-trip; null = transport/deadline/fallback (counted). */
+    private forge.anvil.bridge.v0.Construct roundTripConstruct(String tag, String observation) {
+        DecisionRequest.Builder req = DecisionRequest.newBuilder()
+                .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
+                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+        if (observation != null) {
+            req.setObservation(ByteString.copyFromUtf8(observation));
+        }
+        out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
+        ServerMsg msg = await();
+        if (msg == null || !msg.hasResponse()) {
+            transportFailures++;
+            System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
+                    + " (total " + transportFailures + "); combat answers empty map");
+            return null;
+        }
+        DecisionResponse resp = msg.getResponse();
+        if (resp.getFallback() || !resp.hasConstruct()) {
+            transportFailures++;
+            return null;
+        }
+        return resp.getConstruct();
+    }
+
+    private static CastPlanAnswer.Ref toRef(EntityRef r) {
+        if (r.getRefCase() == EntityRef.RefCase.PLAYER) {
+            return new CastPlanAnswer.Ref(true, r.getPlayer(), -1, false);
+        }
+        return new CastPlanAnswer.Ref(false, -1, (int) r.getEntity(), r.getNs() == 1);
     }
 
     @Override
