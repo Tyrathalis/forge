@@ -39,6 +39,18 @@ public interface AnvilBridge {
     }
 
     /**
+     * Re-ask variant (D6 run-2, re-ask-on-veto): attempt 0 is the window's
+     * first ask; attempt k>0 re-asks after k vetoes with the vetoed
+     * candidates removed from optionLabels. Transports that track wire seqs
+     * mark re-asks via DecisionRequest.retry_of; shapes that don't answer
+     * the composite keep returning null (M0 path never re-asks).
+     */
+    default CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation, int attempt) {
+        return priorityCastPlan(tag, optionLabels, observation);
+    }
+
+    /**
      * M2 D5 combat declarations (bridge-protocol-v0 AttackMap/BlockMap,
      * entity-ref form). Null means this bridge doesn't answer the shape —
      * the caller keeps the heuristic path (local-random/echo arms, servers

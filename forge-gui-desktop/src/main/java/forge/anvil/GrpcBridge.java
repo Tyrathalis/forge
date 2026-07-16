@@ -48,6 +48,7 @@ public final class GrpcBridge implements AnvilBridge {
     private final Set<String> serverTags;
     private final boolean oneShotCast;
     private long seq;
+    private long lastPrioritySeq;
     private String gameId = "";
     private int transportFailures;
     private int serverFallbacks;
@@ -213,12 +214,25 @@ public final class GrpcBridge implements AnvilBridge {
     @Override
     public CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
             String observation) {
+        return priorityCastPlan(tag, optionLabels, observation, 0);
+    }
+
+    @Override
+    public CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation, int attempt) {
         if (!oneShotCast) {
             return null;
         }
+        long prevPrioritySeq = lastPrioritySeq;
         DecisionRequest.Builder req = DecisionRequest.newBuilder()
                 .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
                 .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+        lastPrioritySeq = seq;
+        if (attempt > 0 && prevPrioritySeq > 0) {
+            // Re-ask after veto: mark the superseded request so server stats
+            // can count re-asks (the mu record keys off the obs seq, not this).
+            req.setRetryOf(prevPrioritySeq);
+        }
         if (optionLabels != null) {
             for (int i = 0; i < optionLabels.size(); i++) {
                 String label = optionLabels.get(i);
