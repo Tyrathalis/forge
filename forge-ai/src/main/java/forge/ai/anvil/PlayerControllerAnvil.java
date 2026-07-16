@@ -55,29 +55,75 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return bridgedTags.contains(tag);
     }
 
+    /**
+     * D6 run-2 re-ask-on-veto (d6-vtrace-loop §6b): on an M1 CastPlan veto,
+     * re-issue the priority decision with the vetoed candidate removed instead
+     * of converting the window to a pass. Off = pre-amendment behavior.
+     * Static because config is per-worker-JVM (AnvilRun sets it once from
+     * -reask) and fork-created controllers must inherit it.
+     */
+    private static volatile boolean reaskOnVeto = false;
+    /** Options shrink every re-ask, so termination is structural; the cap is
+     *  insurance against pathologically wide windows re-vetoing in chains. */
+    private static final int REASK_CAP = 8;
+
+    public static void setReaskOnVeto(boolean v) {
+        reaskOnVeto = v;
+    }
+
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         if (!bridged(TAG_PRIORITY)) {
             return super.chooseSpellAbilityToPlay();
         }
-        List<SpellAbility> options = AnvilOptions.priorityOptions(getGame(), player);
+        // Mutable copy: re-ask removes vetoed candidates between attempts.
+        List<SpellAbility> options =
+                Lists.newArrayList(AnvilOptions.priorityOptions(getGame(), player));
 
-        // Index 0 = pass; one round-trip per priority window regardless.
-        List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
-        labels.add("pass");
-        for (SpellAbility sa : options) {
-            labels.add(Census.str(sa));
-        }
-        // Structured-opts dec (same basis as the corpus label path) so D8 eval
-        // games are analyzable trajectories and ret() can label "oi".
-        long obsSeq = Obs.decPriority(getGame(), getPlayer(), "bridge", options);
+        for (int attempt = 0;; attempt++) {
+            // Index 0 = pass; one round-trip per attempt.
+            List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
+            labels.add("pass");
+            for (SpellAbility sa : options) {
+                labels.add(Census.str(sa));
+            }
+            // Structured-opts dec (same basis as the corpus label path) so D8
+            // eval games are analyzable trajectories and ret() can label "oi".
+            // A re-ask mints a fresh seq; the vetoed dec's ret(null) has
+            // already run, so the single-slot oi bookkeeping is clear.
+            long obsSeq = Obs.decPriority(getGame(), getPlayer(), "bridge", options);
 
-        // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
-        CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
-                Obs.lastDecForBridge(getGame()));
-        if (plan != null) {
-            return oneShotCast(options, plan, obsSeq);
+            // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
+            CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
+                    Obs.lastDecForBridge(getGame()), attempt);
+            if (plan != null) {
+                OneShot r = oneShotCast(options, plan, obsSeq, attempt);
+                if (r.vetoedOption <= 0) {
+                    return r.sas; // realized cast, model pass, or oor pass
+                }
+                if (!reaskOnVeto || attempt + 1 >= REASK_CAP) {
+                    return null; // pre-amendment behavior: veto = pass
+                }
+                SpellAbility vetoed = options.get(r.vetoedOption - 1);
+                if (plan.hostLevel && vetoed.getHostCard() != null) {
+                    // Host-level plans exhausted the host's whole ladder.
+                    final Card host = vetoed.getHostCard();
+                    options.removeIf(sa -> sa.getHostCard() == host);
+                } else {
+                    options.remove(r.vetoedOption - 1);
+                }
+                if (options.isEmpty()) {
+                    return null; // only pass remains; nothing left to ask
+                }
+                continue;
+            }
+            return selectOnePick(options, labels, obsSeq);
         }
+    }
+
+    /** M0 selectOne path (never re-asks; heuristic canPlaySa veto = pass). */
+    private List<SpellAbility> selectOnePick(List<SpellAbility> options, List<String> labels,
+            long obsSeq) {
         int pick = bridge.selectOne(TAG_PRIORITY, labels);
         if (pick == 0) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
@@ -100,20 +146,41 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return Lists.newArrayList(chosen);
     }
 
+    /** One-shot attempt outcome: sas = the answer (null = window passes);
+     *  vetoedOption = the 1-based option index the realizer vetoed (0 = no
+     *  veto — the caller only re-asks on a veto). */
+    private static final class OneShot {
+        final List<SpellAbility> sas;
+        final int vetoedOption;
+
+        OneShot(List<SpellAbility> sas, int vetoedOption) {
+            this.sas = sas;
+            this.vetoedOption = vetoedOption;
+        }
+    }
+
     /**
      * M1 D8: realize a composite CastPlan answer. The realizer adjudicates
      * legality only (never the heuristic's judgment — the M0 65% veto class);
-     * a veto passes the window, with the reason in the census/provenance log.
+     * a veto passes the window (or re-asks, D6 run-2), with the reason in the
+     * census/provenance log. Census lines gain "reask"=attempt on re-asked
+     * attempts (attempt > 0), so a success line with reask>0 = a rescue.
      */
-    private List<SpellAbility> oneShotCast(List<SpellAbility> options, CastPlanAnswer plan,
-            long obsSeq) {
+    private OneShot oneShotCast(List<SpellAbility> options, CastPlanAnswer plan,
+            long obsSeq, int attempt) {
         if (plan.optionIndex <= 0 || plan.optionIndex > options.size()) {
             boolean oor = plan.optionIndex != 0;
-            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                    "by", "bridge", "options", options.size(), "pick", "pass",
-                    "oneshot", true, "oor", oor);
+            if (attempt > 0) {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "bridge", "options", options.size(), "pick", "pass",
+                        "oneshot", true, "oor", oor, "reask", attempt);
+            } else {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "bridge", "options", options.size(), "pick", "pass",
+                        "oneshot", true, "oor", oor);
+            }
             Obs.ret(getGame(), obsSeq, null);
-            return null;
+            return new OneShot(null, 0);
         }
         SpellAbility picked = options.get(plan.optionIndex - 1);
         List<SpellAbility> hostSas;
@@ -129,18 +196,32 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
         CastPlanRealizer.Result r = CastPlanRealizer.realize(getGame(), player, hostSas, plan);
         if (r.sa == null) {
-            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                    "by", "bridge", "options", options.size(), "pick", Census.str(picked),
-                    "oneshot", true, "veto", r.veto, "hostSas", r.hostSas, "fits", r.fitCount);
+            if (attempt > 0) {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "bridge", "options", options.size(), "pick", Census.str(picked),
+                        "oneshot", true, "veto", r.veto, "hostSas", r.hostSas, "fits", r.fitCount,
+                        "reask", attempt);
+            } else {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "bridge", "options", options.size(), "pick", Census.str(picked),
+                        "oneshot", true, "veto", r.veto, "hostSas", r.hostSas, "fits", r.fitCount);
+            }
             Obs.ret(getGame(), obsSeq, null);
-            return null;
+            return new OneShot(null, plan.optionIndex);
         }
-        Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                "by", "bridge", "options", options.size(), "pick", Census.str(r.sa),
-                "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount,
-                "divided", r.divided);
+        if (attempt > 0) {
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "bridge", "options", options.size(), "pick", Census.str(r.sa),
+                    "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount,
+                    "divided", r.divided, "reask", attempt);
+        } else {
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "bridge", "options", options.size(), "pick", Census.str(r.sa),
+                    "oneshot", true, "rung", r.rung, "hostSas", r.hostSas, "fits", r.fitCount,
+                    "divided", r.divided);
+        }
         Obs.ret(getGame(), obsSeq, Lists.newArrayList(r.sa));
-        return Lists.newArrayList(r.sa);
+        return new OneShot(Lists.newArrayList(r.sa), 0);
     }
 
     /** London mulligans are rules-unbounded (hand redraws to 7 every time), so
