@@ -95,7 +95,7 @@ public final class AnvilRun {
         boolean pairFile = params != null && params.containsKey("pairs");
         if (params == null || fixedPair == pairFile) {
             System.out.println("Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <n>]) [-f <format>] "
-                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] "
+                    + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] [-reask] "
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
@@ -116,6 +116,9 @@ public final class AnvilRun {
                 bridgeSeats.add(Integer.parseInt(s.trim()));
             }
         }
+        // D6 run-2: re-ask-on-veto (d6-vtrace-loop §6b). Per-JVM, all seats.
+        boolean reask = params.containsKey("reask");
+        PlayerControllerAnvil.setReaskOnVeto(reask);
 
         int rangeStart = 0;
         int nGames;
@@ -209,10 +212,10 @@ public final class AnvilRun {
         }
 
         System.out.printf("Anvil worker: games [%d,%d), %s, seedbase=%s, bridge=%s, tags=%s, "
-                        + "pairs=%d gpp=%s, profiles=%s%n",
+                        + "reask=%s, pairs=%d gpp=%s, profiles=%s%n",
                 rangeStart, rangeStart + nGames, type,
                 seedBase != null ? seedBase : ("legacy:" + legacyBaseSeed), bridgeMode, tags,
-                pairNames.size(), fixedPair ? "-" : String.valueOf(gamesPerPair), profiles);
+                reask, pairNames.size(), fixedPair ? "-" : String.valueOf(gamesPerPair), profiles);
 
         Map<String, Integer> tally = new TreeMap<>();
         ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
