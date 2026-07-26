@@ -1,5 +1,7 @@
 package forge.ai.anvil;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import forge.ai.AiBlockController;
@@ -129,6 +131,28 @@ public final class CombatRealizer {
             }
             combat.addBlocker(attacker, blocker);
             r.applied++;
+        }
+
+        // Min/max blocker restrictions (menace, "can't be blocked except by
+        // three or more" — MinMaxBlocker statics). canBlock gates one
+        // assignment at a time and never sees the resulting COUNT, so an
+        // under-strength declaration passes the loop above and only fails the
+        // validateBlocks gate below — which surrenders the WHOLE window to the
+        // heuristic block controller, destroying the model's other legal blocks
+        // with it and recording the loss as `fallback` with dropped=0
+        // (MenaceBlockRealizerTest; observed run3-i000 g269/g363). Drop only
+        // the offending attacker's blockers, counted as the drops they are;
+        // the requirement repair below may re-place the freed creatures.
+        for (Card atk : combat.getAttackers()) {
+            List<Card> bl = new ArrayList<>(CardLists.filterControlledBy(combat.getBlockers(atk), defender));
+            if (bl.isEmpty() || CombatUtil.canAttackerBeBlockedWithAmount(atk, bl.size(), combat)) {
+                continue;
+            }
+            for (Card b : bl) {
+                combat.removeBlockAssignment(atk, b);
+                r.applied--;
+                r.dropped++;
+            }
         }
 
         // Forced blocks (lure / "blocks each combat if able" / mustBlockCards):
