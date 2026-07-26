@@ -73,6 +73,17 @@ public final class ForkFidelityCheck {
     }
 
     public static void run(String[] args) {
+        // Headless instrument: never route uncaught throwables to Forge's GUI
+        // bug-report dialog (the class AnvilRun already guards — Main registers
+        // ExceptionHandler). A startup failure here raised a MODAL dialog and
+        // the process sat alive holding it (mis-launched control run,
+        // 2026-07-17). Log and let the JVM policy decide.
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            System.err.println("[forkcheck] uncaught " + e.getClass().getName()
+                    + " on thread " + t.getName() + " (headless: no dialog)");
+            e.printStackTrace();
+        });
+
         FModel.initialize(null, null);
 
         Map<String, List<String>> params = parseParams(args);
