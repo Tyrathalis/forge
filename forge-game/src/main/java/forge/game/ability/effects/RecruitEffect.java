@@ -1,5 +1,6 @@
 package forge.game.ability.effects;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -59,7 +60,9 @@ public class RecruitEffect extends TokenEffectBase {
 
                 moveParams = AbilityKey.newMap();
                 zoneMovements = AbilityKey.addCardZoneTableParams(moveParams, sa);
-                discard(sa, true, Map.of(p, CardCollection.getView(toBeDiscarded)), moveParams);
+                // discard() writes the post-move collection back into this map
+                // (discardedMap.put), so it must be mutable
+                discard(sa, true, new HashMap<>(Map.of(p, CardCollection.getView(toBeDiscarded))), moveParams);
                 zoneMovements.triggerChangesZoneAll(game, sa);
 
                 if (toBeDiscarded.stream().anyMatch(CardPredicates.NON_LANDS)) {

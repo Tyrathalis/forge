@@ -17,6 +17,7 @@ import forge.game.zone.ZoneType;
 import forge.util.Lang;
 import forge.util.Localizer;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -96,7 +97,9 @@ public class ConniveEffect extends SpellAbilityEffect {
 
                     moveParams = AbilityKey.newMap();
                     zoneMovements = AbilityKey.addCardZoneTableParams(moveParams, sa);
-                    discard(sa, true, Map.of(p, CardCollection.getView(toBeDiscarded)), moveParams);
+                    // discard() writes the post-move collection back into this
+                    // map (discardedMap.put), so it must be mutable
+                    discard(sa, true, new HashMap<>(Map.of(p, CardCollection.getView(toBeDiscarded))), moveParams);
                     counterPlacements.replaceCounterEffect(game, sa);
                     zoneMovements.triggerChangesZoneAll(game, sa);
                 }
