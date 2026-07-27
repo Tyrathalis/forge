@@ -13,6 +13,7 @@ import forge.game.card.CardView;
 import forge.game.zone.ZoneType;
 import forge.gui.control.PlaybackSpeed;
 import forge.screens.match.MatchController;
+import forge.util.RotatedRect;
 import forge.util.Utils;
 
 import static forge.assets.FSkin.getDefaultSkinFile;
@@ -80,11 +81,9 @@ public class FCardPanel extends FDisplayObject {
             w = h / ASPECT_RATIO;
         }
 
-        if (tapped) { //rotate box if tapped
-            top += h - w;
-            float temp = w;
-            w = h;
-            h = temp;
+        if (tapped) { //card is drawn rotated about the tap pivot; test in its unrotated frame
+            return RotatedRect.contains(x, y, left, top, w, h,
+                    left + w / 2, top + h - w / 2, getTappedAngle());
         }
 
         return x >= left && x <= left + w && y >= top && y <= top + h;

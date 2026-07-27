@@ -599,6 +599,24 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
         }
 
         @Override
+        protected boolean renderedCardContains(float x, float y) {
+            if (displayArea != null && displayArea.rotateCards180) {
+                //draw() wraps the card in a 180 degree rotation about the untapped rect center,
+                //which input coordinates never see - undo it before the base hit-test
+                float padding = getPadding();
+                float w = getWidth() - 2 * padding;
+                float h = getHeight() - 2 * padding;
+                if (w == h) { //adjust width if needed to make room for tapping
+                    w = h / ASPECT_RATIO;
+                }
+                float centerX = padding + w / 2;
+                float centerY = padding + h / 2;
+                return super.renderedCardContains(2 * centerX - x, 2 * centerY - y);
+            }
+            return super.renderedCardContains(x, y);
+        }
+
+        @Override
         public void draw(Graphics g) {
             if (displayArea != null && displayArea.rotateCards180) {
                 float padding = getPadding();
