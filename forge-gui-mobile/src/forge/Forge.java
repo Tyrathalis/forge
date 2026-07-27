@@ -203,7 +203,9 @@ public class Forge implements ApplicationListener {
         if (Files.exists(Paths.get(ForgeConstants.DEFAULT_SKINS_DIR+ForgeConstants.ADV_TEXTURE_BG_FILE)))
             selector = getForgePreferences().getPref(FPref.UI_SELECTOR_MODE);
 
-        //screenWidth and screenHeight should be set initially and only change upon restarting the app
+        //initial viewport; resize() keeps these in step with the backbuffer from here on.
+        //Note the UI *scale* (forge.util.Utils) is still frozen at this size — fonts and touch
+        //targets do not rescale on resize, so a window dragged far from its launch size reads off.
         screenWidth = Gdx.app.getGraphics().getWidth();
         screenHeight = Gdx.app.getGraphics().getHeight();
         // Desktop default: auto-detect from initial window/backbuffer aspect ratio
@@ -1039,6 +1041,13 @@ public class Forge implements ApplicationListener {
     @Override
     public void resize(int width, int height) {
         try {
+            //keep the statics the render loop draws from in step with the live backbuffer, or the
+            //window resizes around a viewport frozen at launch size. A minimized window reports
+            //0x0 on some platforms; ignore that rather than dividing by it next frame.
+            if (width > 0 && height > 0) {
+                screenWidth = width;
+                screenHeight = height;
+            }
             if (currentScreen != null) {
                 currentScreen.setSize(width, height);
             } else if (splashScreen != null) {
