@@ -2,6 +2,7 @@ package forge.net;
 
 import forge.gamemodes.net.CompatibleObjectDecoder;
 import forge.gamemodes.net.CompatibleObjectEncoder;
+import forge.gamemodes.match.GameLobby.GameLobbyData;
 import forge.gamemodes.net.event.GuiGameEvent;
 import forge.gamemodes.net.event.LobbyUpdateEvent;
 import forge.gamemodes.net.event.LoginEvent;
@@ -54,6 +55,9 @@ final class RawProtocolPeer implements AutoCloseable {
      */
     final CountDownLatch gotGameState = new CountDownLatch(1);
     final CountDownLatch closed = new CountDownLatch(1);
+    /** Any lobby update at all, including one carrying the unassigned sentinel. */
+    final CountDownLatch gotAnyLobbyUpdate = new CountDownLatch(1);
+    final AtomicReference<GameLobbyData> lobbyData = new AtomicReference<>(null);
 
     RawProtocolPeer(final int port) throws InterruptedException {
         final Bootstrap b = new Bootstrap()
@@ -71,9 +75,13 @@ final class RawProtocolPeer implements AutoCloseable {
                                         if (msg instanceof SessionTokenEvent e) {
                                             token.set(e.getToken());
                                             gotToken.countDown();
-                                        } else if (msg instanceof LobbyUpdateEvent e && e.getSlot() >= 0) {
-                                            assignedSlot.set(e.getSlot());
-                                            gotSlotAssignment.countDown();
+                                        } else if (msg instanceof LobbyUpdateEvent e) {
+                                            lobbyData.set(e.getState());
+                                            gotAnyLobbyUpdate.countDown();
+                                            if (e.getSlot() >= 0) {
+                                                assignedSlot.set(e.getSlot());
+                                                gotSlotAssignment.countDown();
+                                            }
                                         } else if (msg instanceof GuiGameEvent) {
                                             gotGameState.countDown();
                                         }

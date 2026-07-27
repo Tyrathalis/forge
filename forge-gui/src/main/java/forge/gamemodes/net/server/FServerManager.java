@@ -454,11 +454,21 @@ public final class FServerManager implements IHasForgeLog {
         this.draftHandler = handler;
     }
 
+    /**
+     * Push lobby state to every client that has completed login.
+     *
+     * <p>Deliberately not a plain {@code broadcast}: {@code GameLobbyData}
+     * carries each slot's {@link forge.deck.Deck}, so sending it to a peer that
+     * has not authenticated hands anyone who can reach the port every decklist
+     * in the lobby. Peers without a slot are skipped; a joining client gets its
+     * first update from the login path, immediately after {@code connectPlayer}
+     * assigns it one.
+     */
     public void updateLobbyState() {
         localLobby.getData().setMaximumCommanderBracket(
                 FModel.getPreferences().getPrefInt(FPref.DECKGEN_MAXIMUM_COMMANDER_BRACKET));
         final LobbyUpdateEvent event = new LobbyUpdateEvent(localLobby.getData());
-        broadcast(event);
+        broadcastTo(event, IterableUtil.filter(clients.values(), RemoteClient::hasValidSlot));
     }
 
     public void updateSlot(final int index, final UpdateLobbyPlayerEvent event) {
@@ -985,7 +995,9 @@ public final class FServerManager implements IHasForgeLog {
             final RemoteClient client = new RemoteClient(ctx.channel());
             clients.put(ctx.channel(), client);
             netLog.info("Client connected to server at {}", ctx.channel().remoteAddress());
-            updateLobbyState();
+            // No lobby state here: this peer has not logged in, and the state
+            // includes every slot's decklist. It receives its first update from
+            // the login path once it holds a slot.
             super.channelActive(ctx);
         }
 
