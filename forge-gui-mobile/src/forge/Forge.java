@@ -15,6 +15,7 @@ import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.Batch;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Clipboard;
 import forge.adventure.scene.*;
@@ -1047,6 +1048,18 @@ public class Forge implements ApplicationListener {
             if (width > 0 && height > 0) {
                 screenWidth = width;
                 screenHeight = height;
+                //the statics above only decide the logical draw region; the batches carry an ortho
+                //projection fixed at construction size, so they have to be re-projected too or the
+                //UI renders at launch size in the bottom-left corner of the new window
+                if (graphics != null) {
+                    graphics.resize(width, height);
+                }
+                if (animationBatch != null) {
+                    animationBatch.setProjectionMatrix(new Matrix4().setToOrtho2D(0, 0, width, height));
+                }
+                if (frameRate != null) {
+                    frameRate.resize(width, height); //shipped unused until now: nothing ever resized
+                }
             }
             if (currentScreen != null) {
                 currentScreen.setSize(width, height);

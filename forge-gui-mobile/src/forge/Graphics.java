@@ -91,6 +91,20 @@ public class Graphics {
     public ShaderProgram getShaderNightDay() {
         return shaderNightDay;
     }
+    /**
+     * Re-project onto a new backbuffer size. SpriteBatch and ShapeRenderer each build an ortho
+     * projection from Gdx.graphics in their constructor and never revisit it, so without this a
+     * resized window keeps drawing at its launch dimensions, anchored to the GL origin in the
+     * bottom-left with the rest of the window left blank. Safe to call between frames: the
+     * transform stack rides on the transform matrix, not the projection one.
+     */
+    public void resize(int width, int height) {
+        if (width <= 0 || height <= 0) { return; }
+        final Matrix4 projection = new Matrix4().setToOrtho2D(0, 0, width, height);
+        batch.setProjectionMatrix(projection);
+        shapeRenderer.setProjectionMatrix(projection);
+    }
+
     public void begin(float regionWidth0, float regionHeight0) {
         batch.begin();
         bounds = new Rectangle(0, 0, regionWidth0, regionHeight0);
