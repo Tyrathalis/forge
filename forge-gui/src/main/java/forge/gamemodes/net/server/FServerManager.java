@@ -1165,7 +1165,7 @@ public final class FServerManager implements IHasForgeLog {
                     netLog.info("[Reconnect] Player reconnected: {}", username);
                 } else {
                     // Normal login flow
-                    final int index = localLobby.connectPlayer(event.getUsername(), event.getAvatarIndex(), event.getSleeveIndex());
+                    final int index = localLobby.connectPlayer(username, event.getAvatarIndex(), event.getSleeveIndex());
                     if (index == -1) {
                         ctx.close();
                     } else {
@@ -1175,7 +1175,7 @@ public final class FServerManager implements IHasForgeLog {
                         // its seat after a disconnect.
                         issueReconnectToken(client);
                         if (index > 0) {
-                            broadcast(new MessageEvent(String.format("%s joined the lobby.", event.getUsername())));
+                            broadcast(new MessageEvent(String.format("%s joined the lobby.", username)));
                             broadcastTo(new MessageEvent(formatAfkTimeoutMessage()),
                                     Collections.singleton(client));
                         }
@@ -1186,12 +1186,12 @@ public final class FServerManager implements IHasForgeLog {
                             broadcast(MessageEvent.warning(String.format(
                                 "Warning: Could not determine %s's Forge version. "
                                 + "Please use the same version as the host to avoid network compatibility issues.",
-                                event.getUsername())));
+                                username)));
                         } else if (!clientVersion.equals(hostVersion)) {
                             broadcast(MessageEvent.warning(String.format(
                                 "Warning: %s is using Forge version %s (host: %s). "
                                 + "Please use the same version as the host to avoid network compatibility issues.",
-                                event.getUsername(), clientVersion, hostVersion)));
+                                username, clientVersion, hostVersion)));
                         }
                         // Strip the capability before echoing the login to the
                         // lobby — broadcasting it would hand every player the
@@ -1215,10 +1215,14 @@ public final class FServerManager implements IHasForgeLog {
                     netLog.warn("Rejecting server-owned lobby fields from slot {} ({}) at {}",
                             client.getIndex(), client.getUsername(), ctx.channel().remoteAddress());
                 }
+                // Clean the name before it reaches the slot, not just before it
+                // reaches our own record of the client: the slot name is what
+                // every peer renders and what broadcastReadyState echoes.
+                final String newName = LogSafe.forDisplay(event.getName(), MAX_NAME_LENGTH);
+                event.setName(newName);
                 localLobby.applyToSlot(client.getIndex(), event);
-                if (event.getName() != null) {
-                    String oldName = client.getUsername();
-                    String newName = LogSafe.forDisplay(event.getName(), MAX_NAME_LENGTH);
+                if (newName != null) {
+                    final String oldName = client.getUsername();
                     if (!newName.equals(oldName)) {
                         client.setUsername(newName);
                         broadcast(new MessageEvent(String.format("%s changed their name to %s", oldName, newName)));

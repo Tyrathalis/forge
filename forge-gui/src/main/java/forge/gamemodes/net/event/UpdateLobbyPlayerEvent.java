@@ -216,6 +216,11 @@ public final class UpdateLobbyPlayerEvent implements NetEvent {
     public String getPlanarDeckName() { return PlanarDeckName; }
     public String getDeckName() { return DeckName; }
 
+    /** Lets the server replace a client-supplied name with a sanitised one. */
+    public void setName(String name) {
+        this.name = name;
+    }
+
     public void setAiProfile(String aiProfile) {
         this.aiProfile = aiProfile;
     }
