@@ -69,6 +69,38 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
         return index >= 0;
     }
 
+    /** Remote peer address, for admission limits and logging. */
+    public java.net.SocketAddress getRemoteAddress() {
+        final Channel ch = channel;
+        return ch == null ? null : ch.remoteAddress();
+    }
+
+    /**
+     * Token bucket for chat. Sized for a person typing — a burst of a few
+     * lines is fine, a sustained stream is not. Deliberately generous: the
+     * cost of being wrong is a dropped chat line, but the cost of being too
+     * loose is every peer's chat pane and the host's log.
+     */
+    private static final int CHAT_BURST = 10;
+    private static final long CHAT_REFILL_MILLIS = 1000;
+    private double chatTokens = CHAT_BURST;
+    private long chatLastRefill = System.currentTimeMillis();
+
+    /** Consume one chat allowance; false when the peer is over its rate. */
+    public synchronized boolean allowChatMessage() {
+        final long now = System.currentTimeMillis();
+        final long elapsed = now - chatLastRefill;
+        if (elapsed > 0) {
+            chatTokens = Math.min(CHAT_BURST, chatTokens + (double) elapsed / CHAT_REFILL_MILLIS);
+            chatLastRefill = now;
+        }
+        if (chatTokens < 1) {
+            return false;
+        }
+        chatTokens -= 1;
+        return true;
+    }
+
     public String getReconnectToken() {
         return reconnectToken;
     }

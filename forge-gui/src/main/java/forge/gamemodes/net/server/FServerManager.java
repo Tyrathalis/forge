@@ -31,6 +31,7 @@ import forge.model.FModel;
 import forge.player.PlayerControllerHuman;
 import forge.util.BuildInfo;
 import forge.util.IterableUtil;
+import forge.util.LogSafe;
 import forge.util.Localizer;
 import forge.localinstance.properties.ForgeNetPreferences;
 
@@ -57,6 +58,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.*;
+import java.net.SocketAddress;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -82,6 +84,81 @@ public final class FServerManager implements IHasForgeLog {
 
     /** Source for reconnect capabilities. Must not be a plain Random. */
     private final SecureRandom secureRandom = new SecureRandom();
+
+    /**
+     * Admission limits. Every accepted channel allocates a {@link RemoteClient}
+     * and a decoder before the peer has proved anything, so without a ceiling a
+     * single source can hold open as many as it likes. A pod is at most 8
+     * seats; the cap is far above that so reconnect churn and a stray probe
+     * never lock anyone out.
+     */
+    private static int maxConnections() {
+        return Integer.getInteger("forge.net.maxConnections", 64);
+    }
+    private static int maxConnectionsPerHost() {
+        return Integer.getInteger("forge.net.maxConnectionsPerHost", 16);
+    }
+    /** A peer that has not logged in by now is not here to play. */
+    private static int loginDeadlineSeconds() {
+        return Integer.getInteger("forge.net.loginDeadlineSeconds", 60);
+    }
+    /** Chat is broadcast to everyone, so it is bounded in both size and rate. */
+    private static final int MAX_CHAT_LENGTH =
+            Integer.getInteger("forge.net.maxChatLength", 512);
+    /** Names are echoed into chat and logs; bound them at intake. */
+    private static final int MAX_NAME_LENGTH =
+            Integer.getInteger("forge.net.maxNameLength", 64);
+
+    private static String remoteHostOf(final ChannelHandlerContext ctx) {
+        final SocketAddress address = ctx.channel().remoteAddress();
+        if (address instanceof InetSocketAddress inet) {
+            final InetAddress host = inet.getAddress();
+            return host == null ? inet.getHostString() : host.getHostAddress();
+        }
+        return String.valueOf(address);
+    }
+
+    /** Whether this channel is allowed to become a client at all. */
+    private boolean admitConnection(final ChannelHandlerContext ctx) {
+        if (clients.size() >= maxConnections()) {
+            netLog.warn("Refusing connection from {}: server at {} connections",
+                    ctx.channel().remoteAddress(), clients.size());
+            return false;
+        }
+        final String host = remoteHostOf(ctx);
+        int fromSameHost = 0;
+        for (final RemoteClient existing : clients.values()) {
+            final SocketAddress other = existing.getRemoteAddress();
+            if (other instanceof InetSocketAddress inet
+                    && host.equals(inet.getAddress() == null
+                        ? inet.getHostString() : inet.getAddress().getHostAddress())) {
+                fromSameHost++;
+            }
+        }
+        if (fromSameHost >= maxConnectionsPerHost()) {
+            netLog.warn("Refusing connection from {}: {} already open from that host",
+                    ctx.channel().remoteAddress(), fromSameHost);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Close a channel that connects and then says nothing. Without this a peer
+     * can sit in the accepted-but-unregistered state indefinitely, holding a
+     * connection slot and a decoder for free.
+     */
+    private void scheduleLoginDeadline(final ChannelHandlerContext ctx) {
+        final int deadline = loginDeadlineSeconds();
+        afkExecutor.schedule(() -> {
+            final RemoteClient client = clients.get(ctx.channel());
+            if (client != null && !client.hasValidSlot()) {
+                netLog.warn("Closing {}: no login within {}s",
+                        ctx.channel().remoteAddress(), deadline);
+                ctx.close();
+            }
+        }, deadline, TimeUnit.SECONDS);
+    }
 
     /**
      * Mint a fresh reconnect capability for a client and deliver it to that
@@ -951,11 +1028,26 @@ public final class FServerManager implements IHasForgeLog {
                 return; // Consumed — arrival resets IdleStateHandler read timer
             }
             if (msg instanceof MessageEvent) {
-                final String text = ((MessageEvent) msg).getMessage();
-                if (text != null && text.startsWith("/")) {
+                final String raw = ((MessageEvent) msg).getMessage();
+                if (raw != null && raw.startsWith("/")) {
                     return; // Suppress slash commands from remote clients
                 }
                 final RemoteClient client = clients.get(ctx.channel());
+                if (client == null) {
+                    return;
+                }
+                // Chat is accepted before login and rebroadcast to everyone, so
+                // it is the cheapest way to flood the lobby, the logs and every
+                // peer's outbound bandwidth at once.
+                if (!client.allowChatMessage()) {
+                    netLog.warn("Dropping chat from {} at {}: rate limit exceeded",
+                            LogSafe.forLog(client.getUsername()), ctx.channel().remoteAddress());
+                    return;
+                }
+                // Strip control characters before echoing to other players: a
+                // carriage return lets one player paint fake system lines in
+                // everyone else's chat pane.
+                final String text = LogSafe.forDisplay(raw, MAX_CHAT_LENGTH);
                 String username = client.getUsername();
                 // Append (Host) indicator for the host player
                 if (client.getIndex() == 0) {
@@ -992,12 +1084,17 @@ public final class FServerManager implements IHasForgeLog {
     private class RegisterClientHandler extends ChannelInboundHandlerAdapter {
         @Override
         public void channelActive(final ChannelHandlerContext ctx) throws Exception {
+            if (!admitConnection(ctx)) {
+                ctx.close();
+                return;
+            }
             final RemoteClient client = new RemoteClient(ctx.channel());
             clients.put(ctx.channel(), client);
             netLog.info("Client connected to server at {}", ctx.channel().remoteAddress());
             // No lobby state here: this peer has not logged in, and the state
             // includes every slot's decklist. It receives its first update from
             // the login path once it holds a slot.
+            scheduleLoginDeadline(ctx);
             super.channelActive(ctx);
         }
 
@@ -1005,7 +1102,13 @@ public final class FServerManager implements IHasForgeLog {
         public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
             final RemoteClient client = clients.get(ctx.channel());
             if (msg instanceof LoginEvent event) {
-                final String username = event.getUsername();
+                // Sanitise once, here, and use the result everywhere. The name
+                // is echoed into chat and into log lines, so a newline in it
+                // forges log records and fake system messages. It is also the
+                // key for disconnectedClients, so cleaning it at the single
+                // point of intake keeps the parked key and the reconnect
+                // lookup in agreement.
+                final String username = LogSafe.forDisplay(event.getUsername(), MAX_NAME_LENGTH);
                 client.setUsername(username);
 
                 // Check if this is a reconnecting player. A username is public
@@ -1115,7 +1218,7 @@ public final class FServerManager implements IHasForgeLog {
                 localLobby.applyToSlot(client.getIndex(), event);
                 if (event.getName() != null) {
                     String oldName = client.getUsername();
-                    String newName = event.getName();
+                    String newName = LogSafe.forDisplay(event.getName(), MAX_NAME_LENGTH);
                     if (!newName.equals(oldName)) {
                         client.setUsername(newName);
                         broadcast(new MessageEvent(String.format("%s changed their name to %s", oldName, newName)));
