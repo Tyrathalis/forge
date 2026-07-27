@@ -39,13 +39,12 @@ public class CObjectInputStream extends ObjectInputStream implements forge.util.
         if (tracker != null) {
             enableResolveObject(true);
         }
+        WireArrayLimit.applyTo(this);
     }
 
     /**
-     * Both overrides below consult {@link WireClassFilter} <b>before</b> the
-     * name is turned into a Class. Resolution runs the class's static
-     * initialiser, so checking afterwards is already too late against a gadget
-     * that does its work there.
+     * Both overrides below consult {@link WireClassFilter} before the name is
+     * turned into a Class, so a rejected class is never loaded.
      */
     @Override
     protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {

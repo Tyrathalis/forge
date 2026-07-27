@@ -124,4 +124,34 @@ public class WireDeserializationTest {
                     "Rejection should identify the proxy: " + expected.getMessage());
         }
     }
+
+    /**
+     * The class filter cannot catch this: an array length is data, not a name,
+     * and {@code ObjectInputStream} allocates from the declared length before
+     * reading any element — so a byte cap on the stream never sees it either.
+     */
+    @Test
+    public void testRejectsAnOverlongDeclaredArray() throws Exception {
+        final byte[] frame = encode(new int[] { 1, 2, 3, 4 });
+        // Rewrite the declared length to 200 million (~762 MB if allocated) and
+        // cut the frame short: nothing past the length is ever read.
+        final int lengthAt = frame.length - 4 * 4 - 4;
+        final int huge = 200_000_000;
+        frame[lengthAt] = (byte) (huge >>> 24);
+        frame[lengthAt + 1] = (byte) (huge >>> 16);
+        frame[lengthAt + 2] = (byte) (huge >>> 8);
+        frame[lengthAt + 3] = (byte) huge;
+
+        try {
+            decode(frame);
+            Assert.fail("A frame declaring int[" + huge + "] was accepted");
+        } catch (final InvalidClassException expected) {
+            // WireArrayLimit refused the length before anything was allocated.
+        } catch (final Throwable other) {
+            // Anything else — EOF from reading elements, or OutOfMemoryError —
+            // means the length was accepted and the array already allocated.
+            Assert.fail("The declared array was allocated (" + other.getClass().getSimpleName()
+                    + "): the wire array limit is not in place");
+        }
+    }
 }

@@ -31,13 +31,15 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
      * Ceiling on bytes read out of the LZ4 stream for a single frame.
      *
      * <p>The frame length check bounds the <b>compressed</b> payload at about
-     * 9.5 MiB, which says nothing about what it expands to: a small crafted
-     * frame can ask for a very large buffer, and doing that on several
-     * connections at once is enough to pressure the heap of a host that has
-     * not authenticated anyone yet. Real traffic is nowhere near this — a
-     * whole 16-turn game measured about 250 KB across all of its deltas — so
-     * this default is generous by orders of magnitude and exists only to make
-     * the pathological case terminate.
+     * 9.5 MiB, which says nothing about how far LZ4 expands it. Real traffic is
+     * nowhere near this — a whole 16-turn game measured about 250 KB across all
+     * of its deltas — so this default is generous by orders of magnitude and
+     * exists only to make the pathological case terminate.
+     *
+     * <p>This bounds bytes <i>read</i>, and so does not address a declared but
+     * unread allocation: {@code ObjectInputStream} sizes an array from the
+     * length the peer declares before reading any elements. That is
+     * {@link WireArrayLimit}'s job, not this one.
      */
     private static final long MAX_DECOMPRESSED_BYTES =
             Long.getLong("forge.net.maxDecompressedBytes", 64L * 1024 * 1024);
