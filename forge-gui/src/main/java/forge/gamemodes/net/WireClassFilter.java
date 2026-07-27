@@ -41,8 +41,12 @@ import java.util.Set;
  * commander): 131 distinct classes, of which 87 are {@code forge.*} and the
  * remaining 44 are JDK collections, boxed primitives, arrays and Guava
  * collections. The prefixes below cover that set with room to spare while
- * excluding every classic gadget library — none of which, as it happens, is on
- * Forge's classpath today either.
+ * excluding the classic gadget libraries — none of which (commons-collections,
+ * commons-beanutils, groovy, spring, rome, c3p0, bsh, clojure, javassist,
+ * jackson-databind, {@code com.sun.rowset}) is on Forge's classpath today
+ * either. XStream <i>is</i> present, but its published gadgets target
+ * XStream's own XML unmarshalling rather than {@code ObjectInputStream}; it is
+ * rejected here regardless.
  *
  * <p>{@code java.util.**} is admitted wholesale rather than enumerated. Its
  * serializable classes are collections; the ones that appear in published
@@ -63,9 +67,11 @@ import java.util.Set;
  *
  * <h2>Escape hatch</h2>
  *
- * A filter that wrongly rejects legitimate traffic breaks a game mid-match,
- * and the coverage above does not include drafting, sealed, sideboarding or
- * the dialog paths. {@code -Dforge.net.classFilter=off} disables enforcement
+ * A filter that wrongly rejects legitimate traffic breaks a game mid-match.
+ * The stress-gated network suite adds draft and sealed to the coverage above
+ * and rejected nothing across 115 games, which leaves sideboarding and the
+ * human-only dialog paths unmeasured.
+ * {@code -Dforge.net.classFilter=off} disables enforcement
  * so a user hitting a false reject can finish their evening; rejections are
  * logged with the class name either way, which is what makes a gap reportable
  * rather than mysterious.
