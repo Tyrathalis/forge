@@ -302,6 +302,21 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
         return newMain;
     }
 
+    private static final String DIVIDE_COMBAT_DAMAGE =
+            "You may assign CARDNAME's combat damage divided as you choose among "
+                    + "defending player and/or any number of creatures they control.";
+
+    /** Whether a proposed split sends any damage to the defender rather than a blocker. */
+    private static boolean assignsToDefender(final Map<CardView, Integer> proposed) {
+        for (final Entry<CardView, Integer> e : proposed.entrySet()) {
+            if ((e.getKey() == null || e.getKey().getId() == -1)
+                    && e.getValue() != null && e.getValue() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public Map<Card, Integer> assignCombatDamage(final Card attacker, final CardCollectionView blockers, final CardCollectionView remaining,
                                                  final int damageDealt, final GameEntity defender, final boolean overrideOrder) {
@@ -310,8 +325,7 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
         final Map<Card, Integer> map = Maps.newHashMap();
 
         if ((attacker.hasKeyword(Keyword.TRAMPLE) && defender != null) || (blockers.size() > 1)
-                || ((attacker.hasKeyword("You may assign CARDNAME's combat damage divided as you choose among " +
-                "defending player and/or any number of creatures they control.")) && overrideOrder &&
+                || (attacker.hasKeyword(DIVIDE_COMBAT_DAMAGE) && overrideOrder &&
                 blockers.size() > 0) || (attacker.hasKeyword("Trample:Planeswalker") && defender instanceof Card)) {
             GameEntityViewMap<Card, CardView> gameCacheBlockers = GameEntityView.getMap(blockers);
             final CardView vAttacker = CardView.get(attacker);
@@ -329,9 +343,19 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
             // more damage than the creature deals, or a negative share, is not
             // a legal split — drop the whole answer and fall through to the
             // default assignment rather than applying part of it.
+            //
+            // The same goes for a share aimed at the defending player, which is
+            // only reachable when the attacker can get past its blockers. Both
+            // dialogs offer that entry under exactly the condition below, so an
+            // honest client never sends one otherwise.
+            final boolean mayAssignToDefender = (attacker.hasKeyword(Keyword.TRAMPLE) && defender != null)
+                    || (attacker.hasKeyword(DIVIDE_COMBAT_DAMAGE) && overrideOrder)
+                    || (attacker.hasKeyword("Trample:Planeswalker") && defender instanceof Card);
             if (RemoteAllocations.totalIfLegal(result.values(), damageDealt) == RemoteAllocations.ILLEGAL) {
                 netLog.warn("Rejecting illegal combat damage assignment for {} (budget {}): {}",
                         attacker, damageDealt, result.values());
+            } else if (!mayAssignToDefender && assignsToDefender(result)) {
+                netLog.warn("Rejecting combat damage aimed past {}'s blockers at the defender", attacker);
             } else {
                 for (final Entry<CardView, Integer> e : result.entrySet()) {
                     if (gameCacheBlockers.containsKey(e.getKey())) {
