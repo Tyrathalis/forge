@@ -325,17 +325,26 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
             if (result == null) {
                 return null;
             }
-            for (final Entry<CardView, Integer> e : result.entrySet()) {
-                if (gameCacheBlockers.containsKey(e.getKey())) {
-                    map.put(gameCacheBlockers.get(e.getKey()), e.getValue());
-                } else if (e.getKey() == null || e.getKey().getId() == -1) {
-                    // null key or key with -1 means defender
-                    map.put(null, e.getValue());
+            // The reply is a proposal from a possibly-hostile peer. Assigning
+            // more damage than the creature deals, or a negative share, is not
+            // a legal split — drop the whole answer and fall through to the
+            // default assignment rather than applying part of it.
+            if (RemoteAllocations.totalIfLegal(result.values(), damageDealt) == RemoteAllocations.ILLEGAL) {
+                netLog.warn("Rejecting illegal combat damage assignment for {} (budget {}): {}",
+                        attacker, damageDealt, result.values());
+            } else {
+                for (final Entry<CardView, Integer> e : result.entrySet()) {
+                    if (gameCacheBlockers.containsKey(e.getKey())) {
+                        map.put(gameCacheBlockers.get(e.getKey()), e.getValue());
+                    } else if (e.getKey() == null || e.getKey().getId() == -1) {
+                        // null key or key with -1 means defender
+                        map.put(null, e.getValue());
+                    }
                 }
+                return map;
             }
-        } else {
-            map.put(blockers.isEmpty() ? null : blockers.get(0), damageDealt);
         }
+        map.put(blockers.isEmpty() ? null : blockers.get(0), damageDealt);
         return map;
     }
 
@@ -350,6 +359,13 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
                 localizer.getMessage("lblShield"));
         Map<GameEntity, Integer> result = new HashMap<>();
         if (vResult != null) { //fix for netplay
+            // Same untrusted-proposal rule as combat damage: a peer must not be
+            // able to shield for more than the effect grants.
+            if (RemoteAllocations.totalIfLegal(vResult.values(), shieldAmount) == RemoteAllocations.ILLEGAL) {
+                netLog.warn("Rejecting illegal shield allocation for {} (budget {}): {}",
+                        effectSource, shieldAmount, vResult.values());
+                return result;
+            }
             for (Map.Entry<GameEntity, Integer> e : affected.entrySet()) {
                 if (vResult.containsKey(GameEntityView.get(e.getKey()))) {
                     result.put(e.getKey(), vResult.get(GameEntityView.get(e.getKey())));
@@ -379,6 +395,13 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
                 localizer.getMessage("lblMana").toLowerCase());
         Map<Byte, Integer> result = new HashMap<>();
         if (vResult != null) { //fix for netplay
+            // Bound the split so a peer cannot conjure more mana than the
+            // ability produces.
+            if (RemoteAllocations.totalIfLegal(vResult.values(), manaAmount) == RemoteAllocations.ILLEGAL) {
+                netLog.warn("Rejecting illegal mana combo for {} (budget {}): {}",
+                        sa, manaAmount, vResult.values());
+                vResult.clear();
+            }
             for (MagicColor.Color color : colorSet) {
                 if (vResult.containsKey(color)) {
                     result.put(color.getColorMask(), vResult.get(color));
@@ -2503,16 +2526,51 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
                     vTargets.put(GameEntityView.get(e), amount);
                 }
                 final Map<Object, Integer> vResult = getGui().assignGenericAmount(vSource, vTargets, amount, true, label);
-                for (GameEntity e : targets) {
-                    currentAbility.addDividedAllocation(e, vResult.get(GameEntityView.get(e)));
-                }
-                if (currentAbility.getStillToDivide() > 0) {
+                if (!applyDividedAllocation(currentAbility, targets, vResult, amount)) {
                     return false;
                 }
             }
         }
 
         return result;
+    }
+
+    /**
+     * Apply a proposed division of {@code amount} among {@code targets},
+     * rejecting anything that is not a legal division.
+     *
+     * <p>Split out from {@link #chooseTargetsFor} so the rule can be tested
+     * without driving target selection through a GUI. In a network game
+     * {@code proposed} came from a remote peer, so it may allocate more than
+     * exists, allocate a negative share, or omit a target entirely. The last
+     * case used to store a null share against that target, since
+     * {@code addDividedAllocation} takes an {@code Integer} and does not
+     * complain — leaving a corrupt allocation to surface later rather than
+     * being refused here.
+     *
+     * @return false if the proposal is rejected, leaving the caller to abort
+     *         the targeting rather than commit a partial allocation
+     */
+    boolean applyDividedAllocation(final SpellAbility ability, final Iterable<GameEntity> targets,
+            final Map<Object, Integer> proposed, final int amount) {
+        if (!RemoteAllocations.allocatesExactly(
+                proposed == null ? null : proposed.values(), amount)) {
+            netLog.warn("Rejecting illegal divided allocation for {} (budget {}): {}",
+                    ability, amount, proposed == null ? null : proposed.values());
+            return false;
+        }
+        for (final GameEntity e : targets) {
+            final Integer share = proposed.get(GameEntityView.get(e));
+            if (share == null) {
+                netLog.warn("Rejecting divided allocation missing a share for {}", e);
+                return false;
+            }
+            ability.addDividedAllocation(e, share);
+        }
+        // != rather than > : handing out more than existed leaves a negative
+        // remainder, and negative is not greater than zero, so the original
+        // test passed precisely the case it needed to stop.
+        return ability.getStillToDivide() == 0;
     }
 
     /*
