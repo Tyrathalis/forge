@@ -21,7 +21,7 @@ import java.io.*;
  *       PlayerView instances from the Tracker.</li>
  * </ul>
  */
-public class CObjectInputStream extends ObjectInputStream {
+public class CObjectInputStream extends ObjectInputStream implements forge.util.IHasForgeLog {
     private final ClassResolver classResolver;
     private final Tracker tracker;
 
@@ -41,19 +41,31 @@ public class CObjectInputStream extends ObjectInputStream {
         }
     }
 
+    /**
+     * Both overrides below consult {@link WireClassFilter} <b>before</b> the
+     * name is turned into a Class. Resolution runs the class's static
+     * initialiser, so checking afterwards is already too late against a gadget
+     * that does its work there.
+     */
     @Override
     protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {
         int type = read();
         if (type < 0)
             throw new EOFException();
-        else if (type == CObjectOutputStream.TYPE_THIN_DESCRIPTOR)
-            return ObjectStreamClass.lookupAny(classResolver.resolve(readUTF()));
-        else
-            return super.readClassDescriptor();
+        else if (type == CObjectOutputStream.TYPE_THIN_DESCRIPTOR) {
+            final String name = readUTF();
+            WireClassFilter.checkAllowed(name);
+            return ObjectStreamClass.lookupAny(classResolver.resolve(name));
+        } else {
+            final ObjectStreamClass desc = super.readClassDescriptor();
+            WireClassFilter.checkAllowed(desc.getName());
+            return desc;
+        }
     }
 
     @Override
     protected Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+        WireClassFilter.checkAllowed(desc.getName());
         Class<?> clazz;
         try {
             clazz = classResolver.resolve(desc.getName());
@@ -61,6 +73,32 @@ public class CObjectInputStream extends ObjectInputStream {
             clazz = super.resolveClass(desc);
         }
         return clazz;
+    }
+
+    /**
+     * Refuse dynamic proxies outright.
+     *
+     * <p>This is not redundant with the checks above. A proxy class descriptor
+     * ({@code TC_PROXYCLASSDESC}) does not travel as a class name, so it never
+     * reaches {@code readClassDescriptor} or {@code resolveClass} — the JDK
+     * reads the interface list and calls this method instead. Filtering only
+     * the other two would leave the stream able to synthesise a proxy backed
+     * by an attacker-chosen {@code InvocationHandler}, which is the entry point
+     * for the best-known deserialization chains.
+     *
+     * <p>Nothing in the protocol carries a proxy: none appeared anywhere in
+     * the measured wire traffic, and the message types are concrete view and
+     * event classes. So the safe answer is simply no.
+     */
+    @Override
+    protected Class<?> resolveProxyClass(String[] interfaces) throws IOException, ClassNotFoundException {
+        netLog.error("Rejected dynamic proxy on the wire implementing {} — "
+                + "the multiplayer protocol does not carry proxies", String.join(", ", interfaces));
+        if (WireClassFilter.isEnforcing()) {
+            throw new InvalidClassException("dynamic proxy",
+                    "proxy classes are not permitted by the multiplayer class filter");
+        }
+        return super.resolveProxyClass(interfaces);
     }
 
     @Override

@@ -9,6 +9,10 @@ import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.serialization.ClassResolver;
 import net.jpountz.lz4.LZ4BlockInputStream;
 
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InvalidClassException;
 import java.io.ObjectInputStream;
 import java.io.StreamCorruptedException;
 
@@ -22,6 +26,64 @@ import java.io.StreamCorruptedException;
 public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implements IHasForgeLog {
 
     private static final int SLOW_DECODE_LOG_THRESHOLD_MS = 50;
+
+    /**
+     * Ceiling on bytes read out of the LZ4 stream for a single frame.
+     *
+     * <p>The frame length check bounds the <b>compressed</b> payload at about
+     * 9.5 MiB, which says nothing about what it expands to: a small crafted
+     * frame can ask for a very large buffer, and doing that on several
+     * connections at once is enough to pressure the heap of a host that has
+     * not authenticated anyone yet. Real traffic is nowhere near this — a
+     * whole 16-turn game measured about 250 KB across all of its deltas — so
+     * this default is generous by orders of magnitude and exists only to make
+     * the pathological case terminate.
+     */
+    private static final long MAX_DECOMPRESSED_BYTES =
+            Long.getLong("forge.net.maxDecompressedBytes", 64L * 1024 * 1024);
+
+    /** Fails the read rather than letting a decompression bomb size the heap. */
+    private static final class BoundedInputStream extends FilterInputStream {
+        private final long limit;
+        private long consumed;
+
+        BoundedInputStream(final InputStream in, final long limit) {
+            super(in);
+            this.limit = limit;
+        }
+
+        private void count(final long n) throws IOException {
+            if (n <= 0) {
+                return;
+            }
+            consumed += n;
+            if (consumed > limit) {
+                throw new IOException("Decompressed frame exceeds " + limit
+                        + " bytes; refusing to continue reading");
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            final int b = super.read();
+            count(b < 0 ? 0 : 1);
+            return b;
+        }
+
+        @Override
+        public int read(final byte[] b, final int off, final int len) throws IOException {
+            final int n = super.read(b, off, len);
+            count(n);
+            return n;
+        }
+
+        @Override
+        public long skip(final long n) throws IOException {
+            final long skipped = super.skip(n);
+            count(skipped);
+            return skipped;
+        }
+    }
 
     private final ClassResolver classResolver;
     private volatile Tracker tracker;
@@ -47,7 +109,9 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
         long startMs = System.currentTimeMillis();
 
         ObjectInputStream objectIn = new CObjectInputStream(
-                new LZ4BlockInputStream(new ByteBufInputStream(frame, true)),
+                new BoundedInputStream(
+                        new LZ4BlockInputStream(new ByteBufInputStream(frame, true)),
+                        MAX_DECOMPRESSED_BYTES),
                 this.classResolver, tracker);
 
         Object result = null;
@@ -55,6 +119,11 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
             result = objectIn.readObject();
         } catch (StreamCorruptedException e) {
             netLog.error("Version Mismatch: {}", e.getMessage());
+        } catch (InvalidClassException e) {
+            // A peer named a class the protocol does not carry. The filter has
+            // already logged which one; drop the frame rather than tearing the
+            // pipeline down, matching how a corrupt frame is handled.
+            netLog.error("Dropping frame with disallowed class: {}", e.getMessage());
         } finally {
             objectIn.close();
         }
