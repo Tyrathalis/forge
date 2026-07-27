@@ -40,15 +40,36 @@ public class FGameClient implements IToServer, IHasForgeLog {
     private volatile boolean disconnectSimulated;
     private Channel channel;
 
+    /**
+     * Capability issued by this server at login, presented on reconnect to
+     * reclaim our seat. Held in memory for an in-process rejoin and written
+     * through to preferences so that a client which crashed and restarted can
+     * still reclaim its seat inside the reconnect window — without that,
+     * requiring a token would be a straight regression against the previous
+     * reconnect-by-username behaviour.
+     */
+    private volatile String reconnectToken;
+
     public FGameClient(String username, IGuiGame clientGui, String hostname, int port) {
         this.username = username;
         this.clientGui = clientGui;
         this.hostname = hostname;
         this.port = port;
+        this.reconnectToken = ReconnectTokenStore.load(hostname, port, username);
     }
 
     public String getUsername() {
         return username;
+    }
+
+    /** The capability to present on our next login to this server, or null. */
+    public String getReconnectToken() {
+        return reconnectToken;
+    }
+
+    void setReconnectToken(final String token) {
+        this.reconnectToken = token;
+        ReconnectTokenStore.save(hostname, port, username, token);
     }
 
     final IGuiGame getGui() {
@@ -180,6 +201,10 @@ public class FGameClient implements IToServer, IHasForgeLog {
     private class MessageHandler extends ChannelInboundHandlerAdapter {
         @Override
         public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+            if (msg instanceof SessionTokenEvent event) {
+                setReconnectToken(event.getToken());
+                return; // consumed — never forward a capability further down the pipeline
+            }
             if (msg instanceof MessageEvent event) {
                 for (final ILobbyListener listener : lobbyListeners) {
                     listener.message(event.getSource(), event.getMessage(), event.getType());

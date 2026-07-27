@@ -10,6 +10,8 @@ import forge.util.IHasForgeLog;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class RemoteClient implements IToClient, IHasForgeLog {
@@ -19,6 +21,13 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
 
     private volatile Channel channel;
     private String username;
+    /**
+     * Capability this client must present to reclaim its seat after a
+     * disconnect. Minted server-side at login, rotated on every successful
+     * reconnect, never derived from the username (which is public in the
+     * lobby and therefore not a credential).
+     */
+    private volatile String reconnectToken;
     private int index = UNASSIGNED_SLOT;
     private boolean libgdx;
     private volatile ReplyPool replies = new ReplyPool();
@@ -58,6 +67,29 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
      */
     public boolean hasValidSlot() {
         return index >= 0;
+    }
+
+    public String getReconnectToken() {
+        return reconnectToken;
+    }
+
+    public void setReconnectToken(final String reconnectToken) {
+        this.reconnectToken = reconnectToken;
+    }
+
+    /**
+     * Constant-time check of a presented reconnect capability. Returns false
+     * if this client never had a token, so a seat can never be reclaimed by
+     * presenting nothing.
+     */
+    public boolean matchesReconnectToken(final String presented) {
+        final String expected = this.reconnectToken;
+        if (expected == null || expected.isEmpty() || presented == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                presented.getBytes(StandardCharsets.UTF_8));
     }
 
     /** Encodes synchronously on the caller's thread. Returns null on failure (logged). */

@@ -230,7 +230,10 @@ final class GameClientHandler extends GameProtocolHandler<IGuiGame> implements I
                 Integer.parseInt(FModel.getPreferences().getPref(FPref.UI_AVATARS).split(",")[0]),
                 Integer.parseInt(FModel.getPreferences().getPref(FPref.UI_SLEEVES).split(",")[0]),
                 BuildInfo.getVersionString(),
-                GuiBase.getInterface().isLibgdxPort()
+                GuiBase.getInterface().isLibgdxPort(),
+                // null on a first join; on a reconnect this is what proves the
+                // seat is ours to reclaim.
+                client.getReconnectToken()
         ));
     }
 

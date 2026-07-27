@@ -57,6 +57,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.*;
+import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -78,6 +79,22 @@ public final class FServerManager implements IHasForgeLog {
     private final Map<Channel, RemoteClient> clients = new ConcurrentHashMap<>();
     private final Map<String, RemoteClient> disconnectedClients = new ConcurrentHashMap<>();
     private final Map<String, Timer> reconnectTimers = new ConcurrentHashMap<>();
+
+    /** Source for reconnect capabilities. Must not be a plain Random. */
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    /**
+     * Mint a fresh reconnect capability for a client and deliver it to that
+     * client alone. 256 bits, so it cannot be guessed within the five-minute
+     * reconnect window (or any other window).
+     */
+    private void issueReconnectToken(final RemoteClient client) {
+        final byte[] raw = new byte[32];
+        secureRandom.nextBytes(raw);
+        final String token = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+        client.setReconnectToken(token);
+        broadcastTo(new SessionTokenEvent(token), client);
+    }
     private boolean isHosting = false;
     private EventLoopGroup bossGroup = new NioEventLoopGroup(1);
     private EventLoopGroup workerGroup = new NioEventLoopGroup();
@@ -979,8 +996,18 @@ public final class FServerManager implements IHasForgeLog {
                 final String username = event.getUsername();
                 client.setUsername(username);
 
-                // Check if this is a reconnecting player
-                final RemoteClient disconnected = disconnectedClients.remove(username);
+                // Check if this is a reconnecting player. A username is public
+                // lobby data, so it cannot be the credential — the client must
+                // also present the capability this server issued it at login.
+                final RemoteClient pending = disconnectedClients.get(username);
+                final boolean tokenOk = pending != null
+                        && pending.matchesReconnectToken(event.getReconnectToken());
+                if (pending != null && !tokenOk) {
+                    netLog.warn("[Reconnect] Refused seat reclaim for {} from {}: missing or "
+                            + "invalid reconnect token. Treating as a new join.",
+                            username, ctx.channel().remoteAddress());
+                }
+                final RemoteClient disconnected = tokenOk ? disconnectedClients.remove(username) : null;
                 if (disconnected != null) {
                     // Cancel timeout timer
                     final Timer timer = reconnectTimers.remove(username);
@@ -997,6 +1024,10 @@ public final class FServerManager implements IHasForgeLog {
                     // Re-register under the new channel
                     clients.put(ctx.channel(), disconnected);
                     netLog.info("[Reconnect] Channel swapped for {} (slot {})", username, disconnected.getIndex());
+
+                    // Rotate the capability: a reconnect token is single-use, so
+                    // a copy captured from an earlier session cannot be replayed.
+                    issueReconnectToken(disconnected);
 
                     // Resume and resync
                     resumeAndResync(disconnected);
@@ -1025,6 +1056,9 @@ public final class FServerManager implements IHasForgeLog {
                     } else {
                         client.setIndex(index);
                         client.setLibgdx(event.isLibgdx());
+                        // Mint the capability this client will need to reclaim
+                        // its seat after a disconnect.
+                        issueReconnectToken(client);
                         if (index > 0) {
                             broadcast(new MessageEvent(String.format("%s joined the lobby.", event.getUsername())));
                             broadcastTo(new MessageEvent(formatAfkTimeoutMessage()),
@@ -1044,7 +1078,10 @@ public final class FServerManager implements IHasForgeLog {
                                 + "Please use the same version as the host to avoid network compatibility issues.",
                                 event.getUsername(), clientVersion, hostVersion)));
                         }
-                        broadcast(event);
+                        // Strip the capability before echoing the login to the
+                        // lobby — broadcasting it would hand every player the
+                        // means to take over this seat.
+                        broadcast(event.withoutToken());
                         updateLobbyState();
                     }
                 }

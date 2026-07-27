@@ -30,7 +30,13 @@ public class ForgeNetPreferences extends AbstractPreferences<ForgeNetPreferences
         NET_BANDWIDTH_LOGGING("false"),
         NET_LOG_CLEANUP_ENABLED("true"),
         NET_AFK_TIMEOUT("5"),
-        NET_LAST_COPIED_URL("");
+        NET_LAST_COPIED_URL(""),
+        /**
+         * Reconnect capability for the most recent host joined, stored as
+         * "host:port username token". Lets a restarted client reclaim its seat
+         * inside the host's reconnect window.
+         */
+        NET_RECONNECT_TOKEN("");
 
         private final String strDefaultVal;
 
