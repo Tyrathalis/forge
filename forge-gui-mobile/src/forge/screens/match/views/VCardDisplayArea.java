@@ -29,6 +29,7 @@ import forge.model.FModel;
 import forge.screens.match.MatchController;
 import forge.toolbox.FCardPanel;
 import forge.toolbox.FDisplayObject;
+import forge.util.RotatedRect;
 import forge.util.ThreadUtil;
 import io.sentry.Sentry;
 
@@ -557,7 +558,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
             return cards;
         }
 
-        public static Vector2 getTargetingArrowOrigin(FDisplayObject cardDisplay, boolean isTapped) {
+        public static Vector2 getTargetingArrowOrigin(FDisplayObject cardDisplay, boolean isTapped, float tappedAngle, boolean rotated180) {
             Vector2 origin = new Vector2(cardDisplay.screenPos.x, cardDisplay.screenPos.y);
 
             float left = PADDING;
@@ -568,15 +569,23 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 w = h / ASPECT_RATIO;
             }
 
-            if (isTapped) { //rotate box if tapped
-                top += h - w;
-                float temp = w;
-                w = h;
-                h = temp;
+            //anchor to the card's drawn bounding box
+            float boxX = left, boxY = top, boxW = w, boxH = h;
+            if (isTapped) {
+                float[] bounds = RotatedRect.boundingBox(left, top, w, h,
+                        left + w / 2, top + h - w / 2, tappedAngle);
+                boxX = bounds[0];
+                boxY = bounds[1];
+                boxW = bounds[2];
+                boxH = bounds[3];
+            }
+            if (rotated180) { //the card also draws under an outer 180 degree rotation about the untapped rect center
+                boxX = 2 * (left + w / 2) - boxX - boxW;
+                boxY = 2 * (top + h / 2) - boxY - boxH;
             }
 
-            origin.x += left + w * TARGET_ORIGIN_FACTOR_X;
-            origin.y += top + h * TARGET_ORIGIN_FACTOR_Y;
+            origin.x += boxX + boxW * TARGET_ORIGIN_FACTOR_X;
+            origin.y += boxY + boxH * TARGET_ORIGIN_FACTOR_Y;
 
             return origin;
         }
@@ -587,7 +596,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 return null;
             }
 
-            return getTargetingArrowOrigin(this, isTapped());
+            return getTargetingArrowOrigin(this, isTapped(), getTappedAngle(), displayArea.rotateCards180);
         }
 
         @Override
