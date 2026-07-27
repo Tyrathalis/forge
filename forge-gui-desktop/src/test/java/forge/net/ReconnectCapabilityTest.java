@@ -3,32 +3,14 @@ package forge.net;
 import forge.deck.Deck;
 import forge.gamemodes.match.LobbySlot;
 import forge.gamemodes.match.LobbySlotType;
-import forge.gamemodes.net.CompatibleObjectDecoder;
-import forge.gamemodes.net.CompatibleObjectEncoder;
-import forge.gamemodes.net.event.GuiGameEvent;
-import forge.gamemodes.net.event.LobbyUpdateEvent;
 import forge.gamemodes.net.event.LoginEvent;
-import forge.gamemodes.net.event.SessionTokenEvent;
 import forge.gamemodes.net.server.FServerManager;
 import forge.gamemodes.net.server.ServerGameLobby;
 import forge.util.IHasForgeLog;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.serialization.ClassResolvers;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * F-02: a disconnected player's seat must not be reclaimable by anyone who
@@ -57,68 +39,6 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
 
     private static final long AWAIT_SECONDS = 15;
     private static final long GAME_START_TIMEOUT_MS = 60_000;
-
-    /** Minimal peer that speaks the wire protocol without any client logic. */
-    private static final class RawPeer implements AutoCloseable {
-        private final EventLoopGroup group = new NioEventLoopGroup(1);
-        private final Channel channel;
-        final AtomicInteger assignedSlot = new AtomicInteger(Integer.MIN_VALUE);
-        final AtomicReference<String> token = new AtomicReference<>(null);
-        /**
-         * Counts down only on a lobby update carrying a real slot. The server
-         * broadcasts lobby state on channelActive, before any login, so the
-         * first update every peer sees carries the unassigned sentinel (-1);
-         * latching on that would race past the login under test.
-         */
-        final CountDownLatch gotSlotAssignment = new CountDownLatch(1);
-        final CountDownLatch gotToken = new CountDownLatch(1);
-        /**
-         * Fires when the server sends us game protocol traffic. This is the
-         * assertion that actually matters: a successful reclaim runs
-         * {@code resumeAndResync}, which pushes the seat's private game state
-         * down the wire. A rejected one must never get here.
-         */
-        final CountDownLatch gotGameState = new CountDownLatch(1);
-
-        RawPeer(final int port) throws InterruptedException {
-            final Bootstrap b = new Bootstrap()
-                    .group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        public void initChannel(final SocketChannel ch) {
-                            ch.pipeline().addLast(
-                                    new CompatibleObjectEncoder(null),
-                                    new CompatibleObjectDecoder(9766 * 1024, ClassResolvers.cacheDisabled(null)),
-                                    new ChannelInboundHandlerAdapter() {
-                                        @Override
-                                        public void channelRead(final ChannelHandlerContext ctx, final Object msg) {
-                                            if (msg instanceof SessionTokenEvent e) {
-                                                token.set(e.getToken());
-                                                gotToken.countDown();
-                                            } else if (msg instanceof LobbyUpdateEvent e && e.getSlot() >= 0) {
-                                                assignedSlot.set(e.getSlot());
-                                                gotSlotAssignment.countDown();
-                                            } else if (msg instanceof GuiGameEvent) {
-                                                gotGameState.countDown();
-                                            }
-                                        }
-                                    });
-                        }
-                    });
-            channel = b.connect("127.0.0.1", port).sync().channel();
-        }
-
-        void login(final String username, final String reconnectToken) {
-            channel.writeAndFlush(new LoginEvent(username, 0, 0, "test", false, reconnectToken));
-        }
-
-        @Override
-        public void close() {
-            channel.close();
-            group.shutdownGracefully();
-        }
-    }
 
     /** A started 2-player match: AI on slot 0, a real remote client on slot 1. */
     private static final class LiveMatch implements AutoCloseable {
@@ -215,7 +135,7 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
         try (LiveMatch match = new LiveMatch("Victim")) {
             match.dropVictimAndAwaitParking();
 
-            try (RawPeer attacker = new RawPeer(match.port)) {
+            try (RawProtocolPeer attacker = new RawProtocolPeer(match.port)) {
                 attacker.login("Victim", null);
 
                 final boolean gotSlot = attacker.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS);
@@ -236,7 +156,7 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
         try (LiveMatch match = new LiveMatch("Victim2")) {
             match.dropVictimAndAwaitParking();
 
-            try (RawPeer attacker = new RawPeer(match.port)) {
+            try (RawProtocolPeer attacker = new RawProtocolPeer(match.port)) {
                 attacker.login("Victim2", "not-the-real-capability");
 
                 final boolean gotSlot = attacker.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS);
@@ -253,7 +173,7 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
         try (LiveMatch match = new LiveMatch("Player")) {
             match.dropVictimAndAwaitParking();
 
-            try (RawPeer returning = new RawPeer(match.port)) {
+            try (RawProtocolPeer returning = new RawProtocolPeer(match.port)) {
                 returning.login("Player", match.victimToken);
 
                 // A reclaim resumes the match rather than re-running lobby

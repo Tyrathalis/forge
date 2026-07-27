@@ -127,6 +127,54 @@ public final class UpdateLobbyPlayerEvent implements NetEvent {
         this.aiProfile = aiProfile;
     }
 
+    /**
+     * A copy with the fields a remote client has no business setting cleared,
+     * or {@code this} when there was nothing to clear.
+     *
+     * <p>Slot <b>type</b> is server-owned lifecycle state:
+     * {@code ServerGameLobby.connectPlayer} sets REMOTE and
+     * {@code disconnectPlayer} sets OPEN. A client that marks its own occupied
+     * slot OPEN keeps its slot index while the server hands the same index to
+     * the next joiner, so two channels end up driving one seat. The client UI
+     * never offers this — the type control is gated on {@code mayControl()},
+     * which {@code ClientGameLobby} answers false — so clearing it is a no-op
+     * for any honest client.
+     *
+     * <p>AI options and profile are configuration for AI slots; a REMOTE slot
+     * is by definition not one, and no client code path sends them.
+     *
+     * <p>Deliberately <b>not</b> cleared: {@code isDevMode} and
+     * {@code isArchenemy}. Both are gated on {@code mayEdit()}, which is true
+     * for a client's own slot, so clients do set them legitimately today.
+     * Whether a player should be able to self-grant dev mode in a networked
+     * game is a game-design question, not a protocol-authorization one.
+     *
+     * <p>Clearing is exact: {@code LobbySlot.apply} skips null fields, so a
+     * sanitized event applies precisely the subset a client is entitled to.
+     */
+    public UpdateLobbyPlayerEvent sanitizedForRemoteClient() {
+        if (type == null && aiOptions == null && aiProfile == null) {
+            return this;
+        }
+        final UpdateLobbyPlayerEvent copy = new UpdateLobbyPlayerEvent();
+        copy.name = name;
+        copy.avatarIndex = avatarIndex;
+        copy.sleeveIndex = sleeveIndex;
+        copy.team = team;
+        copy.isArchenemy = isArchenemy;
+        copy.isReady = isReady;
+        copy.isDevMode = isDevMode;
+        copy.deck = deck;
+        copy.section = section;
+        copy.cards = cards;
+        copy.AvatarVanguard = AvatarVanguard;
+        copy.SchemeDeckName = SchemeDeckName;
+        copy.PlanarDeckName = PlanarDeckName;
+        copy.DeckName = DeckName;
+        // type, aiOptions and aiProfile stay null.
+        return copy;
+    }
+
     public LobbySlotType getType() {
         return type;
     }

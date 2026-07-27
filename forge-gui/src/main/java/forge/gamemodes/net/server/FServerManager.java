@@ -1085,7 +1085,21 @@ public final class FServerManager implements IHasForgeLog {
                         updateLobbyState();
                     }
                 }
-            } else if (msg instanceof UpdateLobbyPlayerEvent event) {
+            } else if (msg instanceof UpdateLobbyPlayerEvent rawEvent) {
+                // A peer that has not completed login owns no slot; applying
+                // its update would index the lobby with UNASSIGNED_SLOT.
+                if (!client.hasValidSlot()) {
+                    netLog.warn("Ignoring lobby update from unregistered peer at {}",
+                            ctx.channel().remoteAddress());
+                    return;
+                }
+                // Clients may configure their own seat, not the server-owned
+                // state that decides who occupies it.
+                final UpdateLobbyPlayerEvent event = rawEvent.sanitizedForRemoteClient();
+                if (event != rawEvent) {
+                    netLog.warn("Rejecting server-owned lobby fields from slot {} ({}) at {}",
+                            client.getIndex(), client.getUsername(), ctx.channel().remoteAddress());
+                }
                 localLobby.applyToSlot(client.getIndex(), event);
                 if (event.getName() != null) {
                     String oldName = client.getUsername();
