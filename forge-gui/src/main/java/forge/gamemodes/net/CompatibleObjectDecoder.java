@@ -39,7 +39,7 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
      * <p>This bounds bytes <i>read</i>, and so does not address a declared but
      * unread allocation: {@code ObjectInputStream} sizes an array from the
      * length the peer declares before reading any elements. That is
-     * {@link WireArrayLimit}'s job, not this one.
+     * {@link WireStreamLimits}'s job, not this one.
      */
     private static final long MAX_DECOMPRESSED_BYTES =
             Long.getLong("forge.net.maxDecompressedBytes", 64L * 1024 * 1024);
@@ -122,10 +122,10 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
         } catch (StreamCorruptedException e) {
             netLog.error("Version Mismatch: {}", e.getMessage());
         } catch (InvalidClassException e) {
-            // A peer named a class the protocol does not carry. The filter has
-            // already logged which one; drop the frame rather than tearing the
-            // pipeline down, matching how a corrupt frame is handled.
-            netLog.error("Dropping frame with disallowed class: {}", e.getMessage());
+            // A peer named a class the protocol does not carry, or asked for
+            // more of one than WireStreamLimits allows. Drop the frame rather
+            // than tearing the pipeline down, matching a corrupt frame.
+            netLog.error("Dropping refused frame: {}", e.getMessage());
         } finally {
             objectIn.close();
         }

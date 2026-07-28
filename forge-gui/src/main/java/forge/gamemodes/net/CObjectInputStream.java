@@ -39,7 +39,7 @@ public class CObjectInputStream extends ObjectInputStream implements forge.util.
         if (tracker != null) {
             enableResolveObject(true);
         }
-        WireArrayLimit.applyTo(this);
+        WireStreamLimits.applyTo(this);
     }
 
     /**

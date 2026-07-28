@@ -126,12 +126,33 @@ public class WireDeserializationTest {
     }
 
     /**
-     * The class filter cannot catch this: an array length is data, not a name,
-     * and {@code ObjectInputStream} allocates from the declared length before
-     * reading any element — so a byte cap on the stream never sees it either.
+     * The class filter cannot catch either of these: an array length and a
+     * nesting depth are data, not names. {@code ObjectInputStream} allocates
+     * from the declared length before reading any element, so a byte cap on the
+     * stream never sees that one either.
+     *
+     * <p>Both bounds live in one filter pattern, so dropping a term from it is
+     * a silent regression — hence checking more than one of them here. The
+     * reference bound is not checked: tripping it legitimately needs a
+     * million-object graph.
      */
     @Test
-    public void testRejectsAnOverlongDeclaredArray() throws Exception {
+    public void testRejectsResourceExhaustingFrames() throws Exception {
+        // Nesting past the depth bound.
+        java.util.List<Object> deep = new ArrayList<>();
+        java.util.List<Object> cursor = deep;
+        for (int i = 0; i < 150; i++) {
+            final java.util.List<Object> next = new ArrayList<>();
+            cursor.add(next);
+            cursor = next;
+        }
+        try {
+            decode(encode(deep));
+            Assert.fail("A frame nested 150 deep was accepted");
+        } catch (final InvalidClassException expected) {
+            // WireStreamLimits refused it.
+        }
+
         final byte[] frame = encode(new int[] { 1, 2, 3, 4 });
         // Rewrite the declared length to 200 million (~762 MB if allocated) and
         // cut the frame short: nothing past the length is ever read.
@@ -146,12 +167,12 @@ public class WireDeserializationTest {
             decode(frame);
             Assert.fail("A frame declaring int[" + huge + "] was accepted");
         } catch (final InvalidClassException expected) {
-            // WireArrayLimit refused the length before anything was allocated.
+            // WireStreamLimits refused the length before anything was allocated.
         } catch (final Throwable other) {
             // Anything else — EOF from reading elements, or OutOfMemoryError —
             // means the length was accepted and the array already allocated.
             Assert.fail("The declared array was allocated (" + other.getClass().getSimpleName()
-                    + "): the wire array limit is not in place");
+                    + "): the wire stream limits are not in place");
         }
     }
 }
