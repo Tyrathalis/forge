@@ -1,10 +1,12 @@
 package forge.assets;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.function.Function;
 
 import com.badlogic.gdx.files.FileHandle;
 import forge.gui.GuiBase;
@@ -20,6 +22,8 @@ import forge.gui.FThreads;
 import forge.gui.download.GuiDownloadZipService;
 import forge.gui.util.SOptionPane;
 import forge.util.FileUtil;
+import forge.util.update.DeltaManifest;
+import forge.util.update.DeltaUpdater;
 
 import static forge.localinstance.properties.ForgeConstants.ADV_TEXTURE_BG_FILE;
 import static forge.localinstance.properties.ForgeConstants.ASSETS_DIR;
@@ -27,6 +31,7 @@ import static forge.localinstance.properties.ForgeConstants.GITHUB_SNAPSHOT_URL;
 import static forge.localinstance.properties.ForgeConstants.DEFAULT_SKINS_DIR;
 import static forge.localinstance.properties.ForgeConstants.GITHUB_COMMITS_ATOM;
 import static forge.localinstance.properties.ForgeConstants.GITHUB_FORGE_URL;
+import static forge.localinstance.properties.ForgeConstants.GITHUB_RAW_URL;
 import static forge.localinstance.properties.ForgeConstants.GITHUB_RELEASES_ATOM;
 import static forge.localinstance.properties.ForgeConstants.RELEASE_URL;
 import static forge.localinstance.properties.ForgeConstants.RES_DIR;
@@ -111,10 +116,20 @@ public class AssetsDownloader {
                 if (verifyUpdatable) {
                     Forge.getSplashScreen().prepareForDialogs();
 
+                    //delta plan first, so the prompt can state the real download size (items 1+2:
+                    //in-place delta update instead of the full package + installer handoff)
+                    DeltaUpdater.Plan deltaPlan = null;
+                    if (!GuiBase.isAndroid() && isSnapshots) {
+                        deltaPlan = prepareDeltaPlan(snapsURL);
+                    }
+
                     message = "A new version of Forge is available.\n(v." + version + " | " + snapsBuildDate + ")\n" +
                             "You are currently on an older version.\n(v." + versionString + " | " + buildDate + ")\n" +
                             "Would you like to update to the new version now?";
-                    if (!Forge.getDeviceAdapter().isConnectedToWifi()) {
+                    if (deltaPlan != null) {
+                        message += "\nOnly changed files will be downloaded: "
+                                + humanReadableSize(deltaPlan.totalBytes()) + " (" + deltaPlan.fileCount() + " files), applied in place.";
+                    } else if (!Forge.getDeviceAdapter().isConnectedToWifi()) {
                         message += " If so, you may want to connect to wifi first. The download is around " + (GuiBase.isAndroid() ? apkSize : packageSize) + ".";
                     }
                     if (isSnapshots) // this is for snaps initial info
@@ -124,6 +139,17 @@ public class AssetsDownloader {
                         if (!GuiBase.isAndroid())
                             run(runnable);
                     } else if (SOptionPane.showConfirmDialog(message, "New Version Available", "Update Now", "Update Later", true, true)) {
+                        if (deltaPlan != null) {
+                            if (deltaPlan.fileCount() == 0) {
+                                //timestamps disagreed but every file already matches - nothing to do
+                                run(runnable);
+                                return;
+                            }
+                            if (executeDeltaUpdate(deltaPlan, snapsURL)) {
+                                return; //applied; restarting or handing off to the applier
+                            }
+                            //delta failed mid-flight - nothing was applied; fall through to the installer
+                        }
                         String installer = new GuiDownloadZipService("", "update", installerURL,
                                 Forge.getDeviceAdapter().getDownloadsDir(), null, Forge.getSplashScreen().getProgressBar()).download(filename);
                         if (installer != null) {
@@ -303,6 +329,79 @@ public class AssetsDownloader {
         // auto restart after update
         Forge.isMobileAdventureMode = Forge.advStartup;
         Forge.exitAnimation(true);
+    }
+
+    /** Maps manifest paths to local files: the launcher jar and res/ live under different roots. */
+    private static Function<String, File> localFileResolver(DeltaManifest manifest, File runningJar) {
+        final File assetsRoot = new File(ASSETS_DIR);
+        return path -> path.equals(manifest.getJarPath()) ? runningJar : new File(assetsRoot, path);
+    }
+
+    /** The running fat jar, or null for a dev/classes launch (nothing to swap). */
+    private static File getRunningJar() {
+        try {
+            final File jar = new File(BuildInfo.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            return jar.isFile() && jar.getName().endsWith(".jar") ? jar : null;
+        } catch (final Exception ex) {
+            return null;
+        }
+    }
+
+    private static DeltaUpdater.Plan prepareDeltaPlan(String snapshotBaseUrl) {
+        try {
+            final File runningJar = getRunningJar();
+            if (runningJar == null) {
+                return null;
+            }
+            final DeltaManifest manifest = DeltaUpdater.fetchManifest(snapshotBaseUrl);
+            if (manifest == null || manifest.getCommit() == null || manifest.getJarPath() == null) {
+                return null;
+            }
+            Forge.getSplashScreen().getProgressBar().setDescription("Comparing against update...");
+            return DeltaUpdater.makePlan(manifest, localFileResolver(manifest, runningJar));
+        } catch (final Exception ex) {
+            ex.printStackTrace();
+            return null;
+        }
+    }
+
+    /** True = update applied; the app is restarting (res-only) or exiting into the jar applier. */
+    private static boolean executeDeltaUpdate(DeltaUpdater.Plan plan, String snapshotBaseUrl) {
+        final File stagingDir = new File(ASSETS_DIR, DeltaUpdater.STAGING_DIR_NAME);
+        try {
+            final File runningJar = getRunningJar();
+            DeltaUpdater.deleteRecursively(stagingDir); //stale leftovers from an interrupted run
+            DeltaUpdater.download(plan, snapshotBaseUrl, GITHUB_RAW_URL, stagingDir, (done, total) ->
+                    Forge.getSplashScreen().getProgressBar().setDescription("Downloading update (" + done + "/" + total + ")"));
+            //everything downloaded and hash-verified - only now start changing the install
+            DeltaUpdater.applyResFiles(plan, stagingDir, localFileResolver(plan.manifest(), runningJar));
+            if (plan.jarChanged()) {
+                //the running jar cannot be replaced on every platform: hand off to the applier
+                //spawned from the STAGED jar, which retries the swap after this process exits
+                final File stagedJar = new File(stagingDir, plan.manifest().getJarPath());
+                final String java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+                new ProcessBuilder(java, "-cp", stagedJar.getAbsolutePath(), "forge.util.update.UpdateApplier",
+                        runningJar.getAbsolutePath(), stagedJar.getAbsolutePath(), System.getProperty("user.dir"))
+                        .inheritIO().start();
+                Forge.isMobileAdventureMode = Forge.advStartup;
+                Forge.exitAnimation(false);
+            } else {
+                DeltaUpdater.deleteRecursively(stagingDir);
+                Forge.getDeviceAdapter().restart();
+            }
+            return true;
+        } catch (final Exception ex) {
+            ex.printStackTrace();
+            DeltaUpdater.deleteRecursively(stagingDir);
+            return false;
+        }
+    }
+
+    private static String humanReadableSize(long bytes) {
+        if (bytes >= 1024 * 1024) {
+            return (bytes + 512 * 1024) / (1024 * 1024) + " MB";
+        }
+        return Math.max(1, (bytes + 512) / 1024) + " KB";
     }
 
     private static void run(Runnable toRun) {
