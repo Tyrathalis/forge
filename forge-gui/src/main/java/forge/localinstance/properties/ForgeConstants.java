@@ -27,11 +27,17 @@ import java.util.Map;
 
 public final class ForgeConstants {
     private static final Localizer localizer = Localizer.getInstance();
-    public static final String GITHUB_FORGE_URL                 = "https://github.com/Card-Forge/forge/";
+    //playable fork: updates come from our fork's GitHub (the snapshot channel is entirely
+    //GitHub-hosted; the cardforge.org release channel is not ours to serve). The commits atom
+    //tracks the playable branch - that is what these builds are cut from, not master.
+    public static final String GITHUB_FORGE_URL                 = "https://github.com/Tyrathalis/forge/";
     public static final String GITHUB_RELEASES_ATOM             = GITHUB_FORGE_URL + "releases.atom";
-    public static final String GITHUB_COMMITS_ATOM              = GITHUB_FORGE_URL + "commits/master.atom";
+    public static final String GITHUB_COMMITS_ATOM              = GITHUB_FORGE_URL + "commits/playable.atom";
     public static final String GITHUB_SNAPSHOT_URL              = GITHUB_FORGE_URL + "releases/download/daily-snapshots/";
-    public static final String NETWORK_PLAY_WIKI_URL            = GITHUB_FORGE_URL + "wiki/network-play";
+    //the raw-file host serves the repo tree per commit: the per-file delta source for res/
+    public static final String GITHUB_RAW_URL                   = "https://raw.githubusercontent.com/Tyrathalis/forge/";
+    //the wiki stays upstream's - forks don't carry it
+    public static final String NETWORK_PLAY_WIKI_URL            = "https://github.com/Card-Forge/forge/wiki/network-play";
     public static final String RELEASE_URL                      = "https://releases.cardforge.org/";
     public static final String PATH_SEPARATOR                   = File.separator;
     public static final String ASSETS_DIR                       = GuiBase.getInterface().getAssetsDir();
