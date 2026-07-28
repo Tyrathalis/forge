@@ -77,7 +77,7 @@ public class FCardPanel extends FDisplayObject {
         float top = PADDING;
         float w = getWidth() - 2 * PADDING;
         float h = getHeight() - 2 * PADDING;
-        if (w == h) { //adjust width if needed to make room for tapping
+        if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
             w = h / ASPECT_RATIO;
         }
 
@@ -108,11 +108,13 @@ public class FCardPanel extends FDisplayObject {
         float padding = getPadding();
         float x = padding - mod / 2;
         float y = padding - mod / 2;
-        float w = (getWidth() - 2 * padding) + mod;
-        float h = (getHeight() - 2 * padding) + mod;
-        if (w == h) { //adjust width if needed to make room for tapping
+        float w = getWidth() - 2 * padding;
+        float h = getHeight() - 2 * padding;
+        if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
             w = h / ASPECT_RATIO;
         }
+        w += mod;
+        h += mod;
         float edgeOffset = w / 2f;
 
         if (!ZoneType.Battlefield.equals(card.getZone())) {

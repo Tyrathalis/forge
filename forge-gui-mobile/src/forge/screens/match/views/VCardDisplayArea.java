@@ -565,7 +565,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
             float top = PADDING;
             float w = cardDisplay.getWidth() - 2 * PADDING;
             float h = cardDisplay.getHeight() - 2 * PADDING;
-            if (w == h) { //adjust width if needed to make room for tapping
+            if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
                 w = h / ASPECT_RATIO;
             }
 
@@ -615,7 +615,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 float padding = getPadding();
                 float w = getWidth() - 2 * padding;
                 float h = getHeight() - 2 * padding;
-                if (w == h) { //adjust width if needed to make room for tapping
+                if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
                     w = h / ASPECT_RATIO;
                 }
                 float centerX = padding + w / 2;
@@ -633,7 +633,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 float y = padding;
                 float w = getWidth() - 2 * padding;
                 float h = getHeight() - 2 * padding;
-                if (w == h) { //adjust width if needed to make room for tapping
+                if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
                     w = h / ASPECT_RATIO;
                 }
                 g.startRotateTransform(x + w / 2, y + h / 2, 180);

@@ -268,7 +268,18 @@ public class VField extends FContainer {
 
         @Override
         protected float getCardWidth(float cardHeight) {
-            return cardHeight; //allow cards room to tap
+            //allow cards room to tap at the configured angle: adjacent parallel
+            //tilted cards nest at pitch w/cos(angle), so shallow angles need less
+            //than the full square slot. Capped at the square (the 90-degree room,
+            //and exactly the historical slot); a tapped card beside an untapped
+            //one may overhang slightly at shallow angles, drawn under its right
+            //neighbour (accepted 2026-07-27, user).
+            float w = (cardHeight - 2 * FCardPanel.PADDING) / FCardPanel.ASPECT_RATIO;
+            double cos = Math.cos(Math.toRadians(Forge.tapAngle));
+            if (cos < 0.01) {
+                return cardHeight;
+            }
+            return Math.min(cardHeight, (float) (w / cos) + 2 * FCardPanel.PADDING);
         }
 
         @Override
