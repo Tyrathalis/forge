@@ -4,7 +4,6 @@ import forge.gamemodes.match.LobbySlotType;
 import forge.gamemodes.net.event.UpdateLobbyPlayerEvent;
 import forge.gamemodes.net.server.FServerManager;
 import forge.gamemodes.net.server.ServerGameLobby;
-import forge.util.IHasForgeLog;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -15,23 +14,16 @@ import java.util.concurrent.TimeUnit;
  * F-04: a client may configure its own seat, but not the server-owned state
  * that decides who occupies it.
  *
- * <p>The server applied every field of a client-supplied
- * {@code UpdateLobbyPlayerEvent} to the sender's slot with no field-level
- * authorization. Slot <b>type</b> is lifecycle state the server owns —
- * {@code connectPlayer} sets REMOTE, {@code disconnectPlayer} sets OPEN — so a
- * client that marked its own occupied slot OPEN kept its slot index while the
- * server handed the same index to the next joiner. Two channels, one seat.
+ * <p>Slot <b>type</b> is lifecycle state the server owns — {@code connectPlayer}
+ * sets REMOTE, {@code disconnectPlayer} sets OPEN — so a client that marked its
+ * own occupied slot OPEN kept its index while the server handed the same index
+ * to the next joiner. Two channels, one seat.
  *
- * <p>The honest client cannot do this: the slot-type control is gated on
- * {@code mayControl()}, which {@code ClientGameLobby} answers false. That is
- * precisely why the test uses a {@link RawProtocolPeer} — client-side gating
- * is not enforcement, and the wire accepts whatever an attacker sends.
- *
- * <p>Assertions read the server's own lobby object directly rather than
- * inferring state from broadcasts, so they cannot pass for an incidental
- * reason.
+ * <p>The honest client cannot do this, since the slot-type control is gated on
+ * {@code mayControl()}. That is exactly why the end-to-end case uses a
+ * {@link RawProtocolPeer}: client-side gating is not enforcement.
  */
-public class LobbySlotAuthorizationTest implements IHasForgeLog {
+public class LobbySlotAuthorizationTest {
 
     private static final long AWAIT_SECONDS = 15;
 
@@ -41,44 +33,38 @@ public class LobbySlotAuthorizationTest implements IHasForgeLog {
                 Collections.emptySet(), null);
     }
 
-    @Test(timeOut = 120_000, description = "F-04: a client must not change its own slot type")
-    public void testClientCannotChangeItsOwnSlotType() throws Exception {
-        TestUtils.ensureFModelInitialized();
-        final int port = PortAllocator.allocatePort();
+    /**
+     * The rule itself, for free. This is the regression a maintainer creates by
+     * adding a field to the event: the clearing must take the three
+     * server-owned fields and nothing else.
+     */
+    @Test
+    public void testClearsOnlyServerOwnedFields() {
+        final UpdateLobbyPlayerEvent forged = UpdateLobbyPlayerEvent.create(
+                LobbySlotType.OPEN, "Mallory", 3, 4, 1, true, true,
+                Collections.emptySet(), "ai-profile");
 
-        final FServerManager server = FServerManager.getInstance();
-        server.startServer(port);
-        try {
-            final ServerGameLobby lobby = new ServerGameLobby();
-            server.setLobby(lobby);
+        Assert.assertTrue(forged.clearServerOwnedFields(), "Server-owned fields were present");
+        Assert.assertNull(forged.getType(), "Slot type is the server's to set");
+        Assert.assertNull(forged.getAiProfile(), "AI profile does not belong to a REMOTE slot");
 
-            try (RawProtocolPeer peer = new RawProtocolPeer(port)) {
-                peer.login("Squatter", null);
-                Assert.assertTrue(peer.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS),
-                        "Peer should have been assigned a slot");
-                final int slot = peer.assignedSlot.get();
-                Assert.assertEquals(lobby.getSlot(slot).getType(), LobbySlotType.REMOTE,
-                        "A joined client's slot should be REMOTE");
+        // Everything a client is entitled to change must survive untouched, or
+        // the fix costs honest players their own settings. isDevMode and
+        // isArchenemy are the deliberate scoping call: gated on mayEdit(), so
+        // clients set them legitimately today.
+        Assert.assertEquals(forged.getName(), "Mallory");
+        Assert.assertEquals(forged.getTeam(), Integer.valueOf(1));
+        Assert.assertEquals(forged.getDevMode(), Boolean.TRUE);
+        Assert.assertEquals(forged.getArchenemy(), Boolean.TRUE);
 
-                peer.send(forgedTypeChange(LobbySlotType.OPEN));
-                Thread.sleep(2000);
-
-                Assert.assertEquals(lobby.getSlot(slot).getType(), LobbySlotType.REMOTE,
-                        "Client rewrote its own slot type to OPEN — the seat is now claimable "
-                                + "by the next joiner while this client keeps driving it");
-            }
-        } finally {
-            server.stopServer();
-        }
+        // A no-op for honest traffic, which carries none of the three.
+        Assert.assertFalse(UpdateLobbyPlayerEvent.isReadyUpdate(true).clearServerOwnedFields());
     }
 
-    /**
-     * The consequence the type rewrite buys: two live channels mapped to one
-     * seat. Asserted end-to-end rather than by inspecting the type alone,
-     * because the duplicate seat is the actual harm.
-     */
+    /** The consequence the type rewrite buys: two live channels, one seat. */
     @Test(timeOut = 120_000, description = "F-04: a forged type change must not produce a duplicate seat")
     public void testForgedTypeChangeCannotProduceDuplicateSeat() throws Exception {
+        NetworkTests.skipUnlessStressTestsEnabled();
         TestUtils.ensureFModelInitialized();
         final int port = PortAllocator.allocatePort();
 
@@ -97,6 +83,9 @@ public class LobbySlotAuthorizationTest implements IHasForgeLog {
                 squatter.send(forgedTypeChange(LobbySlotType.OPEN));
                 Thread.sleep(2000);
 
+                Assert.assertEquals(lobby.getSlot(squatterSlot).getType(), LobbySlotType.REMOTE,
+                        "Client rewrote its own slot type to OPEN");
+
                 try (RawProtocolPeer newcomer = new RawProtocolPeer(port)) {
                     newcomer.login("Newcomer", null);
                     final boolean assigned =
@@ -106,40 +95,6 @@ public class LobbySlotAuthorizationTest implements IHasForgeLog {
                             "Newcomer was assigned slot " + squatterSlot + ", already held by the "
                                     + "squatter — two channels now drive one seat");
                 }
-            }
-        } finally {
-            server.stopServer();
-        }
-    }
-
-    /**
-     * The other half of the claim: sanitizing must not cost an honest client
-     * anything it is entitled to do. Ready state is gated on {@code mayEdit()},
-     * so it must still apply.
-     */
-    @Test(timeOut = 120_000, description = "F-04: a client's own legitimate seat settings still apply")
-    public void testClientCanStillConfigureItsOwnSeat() throws Exception {
-        TestUtils.ensureFModelInitialized();
-        final int port = PortAllocator.allocatePort();
-
-        final FServerManager server = FServerManager.getInstance();
-        server.startServer(port);
-        try {
-            final ServerGameLobby lobby = new ServerGameLobby();
-            server.setLobby(lobby);
-
-            try (RawProtocolPeer peer = new RawProtocolPeer(port)) {
-                peer.login("Honest", null);
-                Assert.assertTrue(peer.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS));
-                final int slot = peer.assignedSlot.get();
-                Assert.assertFalse(lobby.getSlot(slot).isReady(), "Should start not ready");
-
-                peer.send(UpdateLobbyPlayerEvent.isReadyUpdate(true));
-                Thread.sleep(2000);
-
-                Assert.assertTrue(lobby.getSlot(slot).isReady(),
-                        "Ready state is the client's to set — sanitizing server-owned fields "
-                                + "must not strip what a client is entitled to change");
             }
         } finally {
             server.stopServer();

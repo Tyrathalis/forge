@@ -26,14 +26,9 @@ import java.util.HashMap;
 public class WireDeserializationTest {
 
     /**
-     * Stand-in for a gadget: a serializable JDK class in a package the
-     * allowlist does not cover.
-     *
-     * <p>Deliberately not a nested class of this test. The first draft used
-     * one, which silently proved nothing — a class declared here is named
-     * {@code forge.gamemodes.net.WireDeserializationTest$...} and is therefore
-     * allowlisted by the {@code forge.} prefix, so the "rejection" tests
-     * passed only because the object was accepted and round-tripped.
+     * Stand-in for a gadget. Deliberately not a nested class of this test: that
+     * would be named {@code forge.…} and allowlisted by the very prefix under
+     * test.
      */
     private static Serializable disallowedObject() {
         return new java.io.File("not-on-the-wire");
@@ -75,22 +70,13 @@ public class WireDeserializationTest {
         Assert.assertEquals(decoded, graph, "Allowlisted traffic must still round-trip");
     }
 
-    @Test
-    public void testRejectsAClassOutsideTheAllowlist() throws Exception {
-        final byte[] frame = encode(disallowedObject());
-        try {
-            decode(frame);
-            Assert.fail("A class outside the allowlist was deserialized");
-        } catch (final InvalidClassException expected) {
-            Assert.assertTrue(expected.getMessage().contains("java.io.File"),
-                    "Rejection should name the class: " + expected.getMessage());
-        }
-    }
-
+    /**
+     * Nested rather than top-level, which strictly subsumes the simpler case: a
+     * filter applied only to the first descriptor would pass this and fail only
+     * here.
+     */
     @Test
     public void testRejectsAClassNestedInsideAllowedCollections() throws Exception {
-        // The gadget is not the top-level object — it hides inside a
-        // collection the filter is happy to admit.
         final HashMap<String, Object> graph = new HashMap<>();
         graph.put("innocuous", "text");
         graph.put("payload", disallowedObject());
@@ -104,11 +90,9 @@ public class WireDeserializationTest {
     }
 
     /**
-     * The route that carries no class name. A proxy descriptor reaches
-     * {@code resolveProxyClass}, never {@code readClassDescriptor} or
-     * {@code resolveClass}, so a filter placed only on those two would let this
-     * through — and a proxy backed by an attacker-chosen InvocationHandler is
-     * how the best-known chains start.
+     * The route that carries no class name: a proxy descriptor reaches
+     * {@code resolveProxyClass} alone, so a filter on the other two would let
+     * it through — and that is where the best-known chains start.
      */
     @Test
     public void testRejectsDynamicProxies() throws Exception {
@@ -126,15 +110,10 @@ public class WireDeserializationTest {
     }
 
     /**
-     * The class filter cannot catch either of these: an array length and a
-     * nesting depth are data, not names. {@code ObjectInputStream} allocates
-     * from the declared length before reading any element, so a byte cap on the
-     * stream never sees that one either.
-     *
-     * <p>Both bounds live in one filter pattern, so dropping a term from it is
-     * a silent regression — hence checking more than one of them here. The
-     * reference bound is not checked: tripping it legitimately needs a
-     * million-object graph.
+     * Lengths and depths are data, not names, so the class filter cannot see
+     * them. Both bounds share one pattern string, so dropping a term from it is
+     * a silent regression — hence checking two. The reference bound is not
+     * checked: tripping it legitimately needs a million-object graph.
      */
     @Test
     public void testRejectsResourceExhaustingFrames() throws Exception {

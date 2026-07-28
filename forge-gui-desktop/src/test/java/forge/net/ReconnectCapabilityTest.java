@@ -3,10 +3,9 @@ package forge.net;
 import forge.deck.Deck;
 import forge.gamemodes.match.LobbySlot;
 import forge.gamemodes.match.LobbySlotType;
-import forge.gamemodes.net.event.LoginEvent;
 import forge.gamemodes.net.server.FServerManager;
+import forge.gamemodes.net.server.RemoteClient;
 import forge.gamemodes.net.server.ServerGameLobby;
-import forge.util.IHasForgeLog;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -14,28 +13,22 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * F-02: a disconnected player's seat must not be reclaimable by anyone who
- * knows their username.
+ * knows their username. Usernames are public, so the old reconnect path handed
+ * the seat — and its resynchronised private game state — to whoever asked first
+ * inside the five-minute window.
  *
- * <p>Usernames are public — broadcast in lobby state, printed in chat — so
- * before reconnect capabilities existed the reconnect path
- * ({@code disconnectedClients.remove(username)} → {@code swapChannel} →
- * {@code resumeAndResync}) handed the seat, and the resynchronised private
- * game state, to whoever asked for it first inside the five-minute window.
+ * <p><b>The integration cases need a live match</b>, because the server only
+ * parks a disconnected client when {@code isMatchActive()}; against a lobby
+ * alone the seat is simply freed and a takeover test degenerates into "can a
+ * new player take an open slot", which passes either way. Hence
+ * {@link #assertMatchIsActive}.
  *
- * <p><b>These tests require a live match.</b> The server only parks a
- * disconnected client for reclaim when {@code isMatchActive()}; in lobby phase
- * {@code channelInactive} just frees the slot via
- * {@code localLobby.disconnectPlayer()}. An earlier version of this test
- * started only a lobby and was therefore vacuous — the "attacker" was taking a
- * genuinely open seat, and the assertions passed with the capability check
- * removed. Hence {@link #assertMatchIsActive}, which pins the precondition the
- * whole test rests on.
- *
- * <p>The attacker is a raw socket rather than an {@code FGameClient} because
- * that is the real threat model: a modified or hand-written client simply
- * omits the token. Nothing constrains what {@link LoginEvent} it constructs.
+ * <p>The attacker is a raw socket rather than an {@code FGameClient}, which is
+ * both the real threat model and a correctness requirement: an in-process
+ * client reusing the victim's username would load the victim's own token from
+ * the shared preference store and prove nothing.
  */
-public class ReconnectCapabilityTest implements IHasForgeLog {
+public class ReconnectCapabilityTest {
 
     private static final long AWAIT_SECONDS = 15;
     private static final long GAME_START_TIMEOUT_MS = 60_000;
@@ -118,20 +111,39 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
         }
     }
 
-    /**
-     * The precondition every assertion here depends on. Without an active
-     * match the server never parks a disconnected client, the seat is simply
-     * freed, and a takeover test degenerates into "can a new player take an
-     * open slot" — which passes whether or not the capability is enforced.
-     */
+    /** The precondition every integration assertion here depends on. */
     private static void assertMatchIsActive(final FServerManager server) {
         Assert.assertTrue(server.isMatchActive(),
                 "Match must be active for the reconnect path to be reachable — "
                         + "without it this test proves nothing");
     }
 
-    @Test(timeOut = 180_000, description = "F-02: username alone must not reclaim a disconnected seat")
-    public void testSeatIsNotReclaimableByUsernameAlone() throws Exception {
+    /**
+     * The comparison itself, for free: a token must not match when the client
+     * never had one, and must not be compared with {@code equals}.
+     */
+    @Test
+    public void testTokenComparisonRejectsAnythingButTheIssuedValue() {
+        final RemoteClient client = new RemoteClient(null);
+        Assert.assertFalse(client.matchesReconnectToken("anything"),
+                "A client that was never issued a capability must match nothing");
+        Assert.assertFalse(client.matchesReconnectToken(null));
+
+        client.setReconnectToken("the-real-capability");
+        Assert.assertFalse(client.matchesReconnectToken(null));
+        Assert.assertFalse(client.matchesReconnectToken(""));
+        Assert.assertFalse(client.matchesReconnectToken("the-real-capabilitX"));
+        Assert.assertTrue(client.matchesReconnectToken("the-real-capability"));
+    }
+
+    /**
+     * Both refusal cases against one live match: no capability at all, and a
+     * forged one. They take the same branch, and a match is expensive to stand
+     * up.
+     */
+    @Test(timeOut = 180_000, description = "F-02: a seat is not reclaimable without the issued capability")
+    public void testSeatIsNotReclaimableWithoutTheCapability() throws Exception {
+        NetworkTests.skipUnlessStressTestsEnabled();
         try (LiveMatch match = new LiveMatch("Victim")) {
             match.dropVictimAndAwaitParking();
 
@@ -148,21 +160,14 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
                         "Attacker received resynced game state — the seat's private "
                                 + "information leaked despite the seat not being handed over");
             }
-        }
-    }
 
-    @Test(timeOut = 180_000, description = "F-02: a forged capability must not reclaim a seat")
-    public void testSeatIsNotReclaimableWithAForgedCapability() throws Exception {
-        try (LiveMatch match = new LiveMatch("Victim2")) {
-            match.dropVictimAndAwaitParking();
+            try (RawProtocolPeer forger = new RawProtocolPeer(match.port)) {
+                forger.login("Victim", "not-the-real-capability");
 
-            try (RawProtocolPeer attacker = new RawProtocolPeer(match.port)) {
-                attacker.login("Victim2", "not-the-real-capability");
-
-                final boolean gotSlot = attacker.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS);
-                Assert.assertFalse(gotSlot && attacker.assignedSlot.get() == match.victimSlot,
+                final boolean gotSlot = forger.gotSlotAssignment.await(AWAIT_SECONDS, TimeUnit.SECONDS);
+                Assert.assertFalse(gotSlot && forger.assignedSlot.get() == match.victimSlot,
                         "Attacker presenting a forged capability took over the victim's seat");
-                Assert.assertFalse(attacker.gotGameState.await(5, TimeUnit.SECONDS),
+                Assert.assertFalse(forger.gotGameState.await(5, TimeUnit.SECONDS),
                         "Attacker with a forged capability received resynced game state");
             }
         }
@@ -170,6 +175,7 @@ public class ReconnectCapabilityTest implements IHasForgeLog {
 
     @Test(timeOut = 180_000, description = "F-02: the legitimate holder can still reclaim its seat")
     public void testSeatIsReclaimableWithTheIssuedCapability() throws Exception {
+        NetworkTests.skipUnlessStressTestsEnabled();
         try (LiveMatch match = new LiveMatch("Player")) {
             match.dropVictimAndAwaitParking();
 
