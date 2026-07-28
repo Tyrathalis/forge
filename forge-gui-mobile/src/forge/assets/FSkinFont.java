@@ -20,7 +20,6 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.IntSet;
 import forge.Forge;
 import forge.gui.FThreads;
-import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgeConstants;
 import forge.util.FileUtil;
 import forge.util.Lang;
@@ -422,6 +421,7 @@ public class FSkinFont {
                         Forge.getAssets().manager().finishLoadingAsset(fontFile.path());
                         font = Forge.getAssets().manager().get(fontFile.path(), BitmapFont.class, false);
                     }
+                    smoothFontTextures(font);
                     if (font != null)
                         found[0] = true;
                 } catch (Exception e) {
@@ -441,6 +441,18 @@ public class FSkinFont {
             }
         } else {
             generateFont(FSkin.getSkinFile(TTF_FILE), fontName, fontSize);
+        }
+    }
+
+    /** BitmapFonts load with Nearest filtering by default: pixel-crisp for
+     *  axis-aligned text, visibly grainy the moment glyphs rotate with a tapped
+     *  card at a UI_TAP_ANGLE below 90. Linear everywhere, as iOS already did. */
+    private static void smoothFontTextures(BitmapFont font) {
+        if (font == null) {
+            return;
+        }
+        for (TextureRegion region : font.getRegions()) {
+            region.getTexture().setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
         }
     }
 
@@ -484,13 +496,10 @@ public class FSkinFont {
                             getTextureData().consumePixmap().dispose();
                         }
                     };
-                    if (GuiBase.isIOS()) {
-                        // Linear filtering renders smoother text on Retina displays; other
-                        // platforms keep the original crisp Nearest filtering.
-                        texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
-                    } else {
-                        texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
-                    }
+                    // Linear filtering everywhere (was iOS-only "smoother text on Retina"):
+                    // Nearest is pixel-crisp for axis-aligned text but grainy the moment
+                    // glyphs rotate with a tapped card at a UI_TAP_ANGLE below 90.
+                    texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
                     textureRegions.addAll(new TextureRegion(texture));
                 }
 
@@ -508,6 +517,7 @@ public class FSkinFont {
                     Forge.getAssets().manager().load(fontFile.path(), BitmapFont.class);
                     Forge.getAssets().manager().finishLoadingAsset(fontFile.path());
                     font = Forge.getAssets().manager().get(fontFile.path(), BitmapFont.class);
+                    smoothFontTextures(font);
                 }
 
                 generator.dispose();
