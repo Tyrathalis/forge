@@ -51,6 +51,9 @@ public class DeckSerializer {
         if (d.getSourceUrl() != null) {
             out.add(TextUtil.concatNoSpace(DeckFileHeader.SOURCE_URL, "=", d.getSourceUrl().replaceAll("\n", "")));
         }
+        if (d.getSyncUpdatedAt() != null) {
+            out.add(TextUtil.concatNoSpace(DeckFileHeader.SYNC_UPDATED_AT, "=", d.getSyncUpdatedAt().replaceAll("\n", "")));
+        }
         // these are optional
         if (d.getComment() != null) {
             out.add(TextUtil.concatNoSpace(DeckFileHeader.COMMENT,"=", d.getComment().replaceAll("\n", "")));
@@ -114,6 +117,7 @@ public class DeckSerializer {
         d.setComment(dh.getComment());
         d.setDeckFormat(dh.getDeckType());
         d.setSourceUrl(dh.getSourceUrl());
+        d.setSyncUpdatedAt(dh.getSyncUpdatedAt());
         d.setAiHints(dh.getAiHints());
         d.getTags().addAll(dh.getTags());
         d.setDraftNotes(dh.getDraftNotes());

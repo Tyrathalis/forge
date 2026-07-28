@@ -3,6 +3,9 @@ package forge.deck;
 import forge.util.Localizer;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,24 +16,81 @@ import java.util.regex.Pattern;
 final class ArchidektDeckUrlProvider implements DeckUrlProvider {
     private static final Pattern DECK_URL = Pattern.compile("(?i)(?:^|/)decks/(\\d+)(?:[/?#]|$)");
     private static final String API_BASE = "https://archidekt.com/api/decks/";
+    //the deck listing lives under a versioned search path; /api/decks/ without an id is a client route
+    private static final String OWNER_LISTING_BASE = "https://archidekt.com/api/decks/v3/?ownerUsername=";
     private static final String PROVIDER_NAME = "Archidekt";
     private static final Localizer localizer = Localizer.getInstance();
 
     @Override
     public RemoteDeck load(final String normalizedUrl, final Iterable<Deck> savedDecks) throws IOException {
-        final String deckId = getDeckId(normalizedUrl);
+        return loadById(getDeckId(normalizedUrl), normalizedUrl, savedDecks);
+    }
+
+    static RemoteDeck loadById(final String deckId, final String sourceUrl, final Iterable<Deck> savedDecks) throws IOException {
         final Map<?, ?> root = DeckUrlLoader.readJsonObject(API_BASE + deckId + "/", PROVIDER_NAME);
 
         final DeckUrlImportTextBuilder builder = new DeckUrlImportTextBuilder();
         addCards(builder, root);
 
         return new RemoteDeck(
-                DeckUrlLoader.getDeckName(root, deckId, normalizedUrl,
+                DeckUrlLoader.getDeckName(root, deckId, sourceUrl,
                         localizer.getMessage("lblDeckUrlDefaultDeckName", PROVIDER_NAME), savedDecks),
                 getDeckFormat(root.get("deckFormat")),
-                normalizedUrl,
+                sourceUrl,
                 builder.toString(),
                 PROVIDER_NAME);
+    }
+
+    static String deckPageUrl(final String deckId) {
+        return "https://archidekt.com/decks/" + deckId;
+    }
+
+    /** One entry of a user's public deck listing. formatValue stays raw so the
+     *  Unknown-format sentinel (getDeckFormatOrNull) is decided by the caller. */
+    record OwnerDeckListing(String deckId, String name, Object formatValue, String updatedAt) {
+    }
+
+    record OwnerListingPage(List<OwnerDeckListing> decks, String nextUrl) {
+    }
+
+    static String getOwnerListingUrl(final String username) {
+        return OWNER_LISTING_BASE + URLEncoder.encode(username, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Tolerant parse of one page of the owner listing. Entries missing an id are
+     * skipped; entries owned by anyone but the requested user are skipped (the
+     * ownerUsername filter is server-side, but this endpoint is undocumented and
+     * has silently ignored other parameter spellings — trust nothing). The next
+     * link is normalized to https: the API hands back plain http.
+     */
+    static OwnerListingPage parseOwnerListingPage(final Map<?, ?> root, final String username) {
+        final List<OwnerDeckListing> decks = new ArrayList<>();
+        if (root.get("results") instanceof List<?> results) {
+            for (final Object entryValue : results) {
+                if (!(entryValue instanceof Map<?, ?> entry)) {
+                    continue;
+                }
+                final String owner = DeckUrlLoader.getNestedString(entry, "owner", "username");
+                if (owner != null && !owner.equalsIgnoreCase(username)) {
+                    continue;
+                }
+                final Object id = entry.get("id");
+                if (!(id instanceof Number deckId)) {
+                    continue;
+                }
+                decks.add(new OwnerDeckListing(
+                        String.valueOf(deckId.longValue()),
+                        DeckUrlLoader.getString(entry.get("name"), "Deck " + deckId.longValue()),
+                        entry.get("deckFormat"),
+                        DeckUrlLoader.getString(entry.get("updatedAt"), null)));
+            }
+        }
+        String nextUrl = DeckUrlLoader.getString(root.get("next"), null);
+        if (nextUrl != null && nextUrl.startsWith("http://")) {
+            nextUrl = "https://" + nextUrl.substring("http://".length());
+        }
+        return new OwnerListingPage(decks, nextUrl);
     }
 
     static String getDeckId(final String deckUrl) throws IOException {
@@ -125,14 +185,21 @@ final class ArchidektDeckUrlProvider implements DeckUrlProvider {
     }
 
     private static DeckFormat getDeckFormat(final Object formatValue) {
+        final DeckFormat format = getDeckFormatOrNull(formatValue);
+        return format == null ? DeckFormat.Constructed : format;
+    }
+
+    /** Null = the Unknown-format sentinel: the site's format id is unmapped,
+     *  as opposed to silently filing the deck as Constructed. */
+    static DeckFormat getDeckFormatOrNull(final Object formatValue) {
         if (!(formatValue instanceof Number number)) {
-            return DeckFormat.Constructed;
+            return null;
         }
         return switch (number.intValue()) {
             case 3, 11, 12 -> DeckFormat.Commander;
             case 6 -> DeckFormat.Pauper;
             case 13 -> DeckFormat.Brawl;
-            default -> DeckFormat.Constructed;
+            default -> null;
         };
     }
 }

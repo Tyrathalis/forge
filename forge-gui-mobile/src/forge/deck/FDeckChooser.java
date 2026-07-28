@@ -399,6 +399,22 @@ public class FDeckChooser extends FScreen {
     }
 
     private void promptForDeckUrl() {
+        //single deck or a whole user's public decks - one extra tap, no extra button slot
+        FOptionPane.showOptionDialog(Forge.getLocalizer().getMessage("lblDeckUrlLabel"),
+                Forge.getLocalizer().getMessage("lblProvideDeckUrl"), null,
+                Arrays.asList(Forge.getLocalizer().getMessage("lblProvideDeckUrl"),
+                        Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"),
+                        Forge.getLocalizer().getMessage("lblCancel")),
+                (Consumer<Integer>) option -> {
+                    if (option == 0) {
+                        promptForSingleDeckUrl();
+                    } else if (option == 1) {
+                        promptForDeckSiteUsername();
+                    }
+                });
+    }
+
+    private void promptForSingleDeckUrl() {
         //pre-fill with the selected deck's own URL, so re-confirming the dialog re-fetches that
         //deck -- that is the reload affordance, without spending a button on it
         final DeckProxy selected = lstDecks.getSelectedItem();
@@ -409,6 +425,41 @@ public class FDeckChooser extends FScreen {
                     if (deckUrl == null || deckUrl.isBlank()) { return; } //null when cancelled
                     loadDeckFromUrl(deckUrl.trim());
                 }, false);
+    }
+
+    private void promptForDeckSiteUsername() {
+        FOptionPane.showInputDialog(Forge.getLocalizer().getMessage("lblDeckSiteUsername"),
+                Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"), "", null,
+                (Consumer<String>) username -> {
+                    if (username == null || username.isBlank()) { return; } //null when cancelled
+                    syncDeckSiteUser(username.trim());
+                }, false);
+    }
+
+    private void syncDeckSiteUser(final String username) {
+        //a first sync of N decks makes N+pages requests at a polite ~2s interval, so this can
+        //take a while behind the overlay; re-syncs skip unchanged decks without any request
+        LoadingOverlay.runBackgroundTask(Forge.getLocalizer().getMessage("lblSyncingUserDecks", username), () -> {
+            try {
+                final DeckSiteSyncer.Result result = DeckSiteSyncer.sync(username, null);
+                FThreads.invokeInEdtLater(() -> {
+                    if (selectedDeckType == DeckType.PROVIDED_DECK_URL) {
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                    final StringBuilder summary = new StringBuilder(Forge.getLocalizer().getMessage("lblDeckSyncSummary",
+                            username, String.valueOf(result.created()), String.valueOf(result.updated()),
+                            String.valueOf(result.unchanged()), String.valueOf(result.failures().size())));
+                    for (final String failure : result.failures()) {
+                        summary.append("\n").append(failure);
+                    }
+                    FOptionPane.showMessageDialog(summary.toString(),
+                            Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"));
+                });
+            } catch (final IOException ex) {
+                FThreads.invokeInEdtLater(() -> FOptionPane.showErrorDialog(ex.getMessage(),
+                        Forge.getLocalizer().getMessage("lblSyncDeckSiteUser")));
+            }
+        });
     }
 
     private void loadDeckFromUrl(final String deckUrl) {

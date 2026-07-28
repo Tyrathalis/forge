@@ -64,6 +64,7 @@ public class Deck extends DeckBase implements Iterable<Entry<DeckSection, CardPo
     private Map<String, List<String>> loadedSections = null;
     private DeckFormat deckFormat;
     private String sourceUrl;
+    private String syncUpdatedAt;
     private String lastCardArtPreferenceUsed = "";
     private Boolean lastCardArtOptimisationOptionUsed = null;
     private boolean includeCardsFromUnspecifiedSet = false;
@@ -266,6 +267,7 @@ public class Deck extends DeckBase implements Iterable<Entry<DeckSection, CardPo
         result.setDraftNotes(draftNotes);
         result.setDeckFormat(deckFormat);
         result.setSourceUrl(sourceUrl);
+        result.setSyncUpdatedAt(syncUpdatedAt);
         //noinspection ConstantValue
         if(tags != null) //Can happen deserializing old Decks.
             result.tags.addAll(this.tags);
@@ -658,6 +660,16 @@ public class Deck extends DeckBase implements Iterable<Entry<DeckSection, CardPo
 
     public String getSourceUrl() {
         return sourceUrl;
+    }
+
+    /** Site-side last-modified stamp recorded at deck-site sync time, so an
+     *  unchanged deck can be skipped without a network request on re-sync. */
+    public void setSyncUpdatedAt(String syncUpdatedAt0) {
+        syncUpdatedAt = syncUpdatedAt0;
+    }
+
+    public String getSyncUpdatedAt() {
+        return syncUpdatedAt;
     }
 
     public void setAiHints(String aiHintsInfo) {
