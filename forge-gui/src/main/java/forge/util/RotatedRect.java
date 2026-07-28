@@ -41,6 +41,20 @@ public final class RotatedRect {
     }
 
     /**
+     * Inverse-rotates the screen-space point (px, py) into the unrotated frame
+     * of content drawn rotated by angleDeg about (pivotX, pivotY); returns
+     * {x, y}. For callers whose containment comparisons differ from
+     * {@link #contains} (e.g. exclusive bounds).
+     */
+    public static float[] inverseRotate(float px, float py, float pivotX, float pivotY, float angleDeg) {
+        double cos = cosDeg(angleDeg);
+        double sin = sinDeg(angleDeg);
+        double dx = px - (double) pivotX;
+        double dy = py - (double) pivotY;
+        return new float[] { (float) (pivotX + dx * cos - dy * sin), (float) (pivotY + dx * sin + dy * cos) };
+    }
+
+    /**
      * Axis-aligned bounding box, as {x, y, w, h}, of the rect
      * (rx, ry, rw, rh) drawn rotated by angleDeg about (pivotX, pivotY).
      * At -90 this is exactly the historical tapped w/h-swap box.

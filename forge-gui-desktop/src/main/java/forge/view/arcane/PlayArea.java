@@ -40,6 +40,7 @@ import forge.gui.FThreads;
 import forge.gui.util.SGuiChoose;
 import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.util.Localizer;
+import forge.util.RotatedRect;
 import forge.model.FModel;
 import forge.screens.match.CMatchUI;
 import forge.toolbox.FScrollPane;
@@ -713,18 +714,23 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
             for (final CardStack stack : row) {
                 for (final CardPanel panel : stack) {
                     final int panelX = panel.getCardX();
-                    int panelY = panel.getCardY();
-                    int panelWidth, panelHeight;
+                    final int panelY = panel.getCardY();
+                    final int panelWidth = panel.getCardWidth();
+                    final int panelHeight = panel.getCardHeight();
+                    float hitX = x;
+                    float hitY = y;
                     if (panel.isTapped()) {
-                        panelWidth = panel.getCardHeight();
-                        panelHeight = panel.getCardWidth();
-                        panelY += panelWidth - panelHeight;
-                    } else {
-                        panelWidth = panel.getCardWidth();
-                        panelHeight = panel.getCardHeight();
+                        //the card is drawn rotated about the tap pivot (paint()); map the point
+                        //into its unrotated frame instead of assuming the exact-90 swap box.
+                        //-90 = -Math.toDegrees(CardPanel.TAPPED_ANGLE) in RotatedRect's convention
+                        final float pivotX = panelX + panelWidth / 2f;
+                        final float pivotY = panelY + panelHeight - panelWidth / 2f;
+                        final float[] local = RotatedRect.inverseRotate(x, y, pivotX, pivotY, -90);
+                        hitX = local[0];
+                        hitY = local[1];
                     }
-                    if ((x > panelX) && (x < (panelX + panelWidth))) {
-                        if ((y > panelY) && (y < (panelY + panelHeight))) {
+                    if ((hitX > panelX) && (hitX < (panelX + panelWidth))) {
+                        if ((hitY > panelY) && (hitY < (panelY + panelHeight))) {
                             if (!panel.isDisplayEnabled()) {
                                 return null;
                             }

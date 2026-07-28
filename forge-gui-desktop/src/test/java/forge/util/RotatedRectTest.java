@@ -152,6 +152,38 @@ public class RotatedRectTest {
     }
 
     /**
+     * The desktop form: PlayArea.getCardPanel uses integer pixel coordinates
+     * and EXCLUSIVE bounds. Its legacy tapped branch swapped w/h and shifted y
+     * by h - w; the replacement inverse-rotates via
+     * {@link RotatedRect#inverseRotate} and keeps the exclusive comparisons.
+     * Must be identical over integer grids at the stock angle.
+     */
+    @Test
+    public void desktopExclusiveFormIdenticalToLegacyAtStockAngle() {
+        int[][] panels = { { 12, 30, 100, 140 }, { 0, 0, 63, 89 }, { 7, 3, 101, 141 } };
+        for (int[] p : panels) {
+            int panelX = p[0], panelY = p[1], w = p[2], h = p[3];
+            int mismatches = 0;
+            for (int x = panelX - h - 10; x <= panelX + 2 * h; x++) {
+                for (int y = panelY - h - 10; y <= panelY + 2 * h; y++) {
+                    // legacy: swap + shift, exclusive bounds
+                    int ly = panelY + h - w;
+                    boolean legacy = x > panelX && x < panelX + h && y > ly && y < ly + w;
+                    // replacement: inverse-rotate about the paint() pivot, exclusive bounds
+                    float[] local = RotatedRect.inverseRotate(x, y, panelX + w / 2f, panelY + h - w / 2f, -90);
+                    boolean actual = local[0] > panelX && local[0] < panelX + w
+                            && local[1] > panelY && local[1] < panelY + h;
+                    if (legacy != actual) {
+                        mismatches++;
+                    }
+                }
+            }
+            Assert.assertEquals(mismatches, 0, "desktop-form disagreement for panel (" + panelX + ", " + panelY
+                    + ", " + w + ", " + h + ")");
+        }
+    }
+
+    /**
      * The 180-rotated-field composition (local two-human matches): the card
      * draws under an outer 180-degree rotation about the untapped rect center,
      * then the +90 tap rotation. The hit-test undoes the outer rotation by
