@@ -311,6 +311,18 @@ public class SettingsPage extends TabPage<SettingsScreen> {
                         MatchController.instance.resetPlayerPanels();
                 }
             }, 1);
+        lstSettings.addItem(new BooleanSetting(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY,
+            Forge.getLocalizer().getMessage("lblSingleColumnZoneDisplay"),
+            Forge.getLocalizer().getMessage("nlSingleColumnZoneDisplay")) {
+                @Override
+                public void select() {
+                    super.select();
+                    //update
+                    Forge.singleColumnZoneDisplay = FModel.getPreferences().getPrefBoolean(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY);
+                    if (MatchController.instance != null)
+                        MatchController.instance.resetPlayerPanels();
+                }
+            }, 1);
         lstSettings.addItem(new BooleanSetting(FPref.UI_ANIMATED_CARD_TAPUNTAP,
             Forge.getLocalizer().getMessage("lblAnimatedCardTapUntap"),
             Forge.getLocalizer().getMessage("nlAnimatedCardTapUntap")) {

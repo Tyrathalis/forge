@@ -105,6 +105,7 @@ public class Forge implements ApplicationListener {
     public static String altZoneTabMode = "Off";
     public static boolean animatedCardTapUntap = false;
     public static int tapAngle = 90;
+    public static boolean singleColumnZoneDisplay = false;
     public static String enableUIMask = "Crop";
     public static String selector = "Default";
     public static boolean isTabletDevice = false;
@@ -237,6 +238,7 @@ public class Forge implements ApplicationListener {
         setAltZoneTabMode(getForgePreferences().getPref(FPref.UI_ALT_PLAYERZONETABS));
         animatedCardTapUntap = getForgePreferences().getPrefBoolean(FPref.UI_ANIMATED_CARD_TAPUNTAP);
         tapAngle = parseTapAngle(getForgePreferences().getPref(FPref.UI_TAP_ANGLE));
+        singleColumnZoneDisplay = getForgePreferences().getPrefBoolean(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY);
         enableUIMask = getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING);
         if (getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING).equals("true")) //override old settings if not updated
             enableUIMask = "Full";

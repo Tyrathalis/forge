@@ -298,6 +298,9 @@ public class SettingsScene extends UIScene {
         });
         addLabel(Forge.getLocalizer().getMessage("cbpTapAngle"));
         settingGroup.add(tapAngle).align(Align.right).pad(2);
+        addCheckBox(Forge.getLocalizer().getMessage("lblSingleColumnZoneDisplay"),
+                ForgePreferences.FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY, () ->
+                Forge.singleColumnZoneDisplay = FModel.getPreferences().getPrefBoolean(ForgePreferences.FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY));
         CheckBox cbAnte = addCheckBox(Forge.getLocalizer().getMessage("cbAnte"), ForgePreferences.FPref.UI_ANTE);
         CheckBox cbAnteMatchRarity = addCheckBox(Forge.getLocalizer().getMessage("cbAnteMatchRarity"), ForgePreferences.FPref.UI_ANTE_MATCH_RARITY);
         CheckBox cbAnteIncludeBasicLands = addCheckBox(Forge.getLocalizer().getMessage("cbAnteIncludeBasicLands"), ForgePreferences.FPref.UI_ANTE_INCLUDE_BASIC_LANDS);

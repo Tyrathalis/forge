@@ -430,6 +430,10 @@ public class VPlayerPanel extends FContainer {
 
         float fieldWidth = width - x - avatarWidth;
         float displayAreaWidth = height / FCardPanel.ASPECT_RATIO;
+        if (Forge.singleColumnZoneDisplay && !Forge.isHorizontalTabLayout()) {
+            //one column of the same-size cards instead of two; the field gets the difference
+            displayAreaWidth /= 2;
+        }
         if (selectedTab != null) {
             fieldWidth -= displayAreaWidth;
         }

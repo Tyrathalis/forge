@@ -164,16 +164,20 @@ public class VZoneDisplay extends VCardDisplayArea {
     private ScrollBounds layoutAndGetScrollBoundsLandscape(float visibleWidth, float visibleHeight) {
         float x = 0;
         float y = 0;
-        float cardWidth = visibleWidth / 2;
+        //single-column mode pairs with the narrower display area (VPlayerPanel),
+        //so the card size stays the same either way
+        int columns = Forge.singleColumnZoneDisplay ? 1 : 2;
+        float cardWidth = visibleWidth / columns;
         float cardHeight = getCardHeight(cardWidth);
         float dy = cardHeight;
         float scrollHeight;
 
-        int rowCount = (int)Math.ceil((float)cardPanels.get().size() / 2f);
+        int rowCount = (int)Math.ceil((float)cardPanels.get().size() / columns);
         float totalHeight = cardHeight * rowCount;
-        if (totalHeight > visibleHeight && totalHeight <= visibleHeight * 3) {
-            //allow overlapping cards up to one third of the card,
-            //otherwise don't overlap and allow scrolling vertically
+        //overlap window scales with columns so the same card count fits before
+        //scrolling kicks in: two columns overlap up to 1/3 of a card over 3
+        //screen heights of rows, one column up to the same total card area
+        if (totalHeight > visibleHeight && totalHeight <= visibleHeight * 6f / columns) {
             dy *= (visibleHeight - cardHeight) / (totalHeight - cardHeight);
             dy += FCardPanel.PADDING / rowCount; //make final card go right up to right edge of screen
             if (revealedPanel == null) {
@@ -189,7 +193,7 @@ public class VZoneDisplay extends VCardDisplayArea {
         for (CardAreaPanel cardPanel : cardPanels.get()) {
             orderedCards.get().add(cardPanel.getCard());
             cardPanel.setBounds(x, y, cardWidth, cardHeight);
-            if (orderedCards.get().size() % 2 == 0) {
+            if (orderedCards.get().size() % columns == 0) {
                 x = 0;
                 y += dy;
             }
