@@ -421,7 +421,7 @@ public enum CSubmenuPreferences implements ICDoc {
     }
 
     private void initializeTapAngleComboBox() {
-        final String[] angles = {"90", "75", "60", "45"};
+        final String[] angles = {"90", "75", "60", "45", "30", "15"};
         final FPref anglePreference = FPref.UI_TAP_ANGLE;
         final FComboBoxPanel<String> panel = this.view.getCbpTapAngle();
         final FComboBox<String> comboBox = createComboBox(angles, anglePreference);

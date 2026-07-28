@@ -286,7 +286,7 @@ public class SettingsScene extends UIScene {
                 Config.instance().saveSettings();
             }
         });
-        SelectBox<String> tapAngle = Controls.newComboBox(new String[]{"90", "75", "60", "45"},
+        SelectBox<String> tapAngle = Controls.newComboBox(new String[]{"90", "75", "60", "45", "30", "15"},
                 FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE), o -> {
             String angle = (String) o;
             if (angle != null && !angle.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE))) {

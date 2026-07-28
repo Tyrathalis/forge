@@ -324,7 +324,7 @@ public class SettingsPage extends TabPage<SettingsScreen> {
         lstSettings.addItem(new CustomSelectSetting(FPref.UI_TAP_ANGLE,
             Forge.getLocalizer().getMessage("cbpTapAngle"),
             Forge.getLocalizer().getMessage("nlTapAngle"),
-            new String[]{"90", "75", "60", "45"}) {
+            new String[]{"90", "75", "60", "45", "30", "15"}) {
                 @Override
                 public void valueChanged(String newValue) {
                     super.valueChanged(newValue);
