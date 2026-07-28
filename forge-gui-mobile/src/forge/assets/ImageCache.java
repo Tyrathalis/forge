@@ -533,10 +533,16 @@ public class ImageCache {
                     Pixmap raw = new Pixmap(imageBytes, 0, imageBytes.length);
                     Pixmap pixmap = downscaleCardPixmap(raw);
 
-                    // Create Texture from Pixmap (no mipmaps for faster upload)
-                    directTexture = new Texture(pixmap, false);
-                    // Apply Linear filtering for smoother card images on high-DPI/Retina displays
-                    directTexture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+                    // Mipmaps when filtering is on: battlefield cards draw minified and rotate at
+                    // arbitrary angles (UI_TAP_ANGLE); linear-only sampling shimmers on card text
+                    final boolean mipMaps = Forge.isTextureFilteringEnabled();
+                    directTexture = new Texture(pixmap, mipMaps);
+                    if (mipMaps) {
+                        directTexture.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
+                    } else {
+                        // Linear filtering for smoother card images on high-DPI/Retina displays
+                        directTexture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+                    }
 
                     // iOS fix: Store Pixmap - iOS Texture needs Pixmap to stay alive
                     // Rely on GC to clean up when memory is low
