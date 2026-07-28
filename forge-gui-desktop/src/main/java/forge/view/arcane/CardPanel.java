@@ -86,7 +86,37 @@ public class CardPanel extends SkinnedPanel implements CardContainer, IDisposabl
 
     private static final long serialVersionUID = 2361907095724263295L;
 
-    public static final double TAPPED_ANGLE = Math.PI / 2;
+    /** Tapped rotation from FPref.UI_TAP_ANGLE, lazily read so class-init never
+     *  races preference bootstrap. Degrees are the source of truth: exact
+     *  multiples of 90 must stay exact for the snapped hit-test math. */
+    private static int tapAngleDegrees = -1;
+
+    public static int getTapAngleDegrees() {
+        if (tapAngleDegrees < 0) {
+            refreshTapAngle();
+        }
+        return tapAngleDegrees;
+    }
+
+    /** Radians, for the paint/animation rotation. */
+    public static double getTapAngle() {
+        return Math.toRadians(getTapAngleDegrees());
+    }
+
+    /** Re-reads the preference; falls back to the FPref default on anything
+     *  unparseable or out of (0, 90] (same defensive shape as
+     *  parseActionableHighlightColor below). */
+    public static void refreshTapAngle() {
+        String s = forge.model.FModel.getPreferences().getPref(FPref.UI_TAP_ANGLE);
+        try {
+            int angle = Integer.parseInt(s);
+            if (angle > 0 && angle <= 90) {
+                tapAngleDegrees = angle;
+                return;
+            }
+        } catch (NumberFormatException ignored) {}
+        tapAngleDegrees = Integer.parseInt(FPref.UI_TAP_ANGLE.getDefault());
+    }
     public static final float ASPECT_RATIO = 3.5f / 2.5f;
     public static final float TARGET_ORIGIN_FACTOR_X = 0.25f;
     public static final float TARGET_ORIGIN_FACTOR_Y = 0.5f;

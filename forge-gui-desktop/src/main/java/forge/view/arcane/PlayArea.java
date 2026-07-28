@@ -722,10 +722,10 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
                     if (panel.isTapped()) {
                         //the card is drawn rotated about the tap pivot (paint()); map the point
                         //into its unrotated frame instead of assuming the exact-90 swap box.
-                        //-90 = -Math.toDegrees(CardPanel.TAPPED_ANGLE) in RotatedRect's convention
+                        //RotatedRect's angle convention is the negation of Graphics2D.rotate's, in degrees
                         final float pivotX = panelX + panelWidth / 2f;
                         final float pivotY = panelY + panelHeight - panelWidth / 2f;
-                        final float[] local = RotatedRect.inverseRotate(x, y, pivotX, pivotY, -90);
+                        final float[] local = RotatedRect.inverseRotate(x, y, pivotX, pivotY, -CardPanel.getTapAngleDegrees());
                         hitX = local[0];
                         hitY = local[1];
                     }
@@ -778,7 +778,7 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
                 splitCardIds.remove(panel.getCard().getId());
                 selectCard(panel, new MouseTriggerEvent(evt), false);
                 doLayout();
-                if ((panel.getTappedAngle() != 0) && (panel.getTappedAngle() != CardPanel.TAPPED_ANGLE)) {
+                if ((panel.getTappedAngle() != 0) && (panel.getTappedAngle() != CardPanel.getTapAngle())) {
                     return;
                 }
                 super.mouseLeftClicked(panel, evt);
@@ -793,7 +793,7 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
                 splitCardIds.add(panel.getCard().getId());
                 if (getMatchUI().getGameController().selectCard(panel.getCard(), null, new MouseTriggerEvent(evt))) {
                     doLayout();
-                    if ((panel.getTappedAngle() != 0) && (panel.getTappedAngle() != CardPanel.TAPPED_ANGLE)) {
+                    if ((panel.getTappedAngle() != 0) && (panel.getTappedAngle() != CardPanel.getTapAngle())) {
                         return;
                     }
                     super.mouseLeftClicked(panel, evt);
@@ -811,7 +811,7 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
             splitCardIds.add(panel.getCard().getId());
         }
         doLayout();
-        if (panel.getTappedAngle() != 0 && panel.getTappedAngle() != CardPanel.TAPPED_ANGLE) {
+        if (panel.getTappedAngle() != 0 && panel.getTappedAngle() != CardPanel.getTapAngle()) {
             return;
         }
         super.mouseLeftClicked(panel, evt);
@@ -1055,7 +1055,7 @@ public class PlayArea extends CardPanelContainer implements CardPanelMouseListen
         }
         if (card.isTapped()) {
             toPanel.setTapped(true);
-            toPanel.setTappedAngle(forge.view.arcane.CardPanel.TAPPED_ANGLE);
+            toPanel.setTappedAngle(forge.view.arcane.CardPanel.getTapAngle());
         } else {
             toPanel.setTapped(false);
             toPanel.setTappedAngle(0);

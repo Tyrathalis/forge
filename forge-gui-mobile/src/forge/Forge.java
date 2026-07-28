@@ -104,6 +104,7 @@ public class Forge implements ApplicationListener {
     public static boolean altZoneTabs = false;
     public static String altZoneTabMode = "Off";
     public static boolean animatedCardTapUntap = false;
+    public static int tapAngle = 90;
     public static String enableUIMask = "Crop";
     public static String selector = "Default";
     public static boolean isTabletDevice = false;
@@ -235,6 +236,7 @@ public class Forge implements ApplicationListener {
         altPlayerLayout = getForgePreferences().getPrefBoolean(FPref.UI_ALT_PLAYERINFOLAYOUT);
         setAltZoneTabMode(getForgePreferences().getPref(FPref.UI_ALT_PLAYERZONETABS));
         animatedCardTapUntap = getForgePreferences().getPrefBoolean(FPref.UI_ANIMATED_CARD_TAPUNTAP);
+        tapAngle = parseTapAngle(getForgePreferences().getPref(FPref.UI_TAP_ANGLE));
         enableUIMask = getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING);
         if (getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING).equals("true")) //override old settings if not updated
             enableUIMask = "Full";
@@ -271,6 +273,19 @@ public class Forge implements ApplicationListener {
             FThreads.invokeInBackgroundThread(() -> AssetsDownloader.checkForUpdates(exited, runnable));
         }
     }
+    /** Parses FPref.UI_TAP_ANGLE, falling back to the default on anything
+     *  unparseable or outside (0, 90] — an angle read from a config file
+     *  deserves the same defensive read as any other pref. */
+    public static int parseTapAngle(String value) {
+        try {
+            int angle = Integer.parseInt(value);
+            if (angle > 0 && angle <= 90) {
+                return angle;
+            }
+        } catch (NumberFormatException ignored) {}
+        return Integer.parseInt(FPref.UI_TAP_ANGLE.getDefault());
+    }
+
     public static void setAltZoneTabMode(String mode) {
         Forge.altZoneTabMode = mode;
         switch (Forge.altZoneTabMode) {

@@ -200,16 +200,16 @@ public abstract class Animation {
 
             @Override
             protected void update(final float percentage) {
-                panel.setTappedAngle(CardPanel.TAPPED_ANGLE * percentage);
+                panel.setTappedAngle(CardPanel.getTapAngle() * percentage);
                 if (!panel.isTapped()) {
-                    panel.setTappedAngle(CardPanel.TAPPED_ANGLE - panel.getTappedAngle());
+                    panel.setTappedAngle(CardPanel.getTapAngle() - panel.getTappedAngle());
                 }
                 panel.repaint();
             }
 
             @Override
             protected void onEnd() {
-                panel.setTappedAngle(panel.isTapped() ? CardPanel.TAPPED_ANGLE : 0);
+                panel.setTappedAngle(panel.isTapped() ? CardPanel.getTapAngle() : 0);
             }
         }.run();
     }

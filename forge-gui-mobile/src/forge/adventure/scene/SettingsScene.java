@@ -286,6 +286,18 @@ public class SettingsScene extends UIScene {
                 Config.instance().saveSettings();
             }
         });
+        SelectBox<String> tapAngle = Controls.newComboBox(new String[]{"90", "75", "60", "45"},
+                FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE), o -> {
+            String angle = (String) o;
+            if (angle != null && !angle.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE))) {
+                FModel.getPreferences().setPref(ForgePreferences.FPref.UI_TAP_ANGLE, angle);
+                FModel.getPreferences().save();
+            }
+            Forge.tapAngle = Forge.parseTapAngle(angle);
+            return null;
+        });
+        addLabel(Forge.getLocalizer().getMessage("cbpTapAngle"));
+        settingGroup.add(tapAngle).align(Align.right).pad(2);
         CheckBox cbAnte = addCheckBox(Forge.getLocalizer().getMessage("cbAnte"), ForgePreferences.FPref.UI_ANTE);
         CheckBox cbAnteMatchRarity = addCheckBox(Forge.getLocalizer().getMessage("cbAnteMatchRarity"), ForgePreferences.FPref.UI_ANTE_MATCH_RARITY);
         CheckBox cbAnteIncludeBasicLands = addCheckBox(Forge.getLocalizer().getMessage("cbAnteIncludeBasicLands"), ForgePreferences.FPref.UI_ANTE_INCLUDE_BASIC_LANDS);

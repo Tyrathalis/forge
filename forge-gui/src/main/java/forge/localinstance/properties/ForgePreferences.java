@@ -48,6 +48,7 @@ public class ForgePreferences extends AbstractPreferences<ForgePreferences.FPref
         UI_ROTATE_PLANE_OR_PHENOMENON("false"),
         UI_ROTATE_SPLIT_CARDS("true"),
         UI_ANIMATED_CARD_TAPUNTAP("true"),
+        UI_TAP_ANGLE("90"),
         UI_DISABLE_IMAGES_EFFECT_CARDS("false"),
         UI_ENABLE_PRELOAD_EXTENDED_ART("false"),
         UI_ENABLE_BORDER_MASKING("Crop"),

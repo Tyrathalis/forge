@@ -69,7 +69,7 @@ public class FCardPanel extends FDisplayObject {
     }
 
     protected float getTappedAngle() {
-        return -90;
+        return -Forge.tapAngle;
     }
 
     protected boolean renderedCardContains(float x, float y) {
