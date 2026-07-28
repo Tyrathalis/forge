@@ -63,6 +63,43 @@ public class SplashScreen extends FContainer {
 
     @Override
     protected void doLayout(float width, float height) {
+        layoutSelectorButtons();
+    }
+
+    /**
+     * The selector buttons historically got their bounds once, at the first
+     * showSelector frame - while the logo is drawn from the live window size
+     * every frame. Any resize between init and click (including the launch-time
+     * restore) left the buttons overlapping the logo. Recompute from current
+     * bounds instead; skipped while the exit animation is sliding the buttons.
+     */
+    private void layoutSelectorButtons() {
+        if (btnHome == null || btnAdventure == null || splashTexture == null || hideBtn) {
+            return;
+        }
+        float x, y, w, h;
+        float backgroundRatio = (float) splashTexture.getRegionWidth() / splashTexture.getRegionHeight();
+        float screenRatio = getWidth() / getHeight();
+        if (backgroundRatio > screenRatio) {
+            x = 0;
+            w = getWidth();
+            h = getWidth() * backgroundRatio;
+            y = (getHeight() - h) / 2;
+        } else {
+            y = 0;
+            h = getHeight();
+            w = getHeight() / backgroundRatio;
+            x = (getWidth() - w) / 2;
+        }
+        y += h * 295f / 450f;
+        float padding = 20f / 450f * w;
+        float height = 57f / 450f * h;
+        float btn_w = (w - 2 * padding);
+        float btn_x = x + padding;
+        float multiplier = Forge.isLandscapeMode() ? 1 : 1.2f;
+        float btn_y = (y + padding) * multiplier;
+        btnHome.setBounds(btn_x, btn_y, btn_w, height);
+        btnAdventure.setBounds(btn_x, btn_y + height + padding / 2, btn_w, height);
     }
 
     //prepare for showing dialogs on top of splash screen if needed
@@ -263,30 +300,12 @@ public class SplashScreen extends FContainer {
         g.fillRect(Color.BLACK, 0, 0, Forge.getScreenWidth(), Forge.getScreenHeight());
         g.drawImage(FSkinTexture.BG_TEXTURE, 0, 0, getWidth(), getHeight());
 
-        float x, y, w, h;
-        float backgroundRatio = (float) splashTexture.getRegionWidth() / splashTexture.getRegionHeight();
-        float screenRatio = getWidth() / getHeight();
-        if (backgroundRatio > screenRatio) {
-            x = 0;
-            w = getWidth();
-            h = getWidth() * backgroundRatio;
-            y = (getHeight() - h) / 2;
-        } else {
-            y = 0;
-            h = getHeight();
-            w = getHeight() / backgroundRatio;
-            x = (getWidth() - w) / 2;
-        }
         if (FSkin.getLogo() != null) {
             float xmod = Forge.getScreenHeight() > 1000 ? 1.5f : Forge.getScreenHeight() > 800 ? 1.3f : 1f;
             g.drawImage(FSkin.getLogo(), getWidth() / 2 - (FSkin.getLogo().getWidth() * xmod) / 2, getHeight() / 2 - (FSkin.getLogo().getHeight() * xmod) / 1.5f, FSkin.getLogo().getWidth() * xmod, FSkin.getLogo().getHeight() * xmod);
         } else {
             g.drawImage(FSkinImage.LOGO, getWidth() / 2 - (FSkinImage.LOGO.getWidth() * 2f) / 2, getHeight() / 2 - (FSkinImage.LOGO.getHeight() * 2f) / 1.3f, FSkinImage.LOGO.getWidth() * 2f, FSkinImage.LOGO.getHeight() * 2f);
         }
-        y += h * 295f / 450f;
-        float padding = 20f / 450f * w;
-        float height = 57f / 450f * h;
-
         if (!init) {
             init = true;
             btnAdventure = new FButton(Forge.getLocalizer().getMessageorUseDefault("lblAdventureMode", "Adventure Mode"));
@@ -317,16 +336,11 @@ public class SplashScreen extends FContainer {
                     bgAnimation.openAdventure = false;
                 }
             });
-            float btn_w = (w - 2 * padding);
-            float btn_x = x + padding;
-            float multiplier = Forge.isLandscapeMode() ? 1 : 1.2f;
-            float btn_y = (y + padding) * multiplier;
             btnHome.setFont(FSkinFont.get(22));
             btnAdventure.setFont(FSkinFont.get(22));
-            btnHome.setBounds(btn_x, btn_y, btn_w, height);
             add(btnHome);
-            btnAdventure.setBounds(btn_x, btn_y + height + padding / 2, btn_w, height);
             add(btnAdventure);
+            layoutSelectorButtons();
         }
     }
 
