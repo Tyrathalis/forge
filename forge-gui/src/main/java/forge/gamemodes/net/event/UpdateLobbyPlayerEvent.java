@@ -128,51 +128,28 @@ public final class UpdateLobbyPlayerEvent implements NetEvent {
     }
 
     /**
-     * A copy with the fields a remote client has no business setting cleared,
-     * or {@code this} when there was nothing to clear.
+     * Clear the fields a remote client has no business setting, returning
+     * whether any were present. Slot type is server-owned lifecycle state
+     * ({@code connectPlayer} sets REMOTE, {@code disconnectPlayer} OPEN) and
+     * the AI fields configure AI slots, which a REMOTE slot is not; the client
+     * UI offers none of them, so this is a no-op for honest traffic.
      *
-     * <p>Slot <b>type</b> is server-owned lifecycle state:
-     * {@code ServerGameLobby.connectPlayer} sets REMOTE and
-     * {@code disconnectPlayer} sets OPEN. A client that marks its own occupied
-     * slot OPEN keeps its slot index while the server hands the same index to
-     * the next joiner, so two channels end up driving one seat. The client UI
-     * never offers this — the type control is gated on {@code mayControl()},
-     * which {@code ClientGameLobby} answers false — so clearing it is a no-op
-     * for any honest client.
+     * <p>Left alone deliberately: {@code isDevMode} and {@code isArchenemy},
+     * which clients do set legitimately today — whether they should be able to
+     * is a game-design question, not a protocol-authorization one.
      *
-     * <p>AI options and profile are configuration for AI slots; a REMOTE slot
-     * is by definition not one, and no client code path sends them.
-     *
-     * <p>Deliberately <b>not</b> cleared: {@code isDevMode} and
-     * {@code isArchenemy}. Both are gated on {@code mayEdit()}, which is true
-     * for a client's own slot, so clients do set them legitimately today.
-     * Whether a player should be able to self-grant dev mode in a networked
-     * game is a game-design question, not a protocol-authorization one.
-     *
-     * <p>Clearing is exact: {@code LobbySlot.apply} skips null fields, so a
-     * sanitized event applies precisely the subset a client is entitled to.
+     * <p>In place rather than into a copy: the event is freshly deserialized
+     * and never re-broadcast, and a field-by-field copy would silently drop any
+     * field added later.
      */
-    public UpdateLobbyPlayerEvent sanitizedForRemoteClient() {
+    public boolean clearServerOwnedFields() {
         if (type == null && aiOptions == null && aiProfile == null) {
-            return this;
+            return false;
         }
-        final UpdateLobbyPlayerEvent copy = new UpdateLobbyPlayerEvent();
-        copy.name = name;
-        copy.avatarIndex = avatarIndex;
-        copy.sleeveIndex = sleeveIndex;
-        copy.team = team;
-        copy.isArchenemy = isArchenemy;
-        copy.isReady = isReady;
-        copy.isDevMode = isDevMode;
-        copy.deck = deck;
-        copy.section = section;
-        copy.cards = cards;
-        copy.AvatarVanguard = AvatarVanguard;
-        copy.SchemeDeckName = SchemeDeckName;
-        copy.PlanarDeckName = PlanarDeckName;
-        copy.DeckName = DeckName;
-        // type, aiOptions and aiProfile stay null.
-        return copy;
+        type = null;
+        aiOptions = null;
+        aiProfile = null;
+        return true;
     }
 
     public LobbySlotType getType() {

@@ -5,20 +5,14 @@ import forge.model.FModel;
 import forge.util.IHasForgeLog;
 
 /**
- * Client-side persistence for the reconnect capability issued by a host.
+ * Client-side persistence for the reconnect capability issued by a host. The
+ * token has to survive a restart, or requiring it would break reconnect for a
+ * client that crashed — which previously worked on username alone.
  *
- * <p>Why this exists: before capabilities, a client that crashed and restarted
- * could reclaim its seat by supplying the same username. Requiring a token
- * would remove that unless the token survives a restart, and a security patch
- * that visibly breaks reconnect is a security patch that gets reverted. So the
- * token is written through to preferences, keyed by the host it came from.
- *
- * <p>Only the most recent host's token is retained — you reconnect to the
- * server you just dropped from, not to an arbitrary one — which keeps this to
- * a single preference entry and bounds how long any capability lingers on
- * disk. The token is stored in the clear, at the same trust level as the rest
- * of the preferences file; it authorises reclaiming one seat on one host
- * inside that host's reconnect window and nothing else.
+ * <p>Only the most recent host's token is kept: you reconnect to the server you
+ * just dropped from, which bounds both the preference file and how long a
+ * capability lingers on disk. Stored in the clear, at the same trust level as
+ * the rest of the preferences.
  */
 final class ReconnectTokenStore implements IHasForgeLog {
 

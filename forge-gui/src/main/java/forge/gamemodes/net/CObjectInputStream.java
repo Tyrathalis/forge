@@ -1,6 +1,7 @@
 package forge.gamemodes.net;
 
 import forge.trackable.Tracker;
+import forge.util.IHasForgeLog;
 import io.netty.handler.codec.serialization.ClassResolver;
 
 import java.io.*;
@@ -21,7 +22,7 @@ import java.io.*;
  *       PlayerView instances from the Tracker.</li>
  * </ul>
  */
-public class CObjectInputStream extends ObjectInputStream implements forge.util.IHasForgeLog {
+public class CObjectInputStream extends ObjectInputStream implements IHasForgeLog {
     private final ClassResolver classResolver;
     private final Tracker tracker;
 
@@ -42,23 +43,20 @@ public class CObjectInputStream extends ObjectInputStream implements forge.util.
         WireStreamLimits.applyTo(this);
     }
 
-    /**
-     * Both overrides below consult {@link WireClassFilter} before the name is
-     * turned into a Class, so a rejected class is never loaded.
-     */
     @Override
     protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {
         int type = read();
         if (type < 0)
             throw new EOFException();
         else if (type == CObjectOutputStream.TYPE_THIN_DESCRIPTOR) {
+            // Checked here because the thin path resolves the class itself, so
+            // the JDK's own resolveClass call would come too late. The wide
+            // path needs no check — resolveClass below covers it.
             final String name = readUTF();
             WireClassFilter.checkAllowed(name);
             return ObjectStreamClass.lookupAny(classResolver.resolve(name));
         } else {
-            final ObjectStreamClass desc = super.readClassDescriptor();
-            WireClassFilter.checkAllowed(desc.getName());
-            return desc;
+            return super.readClassDescriptor();
         }
     }
 
@@ -75,19 +73,9 @@ public class CObjectInputStream extends ObjectInputStream implements forge.util.
     }
 
     /**
-     * Refuse dynamic proxies outright.
-     *
-     * <p>This is not redundant with the checks above. A proxy class descriptor
-     * ({@code TC_PROXYCLASSDESC}) does not travel as a class name, so it never
-     * reaches {@code readClassDescriptor} or {@code resolveClass} — the JDK
-     * reads the interface list and calls this method instead. Filtering only
-     * the other two would leave the stream able to synthesise a proxy backed
-     * by an attacker-chosen {@code InvocationHandler}, which is the entry point
-     * for the best-known deserialization chains.
-     *
-     * <p>Nothing in the protocol carries a proxy: none appeared anywhere in
-     * the measured wire traffic, and the message types are concrete view and
-     * event classes. So the safe answer is simply no.
+     * A proxy descriptor carries no class name, so it reaches neither method
+     * above — the JDK reads the interface list and calls this instead, which is
+     * where the best-known chains start. The protocol carries no proxies.
      */
     @Override
     protected Class<?> resolveProxyClass(String[] interfaces) throws IOException, ClassNotFoundException {

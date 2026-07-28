@@ -58,7 +58,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.*;
-import java.net.SocketAddress;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -85,13 +84,14 @@ public final class FServerManager implements IHasForgeLog {
     /** Source for reconnect capabilities. Must not be a plain Random. */
     private final SecureRandom secureRandom = new SecureRandom();
 
-    /**
-     * Admission limits. Every accepted channel allocates a {@link RemoteClient}
-     * and a decoder before the peer has proved anything, so without a ceiling a
-     * single source can hold open as many as it likes. A pod is at most 8
-     * seats; the cap is far above that so reconnect churn and a stray probe
-     * never lock anyone out.
-     */
+    // Abuse limits. Read per call rather than into constants so a test can vary
+    // them: Integer.getInteger in a static initialiser fixes the value at
+    // class-load, and surefire shares one JVM across the suite.
+    //
+    // Every accepted channel allocates a RemoteClient and a decoder before the
+    // peer has proved anything, so the connection caps sit far above the 8 seats
+    // a pod can hold — enough that reconnect churn or a stray probe cannot lock
+    // anyone out.
     private static int maxConnections() {
         return Integer.getInteger("forge.net.maxConnections", 64);
     }
@@ -102,15 +102,16 @@ public final class FServerManager implements IHasForgeLog {
     private static int loginDeadlineSeconds() {
         return Integer.getInteger("forge.net.loginDeadlineSeconds", 60);
     }
-    /** Chat is broadcast to everyone, so it is bounded in both size and rate. */
-    private static final int MAX_CHAT_LENGTH =
-            Integer.getInteger("forge.net.maxChatLength", 512);
+    /** Chat is broadcast to everyone, so it is bounded in size as well as rate. */
+    private static int maxChatLength() {
+        return Integer.getInteger("forge.net.maxChatLength", 512);
+    }
     /** Names are echoed into chat and logs; bound them at intake. */
-    private static final int MAX_NAME_LENGTH =
-            Integer.getInteger("forge.net.maxNameLength", 64);
+    private static int maxNameLength() {
+        return Integer.getInteger("forge.net.maxNameLength", 64);
+    }
 
-    private static String remoteHostOf(final ChannelHandlerContext ctx) {
-        final SocketAddress address = ctx.channel().remoteAddress();
+    private static String hostOf(final SocketAddress address) {
         if (address instanceof InetSocketAddress inet) {
             final InetAddress host = inet.getAddress();
             return host == null ? inet.getHostString() : host.getHostAddress();
@@ -125,16 +126,10 @@ public final class FServerManager implements IHasForgeLog {
                     ctx.channel().remoteAddress(), clients.size());
             return false;
         }
-        final String host = remoteHostOf(ctx);
-        int fromSameHost = 0;
-        for (final RemoteClient existing : clients.values()) {
-            final SocketAddress other = existing.getRemoteAddress();
-            if (other instanceof InetSocketAddress inet
-                    && host.equals(inet.getAddress() == null
-                        ? inet.getHostString() : inet.getAddress().getHostAddress())) {
-                fromSameHost++;
-            }
-        }
+        final String host = hostOf(ctx.channel().remoteAddress());
+        final long fromSameHost = clients.values().stream()
+                .filter(c -> host.equals(hostOf(c.getRemoteAddress())))
+                .count();
         if (fromSameHost >= maxConnectionsPerHost()) {
             netLog.warn("Refusing connection from {}: {} already open from that host",
                     ctx.channel().remoteAddress(), fromSameHost);
@@ -532,14 +527,11 @@ public final class FServerManager implements IHasForgeLog {
     }
 
     /**
-     * Push lobby state to every client that has completed login.
-     *
-     * <p>Deliberately not a plain {@code broadcast}: {@code GameLobbyData}
-     * carries each slot's {@link forge.deck.Deck}, so sending it to a peer that
-     * has not authenticated hands anyone who can reach the port every decklist
-     * in the lobby. Peers without a slot are skipped; a joining client gets its
-     * first update from the login path, immediately after {@code connectPlayer}
-     * assigns it one.
+     * Push lobby state to every client that has completed login. Deliberately
+     * not a plain broadcast: {@code GameLobbyData} carries each slot's
+     * {@link forge.deck.Deck}, so an unauthenticated peer would receive every
+     * decklist in the lobby. A joining client gets its first update from the
+     * login path, once {@code connectPlayer} has given it a slot.
      */
     public void updateLobbyState() {
         localLobby.getData().setMaximumCommanderBracket(
@@ -1047,7 +1039,7 @@ public final class FServerManager implements IHasForgeLog {
                 // Strip control characters before echoing to other players: a
                 // carriage return lets one player paint fake system lines in
                 // everyone else's chat pane.
-                final String text = LogSafe.forDisplay(raw, MAX_CHAT_LENGTH);
+                final String text = LogSafe.forDisplay(raw, maxChatLength());
                 String username = client.getUsername();
                 // Append (Host) indicator for the host player
                 if (client.getIndex() == 0) {
@@ -1108,7 +1100,7 @@ public final class FServerManager implements IHasForgeLog {
                 // key for disconnectedClients, so cleaning it at the single
                 // point of intake keeps the parked key and the reconnect
                 // lookup in agreement.
-                final String username = LogSafe.forDisplay(event.getUsername(), MAX_NAME_LENGTH);
+                final String username = LogSafe.forDisplay(event.getUsername(), maxNameLength());
                 client.setUsername(username);
 
                 // Check if this is a reconnecting player. A username is public
@@ -1200,7 +1192,7 @@ public final class FServerManager implements IHasForgeLog {
                         updateLobbyState();
                     }
                 }
-            } else if (msg instanceof UpdateLobbyPlayerEvent rawEvent) {
+            } else if (msg instanceof UpdateLobbyPlayerEvent event) {
                 // A peer that has not completed login owns no slot; applying
                 // its update would index the lobby with UNASSIGNED_SLOT.
                 if (!client.hasValidSlot()) {
@@ -1210,15 +1202,14 @@ public final class FServerManager implements IHasForgeLog {
                 }
                 // Clients may configure their own seat, not the server-owned
                 // state that decides who occupies it.
-                final UpdateLobbyPlayerEvent event = rawEvent.sanitizedForRemoteClient();
-                if (event != rawEvent) {
+                if (event.clearServerOwnedFields()) {
                     netLog.warn("Rejecting server-owned lobby fields from slot {} ({}) at {}",
                             client.getIndex(), client.getUsername(), ctx.channel().remoteAddress());
                 }
                 // Clean the name before it reaches the slot, not just before it
                 // reaches our own record of the client: the slot name is what
                 // every peer renders and what broadcastReadyState echoes.
-                final String newName = LogSafe.forDisplay(event.getName(), MAX_NAME_LENGTH);
+                final String newName = LogSafe.forDisplay(event.getName(), maxNameLength());
                 event.setName(newName);
                 localLobby.applyToSlot(client.getIndex(), event);
                 if (newName != null) {

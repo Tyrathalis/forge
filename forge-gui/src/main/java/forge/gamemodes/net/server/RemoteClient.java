@@ -10,6 +10,7 @@ import forge.util.IHasForgeLog;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 
+import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,15 +20,20 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
     /** Special value indicating the client hasn't been assigned a slot yet. */
     public static final int UNASSIGNED_SLOT = -1;
 
+    /** Token-bucket allowance for chat, sized for a person typing. */
+    private static final int CHAT_BURST = 10;
+    private static final long CHAT_REFILL_MILLIS = 1000;
+
     private volatile Channel channel;
     private String username;
     /**
      * Capability this client must present to reclaim its seat after a
-     * disconnect. Minted server-side at login, rotated on every successful
-     * reconnect, never derived from the username (which is public in the
-     * lobby and therefore not a credential).
+     * disconnect. Minted at login and rotated on every successful reconnect,
+     * never derived from the username, which is public lobby data.
      */
     private volatile String reconnectToken;
+    private double chatTokens = CHAT_BURST;
+    private long chatLastRefill = System.currentTimeMillis();
     private int index = UNASSIGNED_SLOT;
     private boolean libgdx;
     private volatile ReplyPool replies = new ReplyPool();
@@ -70,21 +76,10 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
     }
 
     /** Remote peer address, for admission limits and logging. */
-    public java.net.SocketAddress getRemoteAddress() {
+    public SocketAddress getRemoteAddress() {
         final Channel ch = channel;
         return ch == null ? null : ch.remoteAddress();
     }
-
-    /**
-     * Token bucket for chat. Sized for a person typing — a burst of a few
-     * lines is fine, a sustained stream is not. Deliberately generous: the
-     * cost of being wrong is a dropped chat line, but the cost of being too
-     * loose is every peer's chat pane and the host's log.
-     */
-    private static final int CHAT_BURST = 10;
-    private static final long CHAT_REFILL_MILLIS = 1000;
-    private double chatTokens = CHAT_BURST;
-    private long chatLastRefill = System.currentTimeMillis();
 
     /** Consume one chat allowance; false when the peer is over its rate. */
     public synchronized boolean allowChatMessage() {
@@ -110,9 +105,8 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
     }
 
     /**
-     * Constant-time check of a presented reconnect capability. Returns false
-     * if this client never had a token, so a seat can never be reclaimed by
-     * presenting nothing.
+     * Constant-time check of a presented capability. False when this client
+     * never had one, so a seat cannot be reclaimed by presenting nothing.
      */
     public boolean matchesReconnectToken(final String presented) {
         final String expected = this.reconnectToken;

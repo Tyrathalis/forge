@@ -9,75 +9,24 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Allowlist for class names arriving on the multiplayer wire.
+ * Allowlist for class names arriving on the multiplayer wire. The protocol is
+ * Java native serialization, so without one a peer's frame can name any class
+ * on the classpath.
  *
- * <p>The protocol is Java native serialization, so a peer's frame names the
- * classes to instantiate and {@code ObjectInputStream} obliges. Without a
- * filter the reachable set is the whole classpath — 29,012 classes in a built
- * desktop jar — which is the classic untrusted-deserialization sink.
+ * <p>Deliberately not an {@code ObjectInputFilter}: JEP 290 reached Android at
+ * API 33 and {@code forge-gui-android} declares {@code minSdkVersion=26}, so
+ * {@code setObjectInputFilter} would compile for desktop and break mobile at
+ * class-load. A name check inside {@link CObjectInputStream} needs no JDK 9+
+ * API, and covers both wire streams — the per-frame one and the inner one in
+ * {@link TrackableSerializer#unwrapEvents} — because every class resolved
+ * during deserialization passes through it.
  *
- * <h2>Why not {@code ObjectInputFilter}</h2>
- *
- * JEP 290 is the textbook answer and the wrong one here.
- * {@code java.io.ObjectInputFilter} arrived in Android at API 33;
- * {@code forge-gui-android} declares {@code minSdkVersion=26}, and
- * {@code forge-gui-ios} runs downgraded bytecode. A
- * {@code setObjectInputFilter} call compiles cleanly for desktop and breaks
- * mobile clients at class-load. A plain name check needs no JDK 9+ API and
- * behaves identically on every target.
- *
- * <p>It is also better placed. Every class instantiated during deserialization
- * funnels through {@link CObjectInputStream}'s {@code readClassDescriptor} /
- * {@code resolveClass}, and there are <b>two</b> streams doing that: the
- * per-frame one in {@link CompatibleObjectDecoder}, and the inner one in
- * {@link TrackableSerializer#unwrapEvents}. A filter installed on the decoder
- * alone would leave the second sink unguarded.
- *
- * <h2>How the allowlist was derived</h2>
- *
- * Empirically, not by guessing. {@code CObjectInputStream} was instrumented to
- * record every resolved name and the headless network harness was run over a
- * lobby, a spell-less game, and three real precon games (constructed and
- * commander): 131 distinct classes, of which 87 are {@code forge.*} and the
- * remaining 44 are JDK collections, boxed primitives, arrays and Guava
- * collections. The prefixes below cover that set with room to spare while
- * excluding the classic gadget libraries — none of which (commons-collections,
- * commons-beanutils, groovy, spring, rome, c3p0, bsh, clojure, javassist,
- * jackson-databind, {@code com.sun.rowset}) is on Forge's classpath today
- * either. XStream <i>is</i> present, but its published gadgets target
- * XStream's own XML unmarshalling rather than {@code ObjectInputStream}; it is
- * rejected here regardless.
- *
- * <p>{@code java.util.**} is admitted wholesale rather than enumerated. Its
- * serializable classes are collections; the ones that appear in published
- * gadget chains ({@code PriorityQueue}, {@code HashMap}) are chain
- * <i>carriers</i> that still need a sink — a {@code Comparator} or
- * {@code InvocationHandler} that executes something — and those live in
- * libraries this filter rejects.
- *
- * <p>{@code java.lang.invoke.SerializedLambda} is admitted because the
- * protocol genuinely carries lambdas: {@code ProtocolMethod.getChoices} takes
- * an {@code FSerializableFunction} and {@code RemoteClientGuiGame} ships it
- * down the wire. This is the one deliberate soft spot. Its
- * {@code readResolve} calls {@code $deserializeLambda$} on a capturing class
- * the peer names, which is narrower than a free gadget chain — the lambda is
- * constructed, not invoked, and its captured arguments are themselves filtered
- * — but it is a real residual. Removing it means changing {@code getChoices}
- * to send pre-rendered strings, a protocol change across desktop and mobile.
- *
- * <h2>Escape hatch</h2>
- *
- * A filter that wrongly rejects legitimate traffic breaks a game mid-match.
- * The stress-gated network suite adds draft and sealed to the coverage above
- * and rejected nothing across 115 games, which leaves sideboarding and the
- * human-only dialog paths unmeasured.
- * {@code -Dforge.net.classFilter=off} disables enforcement
- * so a user hitting a false reject can finish their evening; rejections are
- * logged with the class name either way, which is what makes a gap reportable
- * rather than mysterious.
+ * <p>The prefixes below are derived from measured traffic; see the commit
+ * message for the derivation and the gadget-library survey behind it.
  */
 final class WireClassFilter implements IHasForgeLog {
 
+    /** {@code =off} disables enforcement, so a false reject cannot strand a game. */
     private static final String ENFORCE_PROPERTY = "forge.net.classFilter";
 
     /** Package prefixes accepted wholesale. */
@@ -92,9 +41,12 @@ final class WireClassFilter implements IHasForgeLog {
             "Boolean", "Byte", "Character", "Short", "Integer", "Long", "Float", "Double",
             "Number", "String", "Enum", "Object", "Void", "StringBuffer", "StringBuilder");
 
-    /** Fully-qualified names accepted individually. */
+    /**
+     * The filter's one deliberate soft spot. {@code ProtocolMethod.getChoices}
+     * ships an {@code FSerializableFunction}, so real traffic carries lambdas;
+     * removing this means changing that method to send rendered strings.
+     */
     private static final Set<String> ALLOWED_EXACT = unmodifiableSetOf(
-            // The protocol ships FSerializableFunction; see class javadoc.
             "java.lang.invoke.SerializedLambda");
 
     private static final String JAVA_LANG = "java.lang.";
@@ -164,13 +116,9 @@ final class WireClassFilter implements IHasForgeLog {
     }
 
     /**
-     * Reduce an array name to the type it is an array of.
-     *
-     * <p>{@code ObjectStreamClass.getName()} uses JVM descriptors for arrays,
-     * so {@code "[[Ljava.lang.Object;"} must be checked as
-     * {@code java.lang.Object} rather than treated as an unknown name — and,
-     * more to the point, an array of a forbidden class must not slip through
-     * because its raw name does not match any prefix.
+     * Reduce an array name to the type it is an array of, so that
+     * {@code "[[Ljava.io.File;"} is judged as {@code java.io.File} rather than
+     * slipping through for matching no prefix in its raw descriptor form.
      */
     static String elementType(final String name) {
         int depth = 0;

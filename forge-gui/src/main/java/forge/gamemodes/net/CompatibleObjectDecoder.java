@@ -1,5 +1,6 @@
 package forge.gamemodes.net;
 
+import com.google.common.io.ByteStreams;
 import forge.trackable.Tracker;
 import forge.util.IHasForgeLog;
 import io.netty.buffer.ByteBuf;
@@ -9,9 +10,7 @@ import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.serialization.ClassResolver;
 import net.jpountz.lz4.LZ4BlockInputStream;
 
-import java.io.FilterInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.EOFException;
 import java.io.InvalidClassException;
 import java.io.ObjectInputStream;
 import java.io.StreamCorruptedException;
@@ -28,64 +27,16 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
     private static final int SLOW_DECODE_LOG_THRESHOLD_MS = 50;
 
     /**
-     * Ceiling on bytes read out of the LZ4 stream for a single frame.
+     * Ceiling on bytes read out of the LZ4 stream for a single frame. The frame
+     * length check bounds the <b>compressed</b> payload at about 9.5 MiB, which
+     * says nothing about how far it expands; a whole 16-turn game measures about
+     * 250 KB, so this exists only to make the pathological case terminate.
      *
-     * <p>The frame length check bounds the <b>compressed</b> payload at about
-     * 9.5 MiB, which says nothing about how far LZ4 expands it. Real traffic is
-     * nowhere near this — a whole 16-turn game measured about 250 KB across all
-     * of its deltas — so this default is generous by orders of magnitude and
-     * exists only to make the pathological case terminate.
-     *
-     * <p>This bounds bytes <i>read</i>, and so does not address a declared but
-     * unread allocation: {@code ObjectInputStream} sizes an array from the
-     * length the peer declares before reading any elements. That is
-     * {@link WireStreamLimits}'s job, not this one.
+     * <p>Bounds bytes <i>read</i>, so it cannot see a declared-but-unread
+     * allocation — that is {@link WireStreamLimits}'s job.
      */
     private static final long MAX_DECOMPRESSED_BYTES =
             Long.getLong("forge.net.maxDecompressedBytes", 64L * 1024 * 1024);
-
-    /** Fails the read rather than letting a decompression bomb size the heap. */
-    private static final class BoundedInputStream extends FilterInputStream {
-        private final long limit;
-        private long consumed;
-
-        BoundedInputStream(final InputStream in, final long limit) {
-            super(in);
-            this.limit = limit;
-        }
-
-        private void count(final long n) throws IOException {
-            if (n <= 0) {
-                return;
-            }
-            consumed += n;
-            if (consumed > limit) {
-                throw new IOException("Decompressed frame exceeds " + limit
-                        + " bytes; refusing to continue reading");
-            }
-        }
-
-        @Override
-        public int read() throws IOException {
-            final int b = super.read();
-            count(b < 0 ? 0 : 1);
-            return b;
-        }
-
-        @Override
-        public int read(final byte[] b, final int off, final int len) throws IOException {
-            final int n = super.read(b, off, len);
-            count(n);
-            return n;
-        }
-
-        @Override
-        public long skip(final long n) throws IOException {
-            final long skipped = super.skip(n);
-            count(skipped);
-            return skipped;
-        }
-    }
 
     private final ClassResolver classResolver;
     private volatile Tracker tracker;
@@ -111,8 +62,7 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
         long startMs = System.currentTimeMillis();
 
         ObjectInputStream objectIn = new CObjectInputStream(
-                new BoundedInputStream(
-                        new LZ4BlockInputStream(new ByteBufInputStream(frame, true)),
+                ByteStreams.limit(new LZ4BlockInputStream(new ByteBufInputStream(frame, true)),
                         MAX_DECOMPRESSED_BYTES),
                 this.classResolver, tracker);
 
@@ -126,6 +76,11 @@ public class CompatibleObjectDecoder extends LengthFieldBasedFrameDecoder implem
             // more of one than WireStreamLimits allows. Drop the frame rather
             // than tearing the pipeline down, matching a corrupt frame.
             netLog.error("Dropping refused frame: {}", e.getMessage());
+        } catch (EOFException e) {
+            // Truncated, or past the decompressed-byte ceiling: the bounded
+            // stream reports the cap as end-of-input rather than throwing.
+            netLog.error("Dropping truncated frame, or one over the {}-byte decompressed cap",
+                    MAX_DECOMPRESSED_BYTES);
         } finally {
             objectIn.close();
         }

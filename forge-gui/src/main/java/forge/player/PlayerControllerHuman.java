@@ -351,7 +351,7 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
             final boolean mayAssignToDefender = (attacker.hasKeyword(Keyword.TRAMPLE) && defender != null)
                     || (attacker.hasKeyword(DIVIDE_COMBAT_DAMAGE) && overrideOrder)
                     || (attacker.hasKeyword("Trample:Planeswalker") && defender instanceof Card);
-            if (RemoteAllocations.totalIfLegal(result.values(), damageDealt) == RemoteAllocations.ILLEGAL) {
+            if (!RemoteAllocations.allocatesAtMost(result.values(), damageDealt)) {
                 netLog.warn("Rejecting illegal combat damage assignment for {} (budget {}): {}",
                         attacker, damageDealt, result.values());
             } else if (!mayAssignToDefender && assignsToDefender(result)) {
@@ -385,7 +385,7 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
         if (vResult != null) { //fix for netplay
             // Same untrusted-proposal rule as combat damage: a peer must not be
             // able to shield for more than the effect grants.
-            if (RemoteAllocations.totalIfLegal(vResult.values(), shieldAmount) == RemoteAllocations.ILLEGAL) {
+            if (!RemoteAllocations.allocatesAtMost(vResult.values(), shieldAmount)) {
                 netLog.warn("Rejecting illegal shield allocation for {} (budget {}): {}",
                         effectSource, shieldAmount, vResult.values());
                 return result;
@@ -421,7 +421,7 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
         if (vResult != null) { //fix for netplay
             // Bound the split so a peer cannot conjure more mana than the
             // ability produces.
-            if (RemoteAllocations.totalIfLegal(vResult.values(), manaAmount) == RemoteAllocations.ILLEGAL) {
+            if (!RemoteAllocations.allocatesAtMost(vResult.values(), manaAmount)) {
                 netLog.warn("Rejecting illegal mana combo for {} (budget {}): {}",
                         sa, manaAmount, vResult.values());
                 vResult.clear();
@@ -2560,17 +2560,11 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
     }
 
     /**
-     * Apply a proposed division of {@code amount} among {@code targets},
-     * rejecting anything that is not a legal division.
-     *
-     * <p>Split out from {@link #chooseTargetsFor} so the rule can be tested
-     * without driving target selection through a GUI. In a network game
-     * {@code proposed} came from a remote peer, so it may allocate more than
-     * exists, allocate a negative share, or omit a target entirely. The last
-     * case used to store a null share against that target, since
-     * {@code addDividedAllocation} takes an {@code Integer} and does not
-     * complain — leaving a corrupt allocation to surface later rather than
-     * being refused here.
+     * Apply a proposed division of {@code amount} among {@code targets}. Split
+     * out of {@link #chooseTargetsFor} so the rule can be tested without
+     * driving target selection through a GUI. A missing share is refused here
+     * rather than stored: {@code addDividedAllocation} takes an
+     * {@code Integer}, so a null would corrupt the allocation silently.
      *
      * @return false if the proposal is rejected, leaving the caller to abort
      *         the targeting rather than commit a partial allocation

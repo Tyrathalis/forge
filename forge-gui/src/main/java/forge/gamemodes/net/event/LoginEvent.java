@@ -8,13 +8,9 @@ public class LoginEvent implements NetEvent {
     private final String version;
     private final boolean libgdx;
     /**
-     * Reconnect capability previously issued by this server via
-     * {@link SessionTokenEvent}, or null on a first join. A username alone is
-     * not a credential — it is public in the lobby — so the server requires
-     * this to hand back a disconnected seat.
-     *
-     * <p>Must be stripped with {@link #withoutToken()} before the server
-     * re-broadcasts a login to the rest of the lobby.
+     * Capability previously issued via {@link SessionTokenEvent}, or null on a
+     * first join. Must be stripped with {@link #withoutToken()} before the
+     * server re-broadcasts a login to the lobby.
      */
     private final String reconnectToken;
 
@@ -35,11 +31,7 @@ public class LoginEvent implements NetEvent {
         return reconnectToken;
     }
 
-    /**
-     * A copy with the capability removed, for the broadcast path. The server
-     * echoes a successful login to every client; echoing the token would
-     * publish it to the whole lobby.
-     */
+    /** A copy without the capability, for the broadcast path. */
     public LoginEvent withoutToken() {
         return reconnectToken == null ? this
                 : new LoginEvent(username, avatarIndex, sleeveIndex, version, libgdx, null);

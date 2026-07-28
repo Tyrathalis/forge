@@ -1,19 +1,13 @@
 package forge.gamemodes.net.event;
 
 /**
- * Server → one client. Carries the reconnect capability that the client must
- * present in a later {@link LoginEvent} to reclaim its seat after a
- * disconnect.
+ * Server → one client. Carries the reconnect capability the client presents in
+ * a later {@link LoginEvent} to reclaim its seat.
  *
- * <p>This event is <b>never broadcast</b>. It is minted per client and
- * delivered only to the client it belongs to; a broadcast would hand every
- * player every other player's capability, which is exactly the takeover this
- * is meant to prevent.
- *
- * <p>{@link #toString()} deliberately redacts the token: the protocol handler
- * logs every inbound message with {@code netLog.info("Received: {}", msg)},
- * so a naive toString would write capabilities to the network log in
- * plaintext.
+ * <p><b>Never broadcast</b>: that would hand every player every other player's
+ * capability, which is the takeover this exists to prevent.
+ * {@link #toString()} redacts for the same reason — the protocol handler logs
+ * every message it sees.
  */
 public class SessionTokenEvent implements NetEvent {
     private static final long serialVersionUID = 4114322205176351320L;

@@ -1,21 +1,20 @@
 package forge.util;
 
+import org.apache.commons.lang3.StringUtils;
+
 /**
  * Neutralises text that came from somewhere else before it reaches a log line
  * or a chat broadcast.
  *
- * <p>Log files are read as one record per line, so a value containing a
- * newline can forge an entry: a chat message of
- * {@code "hi\n21:04:11 [INFO ] Server: host granted admin to mallory"} lands
- * in the log looking exactly like something the server said. The same trick
- * works on a name that is echoed into chat. Neither is dramatic on its own,
- * but it makes a log useless as evidence precisely when someone would want to
- * read it.
+ * <p>Log files are read one record per line, so a value containing a newline
+ * can forge an entry that reads as something the server said; the same trick
+ * on a name echoed into chat draws fake system messages in other players'
+ * panes.
  *
- * <p>Two shapes, because the right answer differs:
- * {@link #forLog(String)} keeps the escapes visible so a reader can see what
- * was really sent, while {@link #forDisplay(String)} strips the control
- * characters outright since a UI has no use for them.
+ * <p>Two shapes because the right answer differs: {@link #forLog} keeps the
+ * escapes visible so a reader can see what was actually sent, while
+ * {@link #forDisplay} strips the control characters outright, since a UI has no
+ * use for them.
  */
 public final class LogSafe {
 
@@ -27,60 +26,39 @@ public final class LogSafe {
     private LogSafe() {
     }
 
-    /**
-     * Escape control characters and truncate, for text about to be logged.
-     * Newlines become a literal {@code \n} rather than a new record.
-     */
     public static String forLog(final String text) {
-        return forLog(text, DEFAULT_MAX_LENGTH);
+        return scrub(text, DEFAULT_MAX_LENGTH, true);
     }
 
     public static String forLog(final String text, final int maxLength) {
-        if (text == null) {
-            return null;
-        }
-        final String clipped = clip(text, maxLength);
-        final StringBuilder out = new StringBuilder(clipped.length() + 8);
-        for (int i = 0; i < clipped.length(); i++) {
-            final char c = clipped.charAt(i);
-            switch (c) {
-                case '\n': out.append("\\n"); break;
-                case '\r': out.append("\\r"); break;
-                case '\t': out.append("\\t"); break;
-                default:
-                    if (isControl(c)) {
-                        out.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        out.append(c);
-                    }
-            }
-        }
-        if (clipped.length() < text.length()) {
-            out.append(TRUNCATED);
-        }
-        return out.toString();
+        return scrub(text, maxLength, true);
     }
 
-    /**
-     * Drop control characters and truncate, for text about to be shown to
-     * other players. A chat line has no legitimate use for a carriage return,
-     * and allowing one lets a player draw fake system messages in someone
-     * else's chat pane.
-     */
     public static String forDisplay(final String text) {
-        return forDisplay(text, DEFAULT_MAX_LENGTH);
+        return scrub(text, DEFAULT_MAX_LENGTH, false);
     }
 
     public static String forDisplay(final String text, final int maxLength) {
+        return scrub(text, maxLength, false);
+    }
+
+    private static String scrub(final String text, final int maxLength, final boolean escape) {
         if (text == null) {
             return null;
         }
-        final String clipped = clip(text, maxLength);
-        final StringBuilder out = new StringBuilder(clipped.length());
+        final String clipped = StringUtils.truncate(text, maxLength);
+        final StringBuilder out = new StringBuilder(clipped.length() + 8);
         for (int i = 0; i < clipped.length(); i++) {
             final char c = clipped.charAt(i);
             if (!isControl(c)) {
                 out.append(c);
+            } else if (escape) {
+                switch (c) {
+                    case '\n': out.append("\\n"); break;
+                    case '\r': out.append("\\r"); break;
+                    case '\t': out.append("\\t"); break;
+                    default:   out.append(String.format("\\u%04x", (int) c));
+                }
             }
         }
         if (clipped.length() < text.length()) {
@@ -89,11 +67,11 @@ public final class LogSafe {
         return out.toString();
     }
 
-    private static String clip(final String text, final int maxLength) {
-        return text.length() <= maxLength ? text : text.substring(0, maxLength);
-    }
-
-    /** C0 controls, DEL, and the C1 range — none belong in a name or a chat line. */
+    /**
+     * C0 controls, DEL and the C1 range. Deliberately narrower than
+     * {@code StringEscapeUtils.escapeJava}, which escapes everything outside
+     * ASCII and would render a CJK player's name unreadable in every log line.
+     */
     private static boolean isControl(final char c) {
         return c < 0x20 || (c >= 0x7F && c <= 0x9F);
     }

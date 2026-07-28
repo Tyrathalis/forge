@@ -41,12 +41,9 @@ public class FGameClient implements IToServer, IHasForgeLog {
     private Channel channel;
 
     /**
-     * Capability issued by this server at login, presented on reconnect to
-     * reclaim our seat. Held in memory for an in-process rejoin and written
-     * through to preferences so that a client which crashed and restarted can
-     * still reclaim its seat inside the reconnect window — without that,
-     * requiring a token would be a straight regression against the previous
-     * reconnect-by-username behaviour.
+     * Capability issued at login, presented on reconnect to reclaim our seat.
+     * Held in memory for an in-process rejoin, and written through to
+     * preferences so a crashed-and-restarted client can still reclaim.
      */
     private volatile String reconnectToken;
 
