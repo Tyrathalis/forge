@@ -284,7 +284,7 @@ public class FCardPanel extends FDisplayObject {
                 percentage = 1;
                 progress = 0;
             }
-            float angle = -90 + (percentage * 90);
+            float angle = getTappedAngle() * (1 - percentage);
             g.startRotateTransform(x + edgeOffset, y + h - edgeOffset, angle);
             CardRenderer.drawCardWithOverlays(g, card, x, y, w, h, getStackPosition());
             g.endTransform();
