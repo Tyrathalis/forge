@@ -77,4 +77,31 @@ public class DeckSiteSyncTest {
         Assert.assertEquals(DeckSiteSyncer.sanitizeFolderName("boostcesar@gmail.com"), "boostcesar@gmail.com",
                 "email-style usernames exist in the wild and round-trip");
     }
+
+    @Test
+    public void usernameInputAcceptsArchidektUrls() {
+        //bare usernames pass through (trimmed), including dot/at-containing ones
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("Friend"), "Friend");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("  Friend  "), "Friend");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("boostcesar@gmail.com"), "boostcesar@gmail.com");
+        //the search page usernames actually link to on the site
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput(
+                "https://archidekt.com/search/decks?owner=Friend&ownerexact=true"), "Friend");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput(
+                "https://archidekt.com/search/decks?ownerexact=true&ownerUsername=Friend"), "Friend");
+        //percent-encoded values decode
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput(
+                "https://archidekt.com/search/decks?owner=My%20Friend"), "My Friend");
+        //profile-style paths, with and without scheme/www, trailing slash tolerated
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("https://archidekt.com/u/Friend"), "Friend");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("https://www.archidekt.com/user/Friend/"), "Friend");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("archidekt.com/u/Friend"), "Friend");
+        //unrecognized inputs come back verbatim so the sync error names them
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("https://archidekt.com/decks/123"),
+                "https://archidekt.com/decks/123", "a deck URL is not a username source");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("https://moxfield.com/u/Friend"),
+                "https://moxfield.com/u/Friend", "other sites pass through untouched");
+        Assert.assertEquals(DeckSiteSyncer.parseUsernameInput("http://[bad"), "http://[bad",
+                "unparseable URLs fall through verbatim");
+    }
 }

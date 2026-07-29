@@ -432,16 +432,18 @@ public class FDeckChooser extends FScreen {
                 Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"), "", null,
                 (Consumer<String>) username -> {
                     if (username == null || username.isBlank()) { return; } //null when cancelled
-                    syncDeckSiteUser(username.trim());
+                    //a pasted Archidekt profile/search URL is accepted too - the username is parsed out
+                    syncDeckSiteUser(DeckSiteSyncer.parseUsernameInput(username));
                 }, false);
     }
 
     private void syncDeckSiteUser(final String username) {
         //a first sync of N decks makes N+pages requests at a polite ~2s interval, so this can
         //take a while behind the overlay; re-syncs skip unchanged decks without any request
-        LoadingOverlay.runBackgroundTask(Forge.getLocalizer().getMessage("lblSyncingUserDecks", username), () -> {
+        LoadingOverlay.runBackgroundTask(Forge.getLocalizer().getMessage("lblSyncingUserDecks", username), loader -> {
             try {
-                final DeckSiteSyncer.Result result = DeckSiteSyncer.sync(username, null);
+                //the syncer's per-deck progress ("3/41: Deck Name") becomes the live overlay caption
+                final DeckSiteSyncer.Result result = DeckSiteSyncer.sync(username, loader::updateCaption);
                 FThreads.invokeInEdtLater(() -> {
                     if (selectedDeckType == DeckType.PROVIDED_DECK_URL) {
                         refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);

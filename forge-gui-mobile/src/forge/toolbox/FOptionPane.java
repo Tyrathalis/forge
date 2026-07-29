@@ -202,6 +202,10 @@ public class FOptionPane extends FDialog {
                 return true;
             }
         };
+        if (txtInput != null) {
+            //physical-keyboard Enter submits the dialog instead of only closing the field's edit mode
+            txtInput.setSubmitHandler(e -> optionPane.setResult(0));
+        }
         optionPane.show();
         if (txtInput != null) {
             txtInput.startEdit();

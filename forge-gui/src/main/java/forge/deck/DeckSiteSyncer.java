@@ -6,9 +6,14 @@ import forge.util.Localizer;
 import forge.util.storage.IStorage;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -42,6 +47,56 @@ public final class DeckSiteSyncer {
         public int total() {
             return created + updated + unchanged + failures.size();
         }
+    }
+
+    /**
+     * Accepts either a bare username or a pasted Archidekt URL that names one -
+     * the search page usernames link to ({@code /search/decks?owner=NAME} or
+     * {@code ownerUsername=NAME}) or a {@code /u/NAME} / {@code /user/NAME}
+     * profile path. Anything unrecognized comes back verbatim, so the sync's
+     * own "no public decks found" error names exactly what was entered.
+     */
+    public static String parseUsernameInput(final String raw) {
+        final String input = raw == null ? "" : raw.trim();
+        if (!input.contains("/") && !input.contains("?")) {
+            return input; //a plain username
+        }
+        try {
+            final URI uri = new URI(input.contains("://") ? input : "https://" + input);
+            final String host = uri.getHost();
+            if (host == null || !(host.equalsIgnoreCase("archidekt.com") || host.toLowerCase(Locale.ROOT).endsWith(".archidekt.com"))) {
+                return input;
+            }
+            final String query = uri.getRawQuery();
+            if (query != null) {
+                for (final String pair : query.split("&")) {
+                    final int eq = pair.indexOf('=');
+                    final String key = eq < 0 ? pair : pair.substring(0, eq);
+                    if (("owner".equals(key) || "ownerUsername".equals(key)) && eq >= 0) {
+                        final String value = URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+                        if (!value.isBlank()) {
+                            return value.trim();
+                        }
+                    }
+                }
+            }
+            final String path = uri.getPath();
+            if (path != null) {
+                final String[] segments = path.split("/");
+                final List<String> nonEmpty = new ArrayList<>();
+                for (final String segment : segments) {
+                    if (!segment.isEmpty()) {
+                        nonEmpty.add(segment);
+                    }
+                }
+                if (nonEmpty.size() >= 2 && ("u".equals(nonEmpty.get(0)) || "user".equals(nonEmpty.get(0)))) {
+                    return URLDecoder.decode(nonEmpty.get(1), StandardCharsets.UTF_8).trim();
+                }
+            }
+        } catch (final URISyntaxException ignored) {
+            //fall through - hand the raw input to the sync so its error names it
+        }
+        return input;
     }
 
     public static Result sync(final String username, final Consumer<String> progress) throws IOException {
