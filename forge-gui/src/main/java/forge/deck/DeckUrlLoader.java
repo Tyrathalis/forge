@@ -47,20 +47,48 @@ public final class DeckUrlLoader {
     public static List<DeckProxy> getUrlDecks() {
         final List<DeckProxy> decks = new ArrayList<>();
         final StorageImmediatelySerialized<Deck> storage = getStorage();
-        addDeckProxies(decks, storage);
+        addDeckProxies(decks, storage, "");
         for (final IStorage<Deck> userFolder : storage.getFolders()) {
-            addDeckProxies(decks, userFolder);
+            addDeckProxies(decks, userFolder, userFolder.getName());
             for (final IStorage<Deck> subfolder : userFolder.getFolders()) {
-                addDeckProxies(decks, subfolder);
+                addDeckProxies(decks, subfolder, userFolder.getName() + "/" + subfolder.getName());
             }
         }
         return decks;
     }
 
-    private static void addDeckProxies(final List<DeckProxy> decks, final IStorage<Deck> storage) {
+    private static void addDeckProxies(final List<DeckProxy> decks, final IStorage<Deck> storage, final String path) {
         for (final Deck deck : storage) {
-            decks.add(new DeckProxy(deck, localizer.getMessage("lblUrlDeck"), GameType.Constructed, storage));
+            //path carries the folder so the chooser can offer per-folder actions (delete a synced user)
+            decks.add(new DeckProxy(deck, localizer.getMessage("lblUrlDeck"), GameType.Constructed, path, storage));
         }
+    }
+
+    /** Deletes every deck in the named top-level folder of the given store (and its
+     *  subfolders, e.g. Unsorted/), then removes the folder itself. Returns the
+     *  number of decks deleted, or -1 if the folder does not exist. */
+    public static int deleteFolder(final StorageImmediatelySerialized<Deck> storage, final String folderName) {
+        final IStorage<Deck> folder = storage.getFolders().get(folderName);
+        if (folder == null) {
+            return -1;
+        }
+        int deleted = 0;
+        for (final IStorage<Deck> subfolder : folder.getFolders()) {
+            deleted += deleteAllDecks(subfolder);
+            folder.getFolders().delete(subfolder.getName());
+        }
+        deleted += deleteAllDecks(folder);
+        storage.getFolders().delete(folderName);
+        return deleted;
+    }
+
+    private static int deleteAllDecks(final IStorage<Deck> folder) {
+        int deleted = 0;
+        for (final String name : new ArrayList<>(folder.getItemNames())) {
+            folder.delete(name);
+            deleted++;
+        }
+        return deleted;
     }
 
     private static DeckUrlProvider getProvider(final String normalizedUrl) throws IOException {

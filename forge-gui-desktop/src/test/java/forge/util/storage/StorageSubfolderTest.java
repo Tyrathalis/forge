@@ -52,6 +52,31 @@ public class StorageSubfolderTest {
         }
     }
 
+    @Test
+    public void deleteFolderRemovesDecksSubfoldersAndDirectory() throws Exception {
+        final File root = Files.createTempDirectory("urlstore").toFile();
+        try {
+            final StorageImmediatelySerialized<Deck> store = openStore(root);
+            store.add(new Deck("Root Deck"));
+            final IStorage<Deck> user = store.getFolderOrCreate("SomeUser");
+            user.add(new Deck("Deck A"));
+            user.add(new Deck("Deck B"));
+            store.getFolderOrCreate("SomeUser/Unsorted").add(new Deck("Odd Deck"));
+
+            Assert.assertEquals(forge.deck.DeckUrlLoader.deleteFolder(openStore(root), "SomeUser"), 3);
+            Assert.assertFalse(new File(root, "SomeUser").exists(), "folder directory must be removed");
+            Assert.assertTrue(new File(root, "Root Deck.dck").isFile(), "decks outside the folder are untouched");
+
+            final StorageImmediatelySerialized<Deck> reload = openStore(root);
+            Assert.assertNull(reload.tryGetFolder("SomeUser"));
+            Assert.assertNotNull(reload.get("Root Deck"));
+
+            Assert.assertEquals(forge.deck.DeckUrlLoader.deleteFolder(reload, "NoSuchUser"), -1);
+        } finally {
+            deleteRecursively(root);
+        }
+    }
+
     private static void deleteRecursively(File dir) {
         final File[] children = dir.listFiles();
         if (children != null) {

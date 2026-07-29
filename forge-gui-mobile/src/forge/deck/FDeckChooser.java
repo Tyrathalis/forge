@@ -500,7 +500,58 @@ public class FDeckChooser extends FScreen {
         case SEALED_DECK:
             editDeck(deck);
             break;
+        case PROVIDED_DECK_URL:
+            promptForUrlDeckAction(deck);
+            break;
         default:
+            duplicateToEditableDeck(deck);
+            break;
+        }
+    }
+
+    /** URL-imported decks are read-only snapshots of a deck site: editing duplicates them,
+     *  and this is the only place they can be deleted (the editor's delete is unreachable). */
+    private void promptForUrlDeckAction(final DeckProxy deck) {
+        final String path = deck.getPath();
+        final String folder = path == null || path.isEmpty() ? null : path.split("/")[0];
+        final List<String> options = new ArrayList<>();
+        options.add(Forge.getLocalizer().getMessage("lblDuplicate"));
+        options.add(Forge.getLocalizer().getMessage("lblDeleteDeck"));
+        if (folder != null) {
+            options.add(Forge.getLocalizer().getMessage("lblDeleteSyncedFolder", folder));
+        }
+        options.add(Forge.getLocalizer().getMessage("lblCancel"));
+        FOptionPane.showOptionDialog(deck.getName(), Forge.getLocalizer().getMessage("btnEditDeck"), null,
+                options, options.size() - 1, result -> {
+            if (result == 0) {
+                duplicateToEditableDeck(deck);
+            } else if (result == 1) {
+                FOptionPane.showConfirmDialog(
+                        Forge.getLocalizer().getMessage("lblConfirmDelete") + " '" + deck.getName() + "'?",
+                        Forge.getLocalizer().getMessage("lblDeleteDeck"),
+                        Forge.getLocalizer().getMessage("lblDelete"),
+                        Forge.getLocalizer().getMessage("lblCancel"), false, confirmed -> {
+                    if (confirmed) {
+                        deck.deleteFromStorage();
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                });
+            } else if (folder != null && result == 2) {
+                FOptionPane.showConfirmDialog(
+                        Forge.getLocalizer().getMessage("lblConfirmDeleteSyncedFolder", folder),
+                        Forge.getLocalizer().getMessage("lblDeleteSyncedFolder", folder),
+                        Forge.getLocalizer().getMessage("lblDelete"),
+                        Forge.getLocalizer().getMessage("lblCancel"), false, confirmed -> {
+                    if (confirmed) {
+                        DeckUrlLoader.deleteFolder(DeckUrlLoader.getStorage(), folder);
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                });
+            }
+        });
+    }
+
+    private void duplicateToEditableDeck(final DeckProxy deck) {
             final DeckType fallbackType = lstDecks.getGameType() == GameType.DeckManager ? DeckType.CONSTRUCTED_DECK : DeckType.CUSTOM_DECK;
 
             //see if deck with selected name exists already
@@ -542,8 +593,6 @@ public class FDeckChooser extends FScreen {
                             editDeck(new DeckProxy(copiedDeck, "Constructed", lstDecks.getGameType(), storage));
                         }
                     });
-            break;
-        }
     }
 
     private FDeckEditor.DeckEditorConfig getEditorConfig() {
