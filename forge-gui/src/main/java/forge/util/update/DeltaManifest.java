@@ -100,7 +100,7 @@ public final class DeltaManifest {
                 throw new IOException("Malformed manifest size: " + line);
             }
             final String path = parts[2];
-            if (path.contains("..") || path.startsWith("/") || path.contains("\\")) {
+            if (isUnsafePath(path)) {
                 throw new IOException("Refusing unsafe manifest path: " + path);
             }
             entries.put(path, new Entry(parts[0].toLowerCase(), size, path));
@@ -112,6 +112,20 @@ public final class DeltaManifest {
             throw new IOException("Empty delta manifest");
         }
         return new DeltaManifest(version, commit, jarPath, entries);
+    }
+
+    /** Traversal must be judged per path SEGMENT - real res files (wastetown..tmx)
+     *  contain ".." as a substring and are legitimate. */
+    private static boolean isUnsafePath(final String path) {
+        if (path.isBlank() || path.startsWith("/") || path.contains("\\")) {
+            return true;
+        }
+        for (final String segment : path.split("/")) {
+            if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

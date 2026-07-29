@@ -43,8 +43,26 @@ public class DeltaUpdateTest {
         Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(
                 DeltaManifest.HEADER + "\nAA\t1\t../escape"));
         Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(
+                DeltaManifest.HEADER + "\nAA\t1\tres/../escape"));
+        Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(
+                DeltaManifest.HEADER + "\nAA\t1\t/etc/passwd"));
+        Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(
+                DeltaManifest.HEADER + "\nAA\t1\tres\\escape"));
+        Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(
                 DeltaManifest.HEADER + "\nAA\tnotanumber\tres/x"));
         Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(DeltaManifest.HEADER));
+    }
+
+    @Test
+    public void dotsInsideFilenamesAreNotTraversal() throws Exception {
+        //the res tree really contains res/adventure/common/maps/map/aerie/wastetown..tmx;
+        //a substring ".." check rejected it and aborted every live delta plan
+        final DeltaManifest manifest = DeltaManifest.parse(String.join("\n",
+                DeltaManifest.HEADER,
+                "AA\t1\tres/adventure/common/maps/map/aerie/wastetown..tmx",
+                "BB\t2\tres/cards/some..card.txt"));
+        Assert.assertNotNull(manifest.getEntry("res/adventure/common/maps/map/aerie/wastetown..tmx"));
+        Assert.assertNotNull(manifest.getEntry("res/cards/some..card.txt"));
     }
 
     @Test
