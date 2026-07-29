@@ -56,8 +56,12 @@ public class LoadingOverlay extends FOverlay {
         final LoadingOverlay loader = new LoadingOverlay(caption0, true);
         loader.show();
         FThreads.invokeInBackgroundThread(() -> {
-            task.run();
-            FThreads.invokeInEdtLater(loader::hide);
+            try {
+                task.run();
+            } finally {
+                //hide on the error path too - a modal overlay left up would block the bug-report dialog
+                FThreads.invokeInEdtLater(loader::hide);
+            }
         });
     }
 
