@@ -16,6 +16,7 @@ import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgeConstants;
 import forge.localinstance.properties.ForgePreferences;
 import forge.model.FModel;
+import forge.screens.match.MatchController;
 import forge.sound.SoundSystem;
 
 import java.io.IOException;
@@ -331,7 +332,29 @@ public class SettingsScene extends UIScene {
 
         if (!GuiBase.isAndroid()) {
             addCheckBox(Forge.getLocalizer().getMessage("lblBattlefieldTextureFiltering"), ForgePreferences.FPref.UI_LIBGDX_TEXTURE_FILTERING);
-            //addCheckBox(Forge.getLocalizer().getMessage("lblAltZoneTabs"), ForgePreferences.FPref.UI_ALT_PLAYERZONETABS);
+            //revived as a three-value selector - the old checkbox predates the pref widening to Off/Vertical/Horizontal.
+            //adventure boot forces mode Vertical while the pref still holds a legacy boolean, so mirror that here
+            String zoneTabPref = FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS);
+            if (!"Off".equals(zoneTabPref) && !"Vertical".equals(zoneTabPref) && !"Horizontal".equals(zoneTabPref)) {
+                zoneTabPref = "Vertical";
+            }
+            SelectBox<String> altZoneTabs = Controls.newComboBox(new String[]{"Off", "Vertical", "Horizontal"},
+                    zoneTabPref, o -> {
+                String mode = (String) o;
+                if (mode != null && !mode.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS))) {
+                    FModel.getPreferences().setPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS, mode);
+                    FModel.getPreferences().save();
+                }
+                if (mode != null) {
+                    Forge.setAltZoneTabMode(mode);
+                    if (MatchController.instance != null) {
+                        MatchController.instance.resetPlayerPanels();
+                    }
+                }
+                return null;
+            });
+            addLabel(Forge.getLocalizer().getMessage("lblAltZoneTabs"));
+            settingGroup.add(altZoneTabs).align(Align.right).pad(2);
         } else {
             addCheckBox(Forge.getLocalizer().getMessage("lblLandscapeMode") + " (" +
                 Forge.getLocalizer().getMessage("lblRestartRequired") + ")",
