@@ -1438,24 +1438,28 @@ public class Graphics {
 
     public void startRotateTransform(float originX, float originY, float rotation) {
         batch.end();
-        Dtransforms.addFirst(new Matrix4(batch.getTransformMatrix().idt())); //startshape is using this above as reference
+        //save the CURRENT matrix (not identity) so nested transforms compose: a tapped card
+        //inside a 180-rotated player panel must rotate within that panel's frame, and the
+        //stack dropdown inside the rotate-90 header must draw within the header's frame.
+        //the old idt() here made every inner transform silently wipe its outer one.
+        Dtransforms.addFirst(new Matrix4(batch.getTransformMatrix()));
         transformCount++;
-        batch.getTransformMatrix().idt().translate(adjustX(originX), adjustY(originY, 0), 0).rotate(Vector3.Z, rotation).translate(-adjustX(originX), -adjustY(originY, 0), 0);
+        batch.getTransformMatrix().translate(adjustX(originX), adjustY(originY, 0), 0).rotate(Vector3.Z, rotation).translate(-adjustX(originX), -adjustY(originY, 0), 0);
         batch.begin();
     }
 
     public void endTransform() {
         batch.end();
-        shapeRenderer.setTransformMatrix(batch.getTransformMatrix().idt());
-        Dtransforms.removeFirst();
+        Matrix4 restored = Dtransforms.removeFirst();
         transformCount--;
         if (transformCount != Dtransforms.size()) {
             System.err.printf("Stack count: %d, transformCount: %d%n", Dtransforms.size(), transformCount);
             transformCount = 0;
             Dtransforms.clear();
+            restored = new Matrix4();
         }
-        batch.getTransformMatrix().idt(); //reset
-        shapeRenderer.getTransformMatrix().idt(); //reset
+        batch.getTransformMatrix().set(restored); //restore the enclosing transform (identity at the outermost level)
+        shapeRenderer.setTransformMatrix(restored);
         batch.begin();
     }
 

@@ -599,13 +599,11 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
             return getTargetingArrowOrigin(this, isTapped(), getTappedAngle(), displayArea.rotateCards180);
         }
 
-        @Override
-        protected float getTappedAngle() {
-            if (displayArea != null && displayArea.rotateCards180) {
-                return -super.getTappedAngle(); //reverse tap angle if rotated 180 degrees
-            }
-            return super.getTappedAngle();
-        }
+        //no getTappedAngle override for rotated fields: the old negation emulated transform
+        //composition under Graphics' broken nested transforms (the inner idt wiped the outer
+        //180) and was only exact at 90 degrees. With nesting fixed, the plain angle inside
+        //the outer 180 wrap gives the table look at every angle - and at 90 it is
+        //pixel-identical to the old rendering (180-90 == bare +90).
 
         @Override
         protected boolean renderedCardContains(float x, float y) {
