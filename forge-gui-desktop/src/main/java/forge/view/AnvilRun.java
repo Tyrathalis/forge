@@ -606,6 +606,11 @@ public final class AnvilRun {
                     copy = new GameCopier(game).makeCopy();
                 } catch (Throwable t) {
                     crashes++;
+                    if (Boolean.getBoolean("anvil.crash.trace")) {
+                        System.err.println("[rollout] copy crash g" + gameIdx
+                                + " fp" + myFp + " r" + r + ":");
+                        t.printStackTrace();
+                    }
                     MyRandom.setRandom(restoreRng(rngState));
                     continue;
                 }
@@ -658,6 +663,11 @@ public final class AnvilRun {
                     }
                 } catch (Throwable t) {
                     crashes++;
+                    if (Boolean.getBoolean("anvil.crash.trace")) {
+                        System.err.println("[rollout] completion crash g" + gameIdx
+                                + " fp" + myFp + " r" + r + ":");
+                        t.printStackTrace();
+                    }
                 } finally {
                     clock.cancel(false);
                     if (!copy.isGameOver()) {

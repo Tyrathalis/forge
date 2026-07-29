@@ -2784,9 +2784,14 @@ public class Player extends GameEntity implements Comparable<Player> {
     }
 
     private static Card mapEffectCard(Card effect, Function<Card, Card> mapper) {
-        // An effect card in no zone was not part of the copy; leave the
+        // An effect card that is not part of the copied game must leave the
         // snapshot's field unset so its lazy creation path stays consistent.
-        return effect == null || effect.getZone() == null ? null : mapper.apply(effect);
+        // Membership in the zone's card list is the test — NOT the card's
+        // zone pointer: Zone.remove() never clears it, so after a monarchy/
+        // initiative transfer the ex-holder's cached effect card keeps a
+        // stale zone reference and mapping it throws "Couldn't map".
+        return effect == null || effect.getZone() == null
+                || !effect.getZone().contains(effect) ? null : mapper.apply(effect);
     }
 
     public void addCommander(Card commander) {
