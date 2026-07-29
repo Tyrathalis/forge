@@ -99,6 +99,7 @@ public final class AnvilRun {
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
+                    + "[-drillfile <txt> [-drillstop]] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -148,6 +149,42 @@ public final class AnvilRun {
         int rolloutPoints = params.containsKey("points")
                 ? Integer.parseInt(params.get("points").get(0)) : 4;
         boolean rolloutReshuffle = !params.containsKey("noreshuffle");
+
+        // Drill mode (M4 D2): -drillfile gives explicit per-game fork turns
+        // ("<index> <t1>[,<t2>...]" per line, '#' comments) in place of
+        // -points sampling; indices absent from the file are skipped without
+        // creating a game (a "drill_skip" results row keeps harness resume
+        // accounting exact). -drillstop ends the mainline right after its
+        // last fork point — the completions are the product, the rest of the
+        // replay is waste.
+        Map<Integer, int[]> drillTargets = null;
+        if (params.containsKey("drillfile")) {
+            if (rolloutK <= 0) {
+                System.err.println("FATAL: -drillfile requires -rollout <k>");
+                System.exit(2);
+            }
+            drillTargets = new HashMap<>();
+            try {
+                for (String line : java.nio.file.Files.readAllLines(
+                        java.nio.file.Paths.get(params.get("drillfile").get(0)))) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) {
+                        continue;
+                    }
+                    String[] parts = line.split("\\s+");
+                    String[] ts = parts[1].split(",");
+                    int[] turns = new int[ts.length];
+                    for (int j = 0; j < ts.length; j++) {
+                        turns[j] = Integer.parseInt(ts[j]);
+                    }
+                    drillTargets.put(Integer.parseInt(parts[0]), turns);
+                }
+            } catch (java.io.IOException | RuntimeException e) {
+                System.err.println("FATAL: cannot read drillfile: " + e);
+                System.exit(2);
+            }
+        }
+        boolean drillStop = params.containsKey("drillstop");
 
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
@@ -293,6 +330,17 @@ public final class AnvilRun {
                 int idx = rangeStart + g;
                 long seed = seedBase != null
                         ? splitmix64(seedBase + idx * 0x9E3779B97F4A7C15L) : legacyBaseSeed + idx;
+                if (drillTargets != null && !drillTargets.containsKey(idx)) {
+                    tally.merge("drill_skip", 1, Integer::sum);
+                    if (results != null) {
+                        results.println("{\"i\":" + idx + ",\"seed\":" + seed
+                                + ",\"status\":\"drill_skip\",\"winner\":null"
+                                + ",\"turns\":0,\"ms\":0,\"draw_clock\":false"
+                                + ",\"decks\":[],\"profiles\":[]}");
+                        results.flush();
+                    }
+                    continue;
+                }
                 MyRandom.setRandom(new Random(seed));
 
                 String[] pair = pairNames.get((int) ((idx / (long) gamesPerPair) % pairNames.size()));
@@ -336,16 +384,18 @@ public final class AnvilRun {
                 Obs.startGame(idx, seed, game, type.toString());
                 long gameT0 = System.currentTimeMillis();
                 bridge.gameStart("g" + idx, seed);
+                int[] drillTurns = drillTargets != null ? drillTargets.get(idx) : null;
                 if (rolloutK > 0) {
                     game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
-                            type.toString(), labels, watchdogs));
+                            type.toString(), labels, watchdogs, drillTurns, drillStop));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
                 // below the per-rollout timeout, so a pathological point can't
                 // eat the whole game budget).
-                int extraS = rolloutK > 0 ? rolloutPoints * rolloutK * 45 : 0;
+                int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
+                int extraS = rolloutK > 0 ? fpBudget * rolloutK * 45 : 0;
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
                     drawClockHit[0] = true;
@@ -467,12 +517,14 @@ public final class AnvilRun {
         final String fmt;
         final PrintWriter labels;
         final ScheduledExecutorService watchdogs;
+        final boolean stopAfter;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
         RolloutMonitor(Game game, int gameIdx, long seed, int k, int points,
                 boolean reshuffle, AnvilBridge bridge, String fmt,
-                PrintWriter labels, ScheduledExecutorService watchdogs) {
+                PrintWriter labels, ScheduledExecutorService watchdogs,
+                int[] drillTurns, boolean stopAfter) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -482,11 +534,19 @@ public final class AnvilRun {
             this.fmt = fmt;
             this.labels = labels;
             this.watchdogs = watchdogs;
-            // Target turns from a meta-RNG (pure function of the game seed —
-            // never perturbs game randomness); distinct turns in [2, 16].
-            Random meta = new Random(splitmix64(seed ^ 0xD4D4D4D4D4D4D4D4L));
-            while (targets.size() < Math.min(points, 15)) {
-                targets.add(2 + meta.nextInt(15));
+            this.stopAfter = stopAfter;
+            if (drillTurns != null) {
+                // Drill mode: explicit fork turns from the manifest.
+                for (int t : drillTurns) {
+                    targets.add(t);
+                }
+            } else {
+                // Target turns from a meta-RNG (pure function of the game seed —
+                // never perturbs game randomness); distinct turns in [2, 16].
+                Random meta = new Random(splitmix64(seed ^ 0xD4D4D4D4D4D4D4D4L));
+                while (targets.size() < Math.min(points, 15)) {
+                    targets.add(2 + meta.nextInt(15));
+                }
             }
         }
 
@@ -515,13 +575,20 @@ public final class AnvilRun {
                 return;
             }
             int turn = ph.getTurn();
+            int targetTurn = targets.first();
             while (!targets.isEmpty() && targets.first() <= turn) {
                 targets.pollFirst();
             }
-            doRollouts(turn);
+            doRollouts(turn, targetTurn);
+            if (stopAfter && targets.isEmpty()) {
+                // Drill mode: the completions are the product; don't replay
+                // the rest of the mainline. Draw end keeps the results row
+                // obviously non-decisive.
+                game.setGameOver(GameEndReason.Draw);
+            }
         }
 
-        private void doRollouts(int turn) {
+        private void doRollouts(int turn, int targetTurn) {
             int myFp = fp++;
             // The mark keys this fork point to the NEXT mainline priority
             // window in the obs stream (the label's training window).
@@ -609,6 +676,7 @@ public final class AnvilRun {
                         .append(",\"seed\":").append(seed)
                         .append(",\"fp\":").append(myFp)
                         .append(",\"t\":").append(turn)
+                        .append(",\"tt\":").append(targetTurn)
                         .append(",\"k\":").append(k)
                         .append(",\"w\":[");
                 for (int j = 0; j < wins.length; j++) {
