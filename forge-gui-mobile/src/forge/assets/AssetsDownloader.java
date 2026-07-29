@@ -97,7 +97,10 @@ public class AssetsDownloader {
                     snapsBuildDate = snapsTimestamp.toString();
                     if (!GuiBase.isAndroid()) {
                         buildDate = BuildInfo.getTimestamp().toString();
-                        verifyUpdatable = BuildInfo.verifyTimestamp(snapsTimestamp);
+                        //the delta updater prices updates exactly, so any strictly-newer build is
+                        //worth offering (upstream's >23h rule shielded users from same-day full
+                        //re-pulls); an empty delta plan below still means "current" either way
+                        verifyUpdatable = BuildInfo.getTimestamp() != null && snapsTimestamp.after(BuildInfo.getTimestamp());
                     } else {
                         if (buildTxtFileHandle.exists()) {
                             buildTimeStamp = format.parse(buildTxtFileHandle.readString());
@@ -121,6 +124,11 @@ public class AssetsDownloader {
                     DeltaUpdater.Plan deltaPlan = null;
                     if (!GuiBase.isAndroid() && isSnapshots) {
                         deltaPlan = prepareDeltaPlan(snapsURL);
+                        if (deltaPlan != null && deltaPlan.fileCount() == 0) {
+                            //timestamps disagree but every file already matches - silently current
+                            run(runnable);
+                            return;
+                        }
                     }
 
                     message = "A new version of Forge is available.\n(v." + version + " | " + snapsBuildDate + ")\n" +
@@ -140,11 +148,6 @@ public class AssetsDownloader {
                             run(runnable);
                     } else if (SOptionPane.showConfirmDialog(message, "New Version Available", "Update Now", "Update Later", true, true)) {
                         if (deltaPlan != null) {
-                            if (deltaPlan.fileCount() == 0) {
-                                //timestamps disagreed but every file already matches - nothing to do
-                                run(runnable);
-                                return;
-                            }
                             if (executeDeltaUpdate(deltaPlan, snapsURL)) {
                                 return; //applied; restarting or handing off to the applier
                             }
