@@ -79,6 +79,21 @@ public final class Obs {
     private static long rawBytes;
     private static long obsErrors;
 
+    // ---- M4 D3 fork-session store: drill completions as frames of their
+    // own, in a SEPARATE file — the mainline's zstd frame is open while a
+    // fork plays out, so fork records cannot interleave into the main
+    // stream. One fork session runs at a time (the mainline blocks), so a
+    // single set of statics suffices, mirroring the mainline set above.
+    private static FileOutputStream forkFile;
+    private static PrintWriter forkIdx;
+    private static long forkFileOffset;
+    private static CountingStream forkCounting;
+    private static OutputStream forkFrame;
+    private static int forkGameIdx = -1;
+    private static long forkGameSeed;
+    private static long forkRecs;
+    private static long forkRawBytes;
+
     // ---- M1 D8 bridge support: wire-record capture, oi labels, history ring ----
     /** = anvil.encoder.transform.HISTORY_K; the wire observation carries the
      *  last K prior decisions so the server featurizes identically to
@@ -105,9 +120,12 @@ public final class Obs {
 
     /** Per-game record-building state. store=true is the (single) corpus
      *  game whose records go to the zstd frame; store=false is a wire-only
-     *  session (forked rollout) whose records exist only for the bridge. */
+     *  session (forked rollout) whose records exist only for the bridge —
+     *  unless forkStore is set (M4 D3): then its records ALSO stream to the
+     *  fork frame file as a store frame of their own. */
     private static final class Session {
         final boolean store;
+        final boolean forkStore;
         final String wireId; // null for store sessions ("g<idx>" on the wire)
         long seq;            // per-game; "s" joins dec/ret
         final java.util.ArrayDeque<HistEntry> histRing = new java.util.ArrayDeque<>();
@@ -119,7 +137,12 @@ public final class Obs {
         String headerRecord;
 
         Session(boolean store, String wireId) {
+            this(store, wireId, false);
+        }
+
+        Session(boolean store, String wireId, boolean forkStore) {
             this.store = store;
+            this.forkStore = forkStore;
             this.wireId = wireId;
         }
     }
@@ -171,8 +194,35 @@ public final class Obs {
             }
             file = null;
         }
+        closeForks();
         if (obsErrors > 0) {
             System.err.println("Obs: " + obsErrors + " observation serialization errors (obs:null records)");
+        }
+    }
+
+    /** Opens the fork-session frame file (M4 D3, -forkobs); same layout as
+     *  the mainline obs file, sibling index sidecar. */
+    public static synchronized void openForks(String path) throws IOException {
+        forkFile = new FileOutputStream(path, true);
+        forkFileOffset = forkFile.getChannel().position();
+        String idxPath = path.endsWith(".zst")
+                ? path.substring(0, path.length() - 4) + ".idx.jsonl" : path + ".idx.jsonl";
+        forkIdx = new PrintWriter(new FileWriter(idxPath, true));
+    }
+
+    public static synchronized void closeForks() {
+        endForkFrame();
+        if (forkIdx != null) {
+            forkIdx.flush();
+            forkIdx.close();
+            forkIdx = null;
+        }
+        if (forkFile != null) {
+            try {
+                forkFile.close();
+            } catch (IOException ignored) {
+            }
+            forkFile = null;
         }
     }
 
@@ -243,6 +293,79 @@ public final class Obs {
         if (lastStartedSession == s) {
             lastStartedSession = null;
         }
+    }
+
+    /**
+     * Fork-session store variant of startWireGame (M4 D3, -forkobs): the
+     * session behaves exactly like a wire session for the bridge (parent
+     * hist-ring seed, wid announce), and ADDITIONALLY streams its records to
+     * the fork frame file as a store frame keyed by a synthetic unique game
+     * index. The header carries fork provenance ({"fork":{pg,fp,r,tt}}) and
+     * the completion's OWN seed (the rollout RNG seed — per-completion
+     * unique, so server-side sampled noise decorrelates across the K
+     * completions). Dec records in fork frames carry the serve-time "hist"
+     * verbatim (the wire composite): the first windows' history includes
+     * parent-game entries a loader-side reconstruction could never see.
+     */
+    public static synchronized void startForkGame(Game g, String wireId, int synthG,
+            long rollSeed, String fmt, Game parent, int parentG, int fp, int r, int tt) {
+        if (forkFile == null) {
+            startWireGame(g, wireId, rollSeed, fmt, parent);
+            return;
+        }
+        endForkFrame(); // defensive: a crashed completion may not have closed
+        Session s = new Session(false, wireId, true);
+        Session ps = parent == null ? null : sessions.get(parent);
+        if (ps != null) {
+            for (HistEntry h : ps.histRing) {
+                HistEntry c = new HistEntry(h.m, h.p);
+                c.host = h.host;
+                s.histRing.addLast(c);
+            }
+        }
+        StringBuilder sb = buildHeader(synthG, rollSeed, g, fmt, wireId);
+        sb.setLength(sb.length() - 1);
+        sb.append(",\"fork\":{\"pg\":").append(parentG).append(",\"fp\":").append(fp)
+                .append(",\"r\":").append(r).append(",\"tt\":").append(tt).append("}}");
+        s.headerRecord = sb.toString();
+        sessions.put(g, s);
+        lastStartedSession = s;
+        forkGameIdx = synthG;
+        forkGameSeed = rollSeed;
+        forkRecs = 0;
+        forkRawBytes = 0;
+        forkCounting = new CountingStream(forkFile);
+        try {
+            forkFrame = new ZstdOutputStream(forkCounting, ZSTD_LEVEL);
+        } catch (IOException e) {
+            System.err.println("Obs: cannot open fork frame for game " + synthG + ": " + e);
+            forkFrame = null;
+            forkCounting = null;
+            return;
+        }
+        writeFork(sb);
+    }
+
+    /** Ends a fork-store session: writes the end record (status/winner from
+     *  the driver, which computed the completion outcome) and closes the
+     *  frame. Follow with endWireGame(g) for session cleanup — safe to call
+     *  from a finally that also covers the plain-wire path. */
+    public static synchronized void endForkGame(Game g, String status, int winnerIdx,
+            int turns, long ms) {
+        Session s = sessions.get(g);
+        if (s == null || !s.forkStore) {
+            return;
+        }
+        if (forkFrame != null) {
+            StringBuilder sb = new StringBuilder(128);
+            sb.append("{\"k\":\"end\",\"status\":").append(q(status))
+                    .append(",\"winner\":").append(winnerIdx)
+                    .append(",\"turns\":").append(turns)
+                    .append(",\"ms\":").append(ms).append('}');
+            writeFork(sb);
+        }
+        endForkFrame();
+        endWireGame(g);
     }
 
     /** The "game" header record; wire sessions carry a "wid" field (the
@@ -514,6 +637,11 @@ public final class Obs {
         }
         if (ses.store) {
             write(sb);
+        } else if (ses.forkStore && forkFrame != null) {
+            // Fork frames store the WIRE composite (dec + serve-time hist):
+            // the first windows' history includes parent-game entries a
+            // loader-side reconstruction from frame records could never see.
+            writeFork(new StringBuilder(lastDecOf(ses)));
         }
         return s;
     }
@@ -538,7 +666,9 @@ public final class Obs {
         if (ses == null || s < 0) {
             return;
         }
-        if (ses.store && frame != null) {
+        boolean toStore = ses.store && frame != null;
+        boolean toFork = ses.forkStore && forkFrame != null;
+        if (toStore || toFork) {
             StringBuilder sb = new StringBuilder(160);
             sb.append("{\"k\":\"ret\",\"s\":").append(s).append(",\"v\":");
             value(sb, v, 0);
@@ -546,7 +676,11 @@ public final class Obs {
                 sb.append(",\"oi\":").append(optionIndexOf(ses.prioOptions, v));
             }
             sb.append('}');
-            write(sb);
+            if (toStore) {
+                write(sb);
+            } else {
+                writeFork(sb);
+            }
         }
         HistEntry entry = ses.pendingDec.remove(s);
         if (entry != null) {
@@ -923,6 +1057,62 @@ public final class Obs {
             }
         }
         currentGame = null;
+    }
+
+    private static void writeFork(StringBuilder sb) {
+        if (forkFrame == null) {
+            return;
+        }
+        sb.append('\n');
+        byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+        try {
+            forkFrame.write(bytes);
+            forkRawBytes += bytes.length;
+            forkRecs++;
+        } catch (IOException e) {
+            System.err.println("Obs: fork write failed for game " + forkGameIdx
+                    + ", closing frame: " + e);
+            endForkFrame();
+            return;
+        }
+        if (forkRawBytes > RAW_CAP) {
+            System.err.println("Obs: fork game " + forkGameIdx + " hit raw cap ("
+                    + forkRawBytes + " > " + RAW_CAP + " bytes), truncating frame");
+            try {
+                forkFrame.write("{\"k\":\"end\",\"status\":\"obs_cap\",\"winner\":-1,\"turns\":-1,\"ms\":0}\n"
+                        .getBytes(StandardCharsets.UTF_8));
+                forkRecs++;
+            } catch (IOException ignored) {
+            }
+            endForkFrame();
+        }
+    }
+
+    private static void endForkFrame() {
+        if (forkFrame == null) {
+            return;
+        }
+        try {
+            forkFrame.close();
+        } catch (IOException e) {
+            System.err.println("Obs: fork frame close failed for game " + forkGameIdx + ": " + e);
+        }
+        if (forkIdx != null) {
+            forkIdx.println("{\"g\":" + forkGameIdx + ",\"off\":" + forkFileOffset
+                    + ",\"clen\":" + forkCounting.count + ",\"rlen\":" + forkRawBytes
+                    + ",\"seed\":" + forkGameSeed + ",\"recs\":" + forkRecs + "}");
+            forkIdx.flush();
+        }
+        forkFileOffset += forkCounting.count;
+        if (forkFile != null) {
+            try {
+                forkFileOffset = forkFile.getChannel().position();
+            } catch (IOException ignored) {
+            }
+        }
+        forkFrame = null;
+        forkCounting = null;
+        forkGameIdx = -1;
     }
 
     static String q(String s) {
