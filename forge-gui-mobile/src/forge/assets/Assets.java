@@ -311,18 +311,21 @@ public class Assets implements Disposable {
     }
 
     // Card images are opaque, so load the bundled (AssetManager) card path as RGB565 (half the RGBA8888
-    // footprint) with no mipmaps (cards are drawn ~1:1). Separate from getTextureFilter() so UI textures that
-    // need alpha/mipmaps are unaffected. Mirrors the RGB565 downscale already applied to the downloaded path.
+    // footprint). Separate from getTextureFilter() so UI textures that need alpha are unaffected. Mirrors the
+    // RGB565 downscale already applied to the downloaded path. With filtering enabled cards get mipmaps too:
+    // battlefield cards draw well below 1:1 and rotate at arbitrary angles (UI_TAP_ANGLE) - minified rotated
+    // sampling without mipmaps shimmers, worst on card text.
     public TextureParameter getCardTextureFilter() {
         if (cardTextureParameter == null) {
             cardTextureParameter = new TextureParameter();
             cardTextureParameter.format = Pixmap.Format.RGB565;
-            cardTextureParameter.genMipMaps = false;
         }
         if (Forge.isTextureFilteringEnabled()) {
-            cardTextureParameter.minFilter = Texture.TextureFilter.Linear;
+            cardTextureParameter.genMipMaps = true;
+            cardTextureParameter.minFilter = Texture.TextureFilter.MipMapLinearLinear;
             cardTextureParameter.magFilter = Texture.TextureFilter.Linear;
         } else {
+            cardTextureParameter.genMipMaps = false;
             cardTextureParameter.minFilter = Texture.TextureFilter.Nearest;
             cardTextureParameter.magFilter = Texture.TextureFilter.Nearest;
         }

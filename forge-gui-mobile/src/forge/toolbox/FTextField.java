@@ -40,6 +40,7 @@ public class FTextField extends FDisplayObject implements ITextField {
         return FSkinColor.get(Colors.CLR_ACTIVE);
     }
     private FEventHandler changedHandler;
+    private FEventHandler submitHandler;
 
     public static float getDefaultHeight() {
         return getDefaultHeight(DEFAULT_FONT);
@@ -167,6 +168,9 @@ public class FTextField extends FDisplayObject implements ITextField {
     public void setChangedHandler(FEventHandler changedHandler0) {
         changedHandler = changedHandler0;
     }
+    public void setSubmitHandler(FEventHandler submitHandler0) {
+        submitHandler = submitHandler0;
+    }
 
     public float getAutoSizeWidth() {
         return getLeftPadding() + font.getBounds(text).width + getRightPadding();
@@ -287,9 +291,14 @@ public class FTextField extends FDisplayObject implements ITextField {
             @Override
             public boolean keyDown(int keyCode) {
                 switch (keyCode) {
-                case Keys.TAB:
-                case Keys.ENTER: //end key input on Tab or Enter
+                case Keys.TAB: //end key input on Tab or Enter
                     Forge.endKeyInput();
+                    return true;
+                case Keys.ENTER:
+                    Forge.endKeyInput();
+                    if (submitHandler != null) { //let a dialog treat Enter as its default action
+                        submitHandler.handleEvent(new FEvent(FTextField.this, FEventType.ACTIVATE));
+                    }
                     return true;
                 case Keys.ESCAPE:
                     setText(textBeforeKeyInput); //cancel edit on Escape

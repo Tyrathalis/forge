@@ -311,6 +311,18 @@ public class SettingsPage extends TabPage<SettingsScreen> {
                         MatchController.instance.resetPlayerPanels();
                 }
             }, 1);
+        lstSettings.addItem(new BooleanSetting(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY,
+            Forge.getLocalizer().getMessage("lblSingleColumnZoneDisplay"),
+            Forge.getLocalizer().getMessage("nlSingleColumnZoneDisplay")) {
+                @Override
+                public void select() {
+                    super.select();
+                    //update
+                    Forge.singleColumnZoneDisplay = FModel.getPreferences().getPrefBoolean(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY);
+                    if (MatchController.instance != null)
+                        MatchController.instance.resetPlayerPanels();
+                }
+            }, 1);
         lstSettings.addItem(new BooleanSetting(FPref.UI_ANIMATED_CARD_TAPUNTAP,
             Forge.getLocalizer().getMessage("lblAnimatedCardTapUntap"),
             Forge.getLocalizer().getMessage("nlAnimatedCardTapUntap")) {
@@ -319,6 +331,16 @@ public class SettingsPage extends TabPage<SettingsScreen> {
                     super.select();
                     //update
                     Forge.animatedCardTapUntap = FModel.getPreferences().getPrefBoolean(FPref.UI_ANIMATED_CARD_TAPUNTAP);
+                }
+            }, 1);
+        lstSettings.addItem(new CustomSelectSetting(FPref.UI_TAP_ANGLE,
+            Forge.getLocalizer().getMessage("cbpTapAngle"),
+            Forge.getLocalizer().getMessage("nlTapAngle"),
+            new String[]{"90", "75", "60", "45", "30", "15"}) {
+                @Override
+                public void valueChanged(String newValue) {
+                    super.valueChanged(newValue);
+                    Forge.tapAngle = Forge.parseTapAngle(newValue);
                 }
             }, 1);
         lstSettings.addItem(new BooleanSetting(FPref.UI_STACK_CREATURES,

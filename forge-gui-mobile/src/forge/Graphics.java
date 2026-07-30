@@ -91,6 +91,20 @@ public class Graphics {
     public ShaderProgram getShaderNightDay() {
         return shaderNightDay;
     }
+    /**
+     * Re-project onto a new backbuffer size. SpriteBatch and ShapeRenderer each build an ortho
+     * projection from Gdx.graphics in their constructor and never revisit it, so without this a
+     * resized window keeps drawing at its launch dimensions, anchored to the GL origin in the
+     * bottom-left with the rest of the window left blank. Safe to call between frames: the
+     * transform stack rides on the transform matrix, not the projection one.
+     */
+    public void resize(int width, int height) {
+        if (width <= 0 || height <= 0) { return; }
+        final Matrix4 projection = new Matrix4().setToOrtho2D(0, 0, width, height);
+        batch.setProjectionMatrix(projection);
+        shapeRenderer.setProjectionMatrix(projection);
+    }
+
     public void begin(float regionWidth0, float regionHeight0) {
         batch.begin();
         bounds = new Rectangle(0, 0, regionWidth0, regionHeight0);
@@ -1424,24 +1438,28 @@ public class Graphics {
 
     public void startRotateTransform(float originX, float originY, float rotation) {
         batch.end();
-        Dtransforms.addFirst(new Matrix4(batch.getTransformMatrix().idt())); //startshape is using this above as reference
+        //save the CURRENT matrix (not identity) so nested transforms compose: a tapped card
+        //inside a 180-rotated player panel must rotate within that panel's frame, and the
+        //stack dropdown inside the rotate-90 header must draw within the header's frame.
+        //the old idt() here made every inner transform silently wipe its outer one.
+        Dtransforms.addFirst(new Matrix4(batch.getTransformMatrix()));
         transformCount++;
-        batch.getTransformMatrix().idt().translate(adjustX(originX), adjustY(originY, 0), 0).rotate(Vector3.Z, rotation).translate(-adjustX(originX), -adjustY(originY, 0), 0);
+        batch.getTransformMatrix().translate(adjustX(originX), adjustY(originY, 0), 0).rotate(Vector3.Z, rotation).translate(-adjustX(originX), -adjustY(originY, 0), 0);
         batch.begin();
     }
 
     public void endTransform() {
         batch.end();
-        shapeRenderer.setTransformMatrix(batch.getTransformMatrix().idt());
-        Dtransforms.removeFirst();
+        Matrix4 restored = Dtransforms.removeFirst();
         transformCount--;
         if (transformCount != Dtransforms.size()) {
             System.err.printf("Stack count: %d, transformCount: %d%n", Dtransforms.size(), transformCount);
             transformCount = 0;
             Dtransforms.clear();
+            restored = new Matrix4();
         }
-        batch.getTransformMatrix().idt(); //reset
-        shapeRenderer.getTransformMatrix().idt(); //reset
+        batch.getTransformMatrix().set(restored); //restore the enclosing transform (identity at the outermost level)
+        shapeRenderer.setTransformMatrix(restored);
         batch.begin();
     }
 

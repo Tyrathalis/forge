@@ -6,14 +6,31 @@ import java.util.function.Function;
 
 public class StorageNestedFolders<T> extends StorageBase<IStorage<T>> {
     private final File thisFolder;
+    private final Function<File, IStorage<T>> factory;
 
     public StorageNestedFolders(File thisFolder, Iterable<File> subfolders, Function<File, IStorage<T>> factory) {
         super("<Subfolders>", thisFolder.getPath(), new HashMap<>());
         this.thisFolder = thisFolder;
+        this.factory = factory;
         for (File sf : subfolders) {
             IStorage<T> newUnit = factory.apply(sf);
             map.put(sf.getName(), newUnit);
         }
+    }
+
+    /** Returns the named subfolder, creating its directory and storage unit on first use. */
+    public IStorage<T> getOrCreate(String name) {
+        IStorage<T> existing = map.get(name);
+        if (existing != null) {
+            return existing;
+        }
+        File subdir = new File(thisFolder, name);
+        if (!subdir.isDirectory() && !subdir.mkdirs()) {
+            throw new IllegalStateException("Cannot create folder: " + subdir);
+        }
+        IStorage<T> unit = factory.apply(subdir);
+        map.put(name, unit);
+        return unit;
     }
 
     // need code implementations for folder create/delete operations

@@ -16,6 +16,7 @@ import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgeConstants;
 import forge.localinstance.properties.ForgePreferences;
 import forge.model.FModel;
+import forge.screens.match.MatchController;
 import forge.sound.SoundSystem;
 
 import java.io.IOException;
@@ -286,6 +287,21 @@ public class SettingsScene extends UIScene {
                 Config.instance().saveSettings();
             }
         });
+        SelectBox<String> tapAngle = Controls.newComboBox(new String[]{"90", "75", "60", "45", "30", "15"},
+                FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE), o -> {
+            String angle = (String) o;
+            if (angle != null && !angle.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_TAP_ANGLE))) {
+                FModel.getPreferences().setPref(ForgePreferences.FPref.UI_TAP_ANGLE, angle);
+                FModel.getPreferences().save();
+            }
+            Forge.tapAngle = Forge.parseTapAngle(angle);
+            return null;
+        });
+        addLabel(Forge.getLocalizer().getMessage("cbpTapAngle"));
+        settingGroup.add(tapAngle).align(Align.right).pad(2);
+        addCheckBox(Forge.getLocalizer().getMessage("lblSingleColumnZoneDisplay"),
+                ForgePreferences.FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY, () ->
+                Forge.singleColumnZoneDisplay = FModel.getPreferences().getPrefBoolean(ForgePreferences.FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY));
         CheckBox cbAnte = addCheckBox(Forge.getLocalizer().getMessage("cbAnte"), ForgePreferences.FPref.UI_ANTE);
         CheckBox cbAnteMatchRarity = addCheckBox(Forge.getLocalizer().getMessage("cbAnteMatchRarity"), ForgePreferences.FPref.UI_ANTE_MATCH_RARITY);
         CheckBox cbAnteIncludeBasicLands = addCheckBox(Forge.getLocalizer().getMessage("cbAnteIncludeBasicLands"), ForgePreferences.FPref.UI_ANTE_INCLUDE_BASIC_LANDS);
@@ -316,7 +332,29 @@ public class SettingsScene extends UIScene {
 
         if (!GuiBase.isAndroid()) {
             addCheckBox(Forge.getLocalizer().getMessage("lblBattlefieldTextureFiltering"), ForgePreferences.FPref.UI_LIBGDX_TEXTURE_FILTERING);
-            //addCheckBox(Forge.getLocalizer().getMessage("lblAltZoneTabs"), ForgePreferences.FPref.UI_ALT_PLAYERZONETABS);
+            //revived as a three-value selector - the old checkbox predates the pref widening to Off/Vertical/Horizontal.
+            //adventure boot forces mode Vertical while the pref still holds a legacy boolean, so mirror that here
+            String zoneTabPref = FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS);
+            if (!"Off".equals(zoneTabPref) && !"Vertical".equals(zoneTabPref) && !"Horizontal".equals(zoneTabPref)) {
+                zoneTabPref = "Vertical";
+            }
+            SelectBox<String> altZoneTabs = Controls.newComboBox(new String[]{"Off", "Vertical", "Horizontal"},
+                    zoneTabPref, o -> {
+                String mode = (String) o;
+                if (mode != null && !mode.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS))) {
+                    FModel.getPreferences().setPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS, mode);
+                    FModel.getPreferences().save();
+                }
+                if (mode != null) {
+                    Forge.setAltZoneTabMode(mode);
+                    if (MatchController.instance != null) {
+                        MatchController.instance.resetPlayerPanels();
+                    }
+                }
+                return null;
+            });
+            addLabel(Forge.getLocalizer().getMessage("lblAltZoneTabs"));
+            settingGroup.add(altZoneTabs).align(Align.right).pad(2);
         } else {
             addCheckBox(Forge.getLocalizer().getMessage("lblLandscapeMode") + " (" +
                 Forge.getLocalizer().getMessage("lblRestartRequired") + ")",

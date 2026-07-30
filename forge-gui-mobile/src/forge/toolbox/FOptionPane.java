@@ -11,6 +11,7 @@ import com.badlogic.gdx.utils.Align;
 import com.google.common.collect.ImmutableList;
 
 import forge.Forge;
+import forge.gui.GuiBase;
 import forge.Graphics;
 import forge.assets.FImage;
 import forge.assets.FSkin;
@@ -185,7 +186,10 @@ public class FOptionPane extends FDialog {
         }) {
             @Override
             protected float getBottomMargin() {
-                return Forge.getScreenHeight() * 0.4f; //account for keyboard
+                if (GuiBase.getInterface().isRunningOnDesktop()) {
+                    return 0; //physical keyboard: nothing will cover a bottom-docked dialog
+                }
+                return Forge.getScreenHeight() * 0.4f; //account for on-screen keyboard
             }
 
             @Override
@@ -198,6 +202,10 @@ public class FOptionPane extends FDialog {
                 return true;
             }
         };
+        if (txtInput != null) {
+            //physical-keyboard Enter submits the dialog instead of only closing the field's edit mode
+            txtInput.setSubmitHandler(e -> optionPane.setResult(0));
+        }
         optionPane.show();
         if (txtInput != null) {
             txtInput.startEdit();

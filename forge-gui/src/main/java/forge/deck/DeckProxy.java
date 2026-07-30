@@ -55,6 +55,10 @@ public class DeckProxy implements InventoryItem {
         this(deck, deckType, type, "", storage, null);
     }
 
+    public DeckProxy(final Deck deck, final String deckType, final GameType type, final String path, final IStorage<? extends IHasName> storage) {
+        this(deck, deckType, type, path, storage, null);
+    }
+
     public DeckProxy(final IHasName deck, final String deckType, final Function<IHasName, Deck> fnGetDeck, final GameType type, final IStorage<? extends IHasName> storage) {
         this(deck, deckType, type, "", storage, fnGetDeck);
     }

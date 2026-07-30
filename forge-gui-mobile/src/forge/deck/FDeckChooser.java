@@ -1,5 +1,6 @@
 package forge.deck;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -342,6 +343,10 @@ public class FDeckChooser extends FScreen {
     private void createNewDeck() {
         final FDeckEditor editor;
         final DeckProxy deck = lstDecks.getSelectedItem();
+        if (selectedDeckType == DeckType.PROVIDED_DECK_URL) {
+            promptForDeckUrl();
+            return;
+        }
         if (selectedDeckType == DeckType.DRAFT_DECK) {
             NewGameScreen.BoosterDraft.open();
             return;
@@ -393,6 +398,91 @@ public class FDeckChooser extends FScreen {
         Forge.openScreen(editor);
     }
 
+    private void promptForDeckUrl() {
+        //single deck or a whole user's public decks - one extra tap, no extra button slot
+        FOptionPane.showOptionDialog(Forge.getLocalizer().getMessage("lblDeckUrlLabel"),
+                Forge.getLocalizer().getMessage("lblProvideDeckUrl"), null,
+                Arrays.asList(Forge.getLocalizer().getMessage("lblProvideDeckUrl"),
+                        Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"),
+                        Forge.getLocalizer().getMessage("lblCancel")),
+                (Consumer<Integer>) option -> {
+                    if (option == 0) {
+                        promptForSingleDeckUrl();
+                    } else if (option == 1) {
+                        promptForDeckSiteUsername();
+                    }
+                });
+    }
+
+    private void promptForSingleDeckUrl() {
+        //pre-fill with the selected deck's own URL, so re-confirming the dialog re-fetches that
+        //deck -- that is the reload affordance, without spending a button on it
+        final DeckProxy selected = lstDecks.getSelectedItem();
+        final String initialUrl = selected == null || selected.getSourceUrl() == null ? "" : selected.getSourceUrl();
+        FOptionPane.showInputDialog(Forge.getLocalizer().getMessage("lblDeckUrlLabel"),
+                Forge.getLocalizer().getMessage("lblProvideDeckUrl"), initialUrl, null,
+                (Consumer<String>) deckUrl -> {
+                    if (deckUrl == null || deckUrl.isBlank()) { return; } //null when cancelled
+                    loadDeckFromUrl(deckUrl.trim());
+                }, false);
+    }
+
+    private void promptForDeckSiteUsername() {
+        FOptionPane.showInputDialog(Forge.getLocalizer().getMessage("lblDeckSiteUsername"),
+                Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"), "", null,
+                (Consumer<String>) username -> {
+                    if (username == null || username.isBlank()) { return; } //null when cancelled
+                    //a pasted Archidekt profile/search URL is accepted too - the username is parsed out
+                    syncDeckSiteUser(DeckSiteSyncer.parseUsernameInput(username));
+                }, false);
+    }
+
+    private void syncDeckSiteUser(final String username) {
+        //a first sync of N decks makes N+pages requests at a polite ~2s interval, so this can
+        //take a while behind the overlay; re-syncs skip unchanged decks without any request
+        LoadingOverlay.runBackgroundTask(Forge.getLocalizer().getMessage("lblSyncingUserDecks", username), loader -> {
+            try {
+                //the syncer's per-deck progress ("3/41: Deck Name") becomes the live overlay caption
+                final DeckSiteSyncer.Result result = DeckSiteSyncer.sync(username, loader::updateCaption);
+                FThreads.invokeInEdtLater(() -> {
+                    if (selectedDeckType == DeckType.PROVIDED_DECK_URL) {
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                    final StringBuilder summary = new StringBuilder(Forge.getLocalizer().getMessage("lblDeckSyncSummary",
+                            username, String.valueOf(result.created()), String.valueOf(result.updated()),
+                            String.valueOf(result.unchanged()), String.valueOf(result.failures().size())));
+                    for (final String failure : result.failures()) {
+                        summary.append("\n").append(failure);
+                    }
+                    FOptionPane.showMessageDialog(summary.toString(),
+                            Forge.getLocalizer().getMessage("lblSyncDeckSiteUser"));
+                });
+            } catch (final IOException ex) {
+                FThreads.invokeInEdtLater(() -> FOptionPane.showErrorDialog(ex.getMessage(),
+                        Forge.getLocalizer().getMessage("lblSyncDeckSiteUser")));
+            }
+        });
+    }
+
+    private void loadDeckFromUrl(final String deckUrl) {
+        //DeckUrlLoader is synchronous with 15s connect / 30s read timeouts. On desktop that blocks
+        //a Swing dialog; here it would block the GL thread and freeze the whole app, so it has to
+        //run on a background thread with the loading overlay up.
+        LoadingOverlay.runBackgroundTask(Forge.getLocalizer().getMessage("lblLoadingEllipsis"), () -> {
+            try {
+                final DeckProxy loaded = DeckUrlLoader.load(deckUrl);
+                FThreads.invokeInEdtLater(() -> {
+                    if (selectedDeckType != DeckType.PROVIDED_DECK_URL) { return; }
+                    refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    lstDecks.setSelectedString(loaded.toString());
+                });
+            } catch (final IOException ex) {
+                FThreads.invokeInEdtLater(() -> FOptionPane.showErrorDialog(ex.getMessage(),
+                        Forge.getLocalizer().getMessage("lblUnableToLoadDeckUrl")));
+            }
+        });
+    }
+
     private void editSelectedDeck() {
         final DeckProxy deck = lstDecks.getSelectedItem();
         if (deck == null) { return; }
@@ -410,7 +500,58 @@ public class FDeckChooser extends FScreen {
         case SEALED_DECK:
             editDeck(deck);
             break;
+        case PROVIDED_DECK_URL:
+            promptForUrlDeckAction(deck);
+            break;
         default:
+            duplicateToEditableDeck(deck);
+            break;
+        }
+    }
+
+    /** URL-imported decks are read-only snapshots of a deck site: editing duplicates them,
+     *  and this is the only place they can be deleted (the editor's delete is unreachable). */
+    private void promptForUrlDeckAction(final DeckProxy deck) {
+        final String path = deck.getPath();
+        final String folder = path == null || path.isEmpty() ? null : path.split("/")[0];
+        final List<String> options = new ArrayList<>();
+        options.add(Forge.getLocalizer().getMessage("lblDuplicate"));
+        options.add(Forge.getLocalizer().getMessage("lblDeleteDeck"));
+        if (folder != null) {
+            options.add(Forge.getLocalizer().getMessage("lblDeleteSyncedFolder", folder));
+        }
+        options.add(Forge.getLocalizer().getMessage("lblCancel"));
+        FOptionPane.showOptionDialog(deck.getName(), Forge.getLocalizer().getMessage("btnEditDeck"), null,
+                options, options.size() - 1, result -> {
+            if (result == 0) {
+                duplicateToEditableDeck(deck);
+            } else if (result == 1) {
+                FOptionPane.showConfirmDialog(
+                        Forge.getLocalizer().getMessage("lblConfirmDelete") + " '" + deck.getName() + "'?",
+                        Forge.getLocalizer().getMessage("lblDeleteDeck"),
+                        Forge.getLocalizer().getMessage("lblDelete"),
+                        Forge.getLocalizer().getMessage("lblCancel"), false, confirmed -> {
+                    if (confirmed) {
+                        deck.deleteFromStorage();
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                });
+            } else if (folder != null && result == 2) {
+                FOptionPane.showConfirmDialog(
+                        Forge.getLocalizer().getMessage("lblConfirmDeleteSyncedFolder", folder),
+                        Forge.getLocalizer().getMessage("lblDeleteSyncedFolder", folder),
+                        Forge.getLocalizer().getMessage("lblDelete"),
+                        Forge.getLocalizer().getMessage("lblCancel"), false, confirmed -> {
+                    if (confirmed) {
+                        DeckUrlLoader.deleteFolder(DeckUrlLoader.getStorage(), folder);
+                        refreshDecksList(DeckType.PROVIDED_DECK_URL, true, null);
+                    }
+                });
+            }
+        });
+    }
+
+    private void duplicateToEditableDeck(final DeckProxy deck) {
             final DeckType fallbackType = lstDecks.getGameType() == GameType.DeckManager ? DeckType.CONSTRUCTED_DECK : DeckType.CUSTOM_DECK;
 
             //see if deck with selected name exists already
@@ -452,8 +593,6 @@ public class FDeckChooser extends FScreen {
                             editDeck(new DeckProxy(copiedDeck, "Constructed", lstDecks.getGameType(), storage));
                         }
                     });
-            break;
-        }
     }
 
     private FDeckEditor.DeckEditorConfig getEditorConfig() {
@@ -568,6 +707,7 @@ public class FDeckChooser extends FScreen {
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_LEGACY_DECK);
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_VINTAGE_DECK);
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_BLOCK_DECK);
+                cmbDeckTypes.addItem(DeckType.PROVIDED_DECK_URL);
 
                 break;
             case CommanderGauntlet:
@@ -587,6 +727,7 @@ public class FDeckChooser extends FScreen {
                 }
                 cmbDeckTypes.addItem(DeckType.RANDOM_COMMANDER_DECK);
                 cmbDeckTypes.addItem(DeckType.NET_DECK);
+                cmbDeckTypes.addItem(DeckType.PROVIDED_DECK_URL);
                 break;
             case DeckManager:
                 cmbDeckTypes.addItem(DeckType.CONSTRUCTED_DECK);
@@ -610,6 +751,7 @@ public class FDeckChooser extends FScreen {
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_LEGACY_DECK);
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_VINTAGE_DECK);
                 cmbDeckTypes.addItem(DeckType.NET_ARCHIVE_BLOCK_DECK);
+                cmbDeckTypes.addItem(DeckType.PROVIDED_DECK_URL);
                 break;
             default:
                 cmbDeckTypes.addItem(DeckType.CUSTOM_DECK);
@@ -1066,6 +1208,12 @@ public class FDeckChooser extends FScreen {
             pool = DeckProxy.getNetDecks(netDeckCategory);
             config = ItemManagerConfig.NET_DECKS;
             break;
+        case PROVIDED_DECK_URL:
+            //decks imported from a deck site; they live in their own flat store (decks/URL/),
+            //not in the format-partitioned ones, so this pool is the same for every game type
+            pool = DeckUrlLoader.getUrlDecks();
+            config = ItemManagerConfig.NET_DECKS;
+            break;
         default:
             BugReporter.reportBug("Unsupported deck type: " + deckType);
             return;
@@ -1107,6 +1255,11 @@ public class FDeckChooser extends FScreen {
             btnRandom.setWidth(btnNewDeck.getWidth());
 
             btnNewDeck.setText(Forge.getLocalizer().getMessage("lblNewDeck"));
+
+            if (deckType == DeckType.PROVIDED_DECK_URL) {
+                //there is no local "new deck" here; the primary action is fetching one from a site
+                btnNewDeck.setText(Forge.getLocalizer().getMessage("lblProvideDeckUrl"));
+            }
 
             if (lstDecks.getGameType() == GameType.DeckManager) {
                 //handle special case of Deck Editor screen where this button will start a game with the deck

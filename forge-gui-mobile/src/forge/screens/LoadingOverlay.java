@@ -1,5 +1,7 @@
 package forge.screens;
 
+import java.util.function.Consumer;
+
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.utils.Align;
@@ -53,12 +55,27 @@ public class LoadingOverlay extends FOverlay {
     }
 
     public static void runBackgroundTask(String caption0, final Runnable task) {
+        runBackgroundTask(caption0, loader -> task.run());
+    }
+
+    /** Like {@link #runBackgroundTask(String, Runnable)}, but the task can update the caption
+     *  (via {@link #updateCaption}) to report progress on long operations. */
+    public static void runBackgroundTask(String caption0, final Consumer<LoadingOverlay> task) {
         final LoadingOverlay loader = new LoadingOverlay(caption0, true);
         loader.show();
         FThreads.invokeInBackgroundThread(() -> {
-            task.run();
-            FThreads.invokeInEdtLater(loader::hide);
+            try {
+                task.accept(loader);
+            } finally {
+                //hide on the error path too - a modal overlay left up would block the bug-report dialog
+                FThreads.invokeInEdtLater(loader::hide);
+            }
         });
+    }
+
+    /** Safe to call from a background task's thread. */
+    public void updateCaption(String caption0) {
+        FThreads.invokeInEdtLater(() -> caption = caption0);
     }
 
     private String caption;

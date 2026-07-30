@@ -34,7 +34,7 @@ import java.util.function.Function;
  */
 public class StorageImmediatelySerialized<T> extends StorageBase<T> {
     private final IItemSerializer<T> serializer;
-    private final IStorage<IStorage<T>> subfolders;
+    private final StorageNestedFolders<T> subfolders;
 
     private final Function<File, IStorage<T>> nestedFactory = new Function<File, IStorage<T>>() {
         @Override
@@ -122,12 +122,11 @@ public class StorageImmediatelySerialized<T> extends StorageBase<T> {
     }
     
     private IStorage<T> getOrCreateSubfolder(String name) {
-        // Have to filter name for incorrect symbols 
-        IStorage<T> storage = getFolders().get(name);
-        if( null == storage ) {
-            storage = new StorageImmediatelySerialized<>(name, serializer);
-            subfolders.add(storage);
+        if (subfolders == null) {
+            throw new UnsupportedOperationException("storage '" + getName() + "' was created without subfolder support");
         }
-        return storage;
+        //the nested factory roots the child unit at the subfolder (the old code built it
+        //on the parent's serializer, so children would have saved into the parent dir)
+        return subfolders.getOrCreate(name);
     }
 }

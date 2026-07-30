@@ -128,6 +128,12 @@ public abstract class FScreen extends FContainer {
             //adjust size if in landscape mode and has a backdrop
             FScreen backdrop = getLandscapeBackdropScreen();
             if (backdrop != null) {
+                //keep the backdrop's own bounds live too: drawBackground and the menu
+                //backing read getWidth/getHeight, and a window resize while a hosted
+                //screen is open otherwise leaves the backdrop frozen at launch size
+                if (backdrop.getWidth() != width || backdrop.getHeight() != height) {
+                    backdrop.setSize(width, height);
+                }
                 width = backdrop.doLandscapeLayout(width, height);
             }
         }

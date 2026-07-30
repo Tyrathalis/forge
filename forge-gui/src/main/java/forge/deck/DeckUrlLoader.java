@@ -6,6 +6,7 @@ import forge.deck.io.DeckStorage;
 import forge.game.GameType;
 import forge.localinstance.properties.ForgeConstants;
 import forge.util.Localizer;
+import forge.util.storage.IStorage;
 import forge.util.storage.StorageImmediatelySerialized;
 
 import java.io.BufferedReader;
@@ -46,10 +47,48 @@ public final class DeckUrlLoader {
     public static List<DeckProxy> getUrlDecks() {
         final List<DeckProxy> decks = new ArrayList<>();
         final StorageImmediatelySerialized<Deck> storage = getStorage();
-        for (final Deck deck : storage) {
-            decks.add(new DeckProxy(deck, localizer.getMessage("lblUrlDeck"), GameType.Constructed, storage));
+        addDeckProxies(decks, storage, "");
+        for (final IStorage<Deck> userFolder : storage.getFolders()) {
+            addDeckProxies(decks, userFolder, userFolder.getName());
+            for (final IStorage<Deck> subfolder : userFolder.getFolders()) {
+                addDeckProxies(decks, subfolder, userFolder.getName() + "/" + subfolder.getName());
+            }
         }
         return decks;
+    }
+
+    private static void addDeckProxies(final List<DeckProxy> decks, final IStorage<Deck> storage, final String path) {
+        for (final Deck deck : storage) {
+            //path carries the folder so the chooser can offer per-folder actions (delete a synced user)
+            decks.add(new DeckProxy(deck, localizer.getMessage("lblUrlDeck"), GameType.Constructed, path, storage));
+        }
+    }
+
+    /** Deletes every deck in the named top-level folder of the given store (and its
+     *  subfolders, e.g. Unsorted/), then removes the folder itself. Returns the
+     *  number of decks deleted, or -1 if the folder does not exist. */
+    public static int deleteFolder(final StorageImmediatelySerialized<Deck> storage, final String folderName) {
+        final IStorage<Deck> folder = storage.getFolders().get(folderName);
+        if (folder == null) {
+            return -1;
+        }
+        int deleted = 0;
+        for (final IStorage<Deck> subfolder : folder.getFolders()) {
+            deleted += deleteAllDecks(subfolder);
+            folder.getFolders().delete(subfolder.getName());
+        }
+        deleted += deleteAllDecks(folder);
+        storage.getFolders().delete(folderName);
+        return deleted;
+    }
+
+    private static int deleteAllDecks(final IStorage<Deck> folder) {
+        int deleted = 0;
+        for (final String name : new ArrayList<>(folder.getItemNames())) {
+            folder.delete(name);
+            deleted++;
+        }
+        return deleted;
     }
 
     private static DeckUrlProvider getProvider(final String normalizedUrl) throws IOException {
@@ -64,6 +103,16 @@ public final class DeckUrlLoader {
     }
 
     private static Deck importDeck(final DeckUrlProvider.RemoteDeck remoteDeck) throws IOException {
+        return importDeck(remoteDeck, null);
+    }
+
+    /**
+     * With a non-null missingCardsOut, cards Forge cannot resolve are collected
+     * there instead of failing the whole import — the bulk-sync path saves the
+     * deck anyway and annotates it (it's still your friend's deck). The
+     * single-URL path keeps strict behavior by passing null.
+     */
+    static Deck importDeck(final DeckUrlProvider.RemoteDeck remoteDeck, final List<String> missingCardsOut) throws IOException {
         final DeckRecognizer recognizer = new DeckRecognizer();
         recognizer.forceImportBannedAndRestrictedCards();
         final List<Token> tokens = recognizer.parseCardList(getRecognizableImportLines(recognizer, remoteDeck.importText()));
@@ -71,7 +120,11 @@ public final class DeckUrlLoader {
         for (final Token token : tokens) {
             final TokenType type = token.getType();
             if (type == TokenType.UNKNOWN_CARD || type == TokenType.UNSUPPORTED_CARD) {
-                throw new IOException(localizer.getMessage("lblDeckUrlCardNotFound", remoteDeck.providerName(), token.getText()));
+                if (missingCardsOut == null) {
+                    throw new IOException(localizer.getMessage("lblDeckUrlCardNotFound", remoteDeck.providerName(), token.getText()));
+                }
+                missingCardsOut.add(token.getText());
+                continue;
             }
             if (!token.isTokenForDeck() || type == TokenType.DECK_NAME) {
                 continue;
@@ -147,10 +200,11 @@ public final class DeckUrlLoader {
         }
     }
 
-    private static StorageImmediatelySerialized<Deck> getStorage() {
+    static StorageImmediatelySerialized<Deck> getStorage() {
         return new StorageImmediatelySerialized<>("URL decks",
                 new DeckStorage(new File(ForgeConstants.DECK_BASE_DIR + URL_DECK_DIR_NAME + ForgeConstants.PATH_SEPARATOR),
-                        ForgeConstants.DECK_BASE_DIR));
+                        ForgeConstants.DECK_BASE_DIR),
+                true); //with subfolders: deck-site sync files decks under per-username folders
     }
 
     private static String getSourceDeckKey(final String deckUrl) throws IOException {
@@ -217,11 +271,15 @@ public final class DeckUrlLoader {
     }
 
     static Map<?, ?> readJsonObject(final String requestUrl, final String providerName) throws IOException {
-        final Object parsed = new JsonParser(readUrl(requestUrl, providerName)).parse();
+        final Object parsed = parseJson(readUrl(requestUrl, providerName));
         if (parsed instanceof Map<?, ?> root) {
             return root;
         }
         throw new IOException(localizer.getMessage("lblDeckUrlUnexpectedResponse", providerName));
+    }
+
+    static Object parseJson(final String json) throws IOException {
+        return new JsonParser(json).parse();
     }
 
     static String getNestedString(final Map<?, ?> map, final String... keys) {

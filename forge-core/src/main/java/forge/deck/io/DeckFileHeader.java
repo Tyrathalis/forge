@@ -40,6 +40,7 @@ public class DeckFileHeader {
     /** The Constant DECK_TYPE. */
     public static final String DECK_TYPE = "Deck Type";
     public static final String SOURCE_URL = "Source URL";
+    public static final String SYNC_UPDATED_AT = "Sync Updated At";
     public static final String TAGS = "Tags";
 
     public static final String TAGS_SEPARATOR = ",";
@@ -57,6 +58,7 @@ public class DeckFileHeader {
 
     private final DeckFormat deckType;
     private final String sourceUrl;
+    private final String syncUpdatedAt;
     private final boolean customPool;
 
     private final String name;
@@ -85,6 +87,7 @@ public class DeckFileHeader {
         this.comment = kvPairs.get(DeckFileHeader.COMMENT);
         this.deckType = DeckFormat.smartValueOf(kvPairs.get(DeckFileHeader.DECK_TYPE), DeckFormat.Constructed);
         this.sourceUrl = kvPairs.get(DeckFileHeader.SOURCE_URL);
+        this.syncUpdatedAt = kvPairs.get(DeckFileHeader.SYNC_UPDATED_AT);
         this.customPool = kvPairs.getBoolean(DeckFileHeader.CSTM_POOL);
         this.intendedForAi = "computer".equalsIgnoreCase(kvPairs.get(DeckFileHeader.PLAYER)) || "ai".equalsIgnoreCase(kvPairs.get(DeckFileHeader.PLAYER_TYPE));
         this.aiHints = kvPairs.get(DeckFileHeader.AI_HINTS);
@@ -145,6 +148,10 @@ public class DeckFileHeader {
 
     public final DeckFormat getDeckType() {
         return this.deckType;
+    }
+
+    public String getSyncUpdatedAt() {
+        return syncUpdatedAt;
     }
 
     public String getSourceUrl() {

@@ -15,6 +15,7 @@ import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.Batch;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Clipboard;
 import forge.adventure.scene.*;
@@ -103,6 +104,8 @@ public class Forge implements ApplicationListener {
     public static boolean altZoneTabs = false;
     public static String altZoneTabMode = "Off";
     public static boolean animatedCardTapUntap = false;
+    public static int tapAngle = 90;
+    public static boolean singleColumnZoneDisplay = false;
     public static String enableUIMask = "Crop";
     public static String selector = "Default";
     public static boolean isTabletDevice = false;
@@ -203,7 +206,9 @@ public class Forge implements ApplicationListener {
         if (Files.exists(Paths.get(ForgeConstants.DEFAULT_SKINS_DIR+ForgeConstants.ADV_TEXTURE_BG_FILE)))
             selector = getForgePreferences().getPref(FPref.UI_SELECTOR_MODE);
 
-        //screenWidth and screenHeight should be set initially and only change upon restarting the app
+        //initial viewport; resize() keeps these in step with the backbuffer from here on.
+        //Note the UI *scale* (forge.util.Utils) is still frozen at this size — fonts and touch
+        //targets do not rescale on resize, so a window dragged far from its launch size reads off.
         screenWidth = Gdx.app.getGraphics().getWidth();
         screenHeight = Gdx.app.getGraphics().getHeight();
         // Desktop default: auto-detect from initial window/backbuffer aspect ratio
@@ -232,6 +237,8 @@ public class Forge implements ApplicationListener {
         altPlayerLayout = getForgePreferences().getPrefBoolean(FPref.UI_ALT_PLAYERINFOLAYOUT);
         setAltZoneTabMode(getForgePreferences().getPref(FPref.UI_ALT_PLAYERZONETABS));
         animatedCardTapUntap = getForgePreferences().getPrefBoolean(FPref.UI_ANIMATED_CARD_TAPUNTAP);
+        tapAngle = parseTapAngle(getForgePreferences().getPref(FPref.UI_TAP_ANGLE));
+        singleColumnZoneDisplay = getForgePreferences().getPrefBoolean(FPref.UI_SINGLE_COLUMN_ZONE_DISPLAY);
         enableUIMask = getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING);
         if (getForgePreferences().getPref(FPref.UI_ENABLE_BORDER_MASKING).equals("true")) //override old settings if not updated
             enableUIMask = "Full";
@@ -268,6 +275,19 @@ public class Forge implements ApplicationListener {
             FThreads.invokeInBackgroundThread(() -> AssetsDownloader.checkForUpdates(exited, runnable));
         }
     }
+    /** Parses FPref.UI_TAP_ANGLE, falling back to the default on anything
+     *  unparseable or outside (0, 90] — an angle read from a config file
+     *  deserves the same defensive read as any other pref. */
+    public static int parseTapAngle(String value) {
+        try {
+            int angle = Integer.parseInt(value);
+            if (angle > 0 && angle <= 90) {
+                return angle;
+            }
+        } catch (NumberFormatException ignored) {}
+        return Integer.parseInt(FPref.UI_TAP_ANGLE.getDefault());
+    }
+
     public static void setAltZoneTabMode(String mode) {
         Forge.altZoneTabMode = mode;
         switch (Forge.altZoneTabMode) {
@@ -1039,6 +1059,25 @@ public class Forge implements ApplicationListener {
     @Override
     public void resize(int width, int height) {
         try {
+            //keep the statics the render loop draws from in step with the live backbuffer, or the
+            //window resizes around a viewport frozen at launch size. A minimized window reports
+            //0x0 on some platforms; ignore that rather than dividing by it next frame.
+            if (width > 0 && height > 0) {
+                screenWidth = width;
+                screenHeight = height;
+                //the statics above only decide the logical draw region; the batches carry an ortho
+                //projection fixed at construction size, so they have to be re-projected too or the
+                //UI renders at launch size in the bottom-left corner of the new window
+                if (graphics != null) {
+                    graphics.resize(width, height);
+                }
+                if (animationBatch != null) {
+                    animationBatch.setProjectionMatrix(new Matrix4().setToOrtho2D(0, 0, width, height));
+                }
+                if (frameRate != null) {
+                    frameRate.resize(width, height); //shipped unused until now: nothing ever resized
+                }
+            }
             if (currentScreen != null) {
                 currentScreen.setSize(width, height);
             } else if (splashScreen != null) {

@@ -144,6 +144,7 @@ public enum VSubmenuPreferences implements IVSubmenu<CSubmenuPreferences> {
     private final FComboBoxPanel<CloseAction> cbpCloseAction = new FComboBoxPanel<>(localizer.getMessage("cbpCloseAction")+":");
     private final FComboBoxPanel<String> cbpDefaultFontSize = new FComboBoxPanel<>(localizer.getMessage("cbpDefaultFontSize")+":");
     private final FComboBoxPanel<String> cbpCardArtFormat = new FComboBoxPanel<>(localizer.getMessage("cbpCardArtFormat")+":");
+    private final FComboBoxPanel<String> cbpTapAngle = new FComboBoxPanel<>(localizer.getMessage("cbpTapAngle")+":");
     private final FComboBoxPanel<String> cbpCardArtPreference = new FComboBoxPanel<>(localizer.getMessage("lblPreferredArt")+":");
     private final FComboBoxPanel<String> cbpMulliganRule = new FComboBoxPanel<>(localizer.getMessage("cbpMulliganRule")+":");
     private final FComboBoxPanel<String> cbpSoundSets = new FComboBoxPanel<>(localizer.getMessage("cbpSoundSets")+":");
@@ -392,6 +393,9 @@ public enum VSubmenuPreferences implements IVSubmenu<CSubmenuPreferences> {
 
         pnlPrefs.add(cbpCardArtFormat, comboBoxConstraints);
         pnlPrefs.add(new NoteLabel(localizer.getMessage("nlCardArtFormat")), descriptionConstraints);
+
+        pnlPrefs.add(cbpTapAngle, comboBoxConstraints);
+        pnlPrefs.add(new NoteLabel(localizer.getMessage("nlTapAngle")), descriptionConstraints);
 
         pnlPrefs.add(cbImageFetcher, titleConstraints);
         pnlPrefs.add(new NoteLabel(localizer.getMessage("nlImageFetcher")), descriptionConstraints);
@@ -716,6 +720,10 @@ public enum VSubmenuPreferences implements IVSubmenu<CSubmenuPreferences> {
 
     public final FComboBoxPanel<String> getCbpAutoUpdater() {
         return cbpAutoUpdater;
+    }
+
+    public final FComboBoxPanel<String> getCbpTapAngle() {
+        return cbpTapAngle;
     }
 
     /** @return {@link javax.swing.JCheckBox} */

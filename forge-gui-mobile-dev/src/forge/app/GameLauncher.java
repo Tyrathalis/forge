@@ -21,6 +21,16 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 
 public class GameLauncher {
+    /*
+     * Smallest window the mobile UI is allowed to be dragged to, expressed as short/long edge and
+     * applied according to the launch orientation. These are the mobile UI's design basis
+     * (forge.util.Utils BASE_WIDTH/BASE_HEIGHT), repeated as literals on purpose: Utils computes
+     * its statics from Gdx.graphics at class-init, so referencing it from here would initialize it
+     * before the application — and therefore the graphics context — exists.
+     */
+    private static final int MIN_WINDOW_SHORT_EDGE = 320;
+    private static final int MIN_WINDOW_LONG_EDGE = 480;
+
     public GameLauncher(final String versionString, final String[] args) {
         String assetsDir = Files.exists(Paths.get("./res")) ? "./" : "../forge-gui/";
 
@@ -117,7 +127,18 @@ public class GameLauncher {
             config.setHdpiMode(HdpiMode.Logical);
         } else {
             config.setWindowedMode(windowWidth, windowHeight);
-            config.setResizable(false);
+            // A non-resizable window publishes fixed GLFW min=max size hints, and compositors
+            // (KWin, GNOME) refuse to tile a window that advertises a fixed size — so drag-to-edge
+            // snapping is never even offered. Publish a floor instead: big enough that the UI
+            // cannot collapse to nothing, small enough that half- and quarter-screen tiles stay
+            // reachable. Deliberately no aspect-ratio constraint — locking the aspect would refuse
+            // those same tiles all over again.
+            boolean portraitWindow = windowHeight > windowWidth;
+            int minWidth = portraitWindow ? MIN_WINDOW_SHORT_EDGE : MIN_WINDOW_LONG_EDGE;
+            int minHeight = portraitWindow ? MIN_WINDOW_LONG_EDGE : MIN_WINDOW_SHORT_EDGE;
+            // never let the floor exceed the requested size, or GLFW resizes the window up on open
+            config.setWindowSizeLimits(Math.min(minWidth, windowWidth), Math.min(minHeight, windowHeight), -1, -1);
+            config.setResizable(true);
         }
         config.setTitle("Forge - " + versionString);
         config.setWindowListener(new Lwjgl3WindowAdapter() {

@@ -206,6 +206,7 @@ public enum CSubmenuPreferences implements ICDoc {
         initializeDefaultFontSizeComboBox();
         initializeCardArtFormatComboBox();
         initializeCardArtPreference();
+        initializeTapAngleComboBox();
         initializeAutoUpdaterComboBox();
         initializeServerUPnPComboBox();
         initializeMulliganRuleComboBox();
@@ -417,6 +418,16 @@ public enum CSubmenuPreferences implements ICDoc {
         final FComboBox<String> comboBox = createComboBox(updatePaths, updatePreference);
         final String selectedItem = this.prefs.getPref(updatePreference);
         panel.setComboBox(comboBox, selectedItem);
+    }
+
+    private void initializeTapAngleComboBox() {
+        final String[] angles = {"90", "75", "60", "45", "30", "15"};
+        final FPref anglePreference = FPref.UI_TAP_ANGLE;
+        final FComboBoxPanel<String> panel = this.view.getCbpTapAngle();
+        final FComboBox<String> comboBox = createComboBox(angles, anglePreference);
+        final String selectedItem = this.prefs.getPref(anglePreference);
+        panel.setComboBox(comboBox, selectedItem);
+        comboBox.addItemListener(e -> forge.view.arcane.CardPanel.refreshTapAngle());
     }
 
     private void initializeServerUPnPComboBox() {

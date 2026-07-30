@@ -29,6 +29,7 @@ import forge.model.FModel;
 import forge.screens.match.MatchController;
 import forge.toolbox.FCardPanel;
 import forge.toolbox.FDisplayObject;
+import forge.util.RotatedRect;
 import forge.util.ThreadUtil;
 import io.sentry.Sentry;
 
@@ -557,26 +558,34 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
             return cards;
         }
 
-        public static Vector2 getTargetingArrowOrigin(FDisplayObject cardDisplay, boolean isTapped) {
+        public static Vector2 getTargetingArrowOrigin(FDisplayObject cardDisplay, boolean isTapped, float tappedAngle, boolean rotated180) {
             Vector2 origin = new Vector2(cardDisplay.screenPos.x, cardDisplay.screenPos.y);
 
             float left = PADDING;
             float top = PADDING;
             float w = cardDisplay.getWidth() - 2 * PADDING;
             float h = cardDisplay.getHeight() - 2 * PADDING;
-            if (w == h) { //adjust width if needed to make room for tapping
+            if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
                 w = h / ASPECT_RATIO;
             }
 
-            if (isTapped) { //rotate box if tapped
-                top += h - w;
-                float temp = w;
-                w = h;
-                h = temp;
+            //anchor to the card's drawn bounding box
+            float boxX = left, boxY = top, boxW = w, boxH = h;
+            if (isTapped) {
+                float[] bounds = RotatedRect.boundingBox(left, top, w, h,
+                        left + w / 2, top + h - w / 2, tappedAngle);
+                boxX = bounds[0];
+                boxY = bounds[1];
+                boxW = bounds[2];
+                boxH = bounds[3];
+            }
+            if (rotated180) { //the card also draws under an outer 180 degree rotation about the untapped rect center
+                boxX = 2 * (left + w / 2) - boxX - boxW;
+                boxY = 2 * (top + h / 2) - boxY - boxH;
             }
 
-            origin.x += left + w * TARGET_ORIGIN_FACTOR_X;
-            origin.y += top + h * TARGET_ORIGIN_FACTOR_Y;
+            origin.x += boxX + boxW * TARGET_ORIGIN_FACTOR_X;
+            origin.y += boxY + boxH * TARGET_ORIGIN_FACTOR_Y;
 
             return origin;
         }
@@ -587,15 +596,31 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 return null;
             }
 
-            return getTargetingArrowOrigin(this, isTapped());
+            return getTargetingArrowOrigin(this, isTapped(), getTappedAngle(), displayArea.rotateCards180);
         }
 
+        //no getTappedAngle override for rotated fields: the old negation emulated transform
+        //composition under Graphics' broken nested transforms (the inner idt wiped the outer
+        //180) and was only exact at 90 degrees. With nesting fixed, the plain angle inside
+        //the outer 180 wrap gives the table look at every angle - and at 90 it is
+        //pixel-identical to the old rendering (180-90 == bare +90).
+
         @Override
-        protected float getTappedAngle() {
+        protected boolean renderedCardContains(float x, float y) {
             if (displayArea != null && displayArea.rotateCards180) {
-                return -super.getTappedAngle(); //reverse tap angle if rotated 180 degrees
+                //draw() wraps the card in a 180 degree rotation about the untapped rect center,
+                //which input coordinates never see - undo it before the base hit-test
+                float padding = getPadding();
+                float w = getWidth() - 2 * padding;
+                float h = getHeight() - 2 * padding;
+                if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
+                    w = h / ASPECT_RATIO;
+                }
+                float centerX = padding + w / 2;
+                float centerY = padding + h / 2;
+                return super.renderedCardContains(2 * centerX - x, 2 * centerY - y);
             }
-            return super.getTappedAngle();
+            return super.renderedCardContains(x, y);
         }
 
         @Override
@@ -606,7 +631,7 @@ public abstract class VCardDisplayArea extends VDisplayArea implements ActivateH
                 float y = padding;
                 float w = getWidth() - 2 * padding;
                 float h = getHeight() - 2 * padding;
-                if (w == h) { //adjust width if needed to make room for tapping
+                if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
                     w = h / ASPECT_RATIO;
                 }
                 g.startRotateTransform(x + w / 2, y + h / 2, 180);

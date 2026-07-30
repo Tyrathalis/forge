@@ -13,6 +13,7 @@ import forge.game.card.CardView;
 import forge.game.zone.ZoneType;
 import forge.gui.control.PlaybackSpeed;
 import forge.screens.match.MatchController;
+import forge.util.RotatedRect;
 import forge.util.Utils;
 
 import static forge.assets.FSkin.getDefaultSkinFile;
@@ -68,7 +69,7 @@ public class FCardPanel extends FDisplayObject {
     }
 
     protected float getTappedAngle() {
-        return -90;
+        return -Forge.tapAngle;
     }
 
     protected boolean renderedCardContains(float x, float y) {
@@ -76,15 +77,13 @@ public class FCardPanel extends FDisplayObject {
         float top = PADDING;
         float w = getWidth() - 2 * PADDING;
         float h = getHeight() - 2 * PADDING;
-        if (w == h) { //adjust width if needed to make room for tapping
+        if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
             w = h / ASPECT_RATIO;
         }
 
-        if (tapped) { //rotate box if tapped
-            top += h - w;
-            float temp = w;
-            w = h;
-            h = temp;
+        if (tapped) { //card is drawn rotated about the tap pivot; test in its unrotated frame
+            return RotatedRect.contains(x, y, left, top, w, h,
+                    left + w / 2, top + h - w / 2, getTappedAngle());
         }
 
         return x >= left && x <= left + w && y >= top && y <= top + h;
@@ -109,11 +108,13 @@ public class FCardPanel extends FDisplayObject {
         float padding = getPadding();
         float x = padding - mod / 2;
         float y = padding - mod / 2;
-        float w = (getWidth() - 2 * padding) + mod;
-        float h = (getHeight() - 2 * padding) + mod;
-        if (w == h) { //adjust width if needed to make room for tapping
+        float w = getWidth() - 2 * padding;
+        float h = getHeight() - 2 * padding;
+        if (w > h / ASPECT_RATIO) { //battlefield slots are wider than the card to leave room for tapping
             w = h / ASPECT_RATIO;
         }
+        w += mod;
+        h += mod;
         float edgeOffset = w / 2f;
 
         if (!ZoneType.Battlefield.equals(card.getZone())) {
@@ -285,7 +286,7 @@ public class FCardPanel extends FDisplayObject {
                 percentage = 1;
                 progress = 0;
             }
-            float angle = -90 + (percentage * 90);
+            float angle = getTappedAngle() * (1 - percentage);
             g.startRotateTransform(x + edgeOffset, y + h - edgeOffset, angle);
             CardRenderer.drawCardWithOverlays(g, card, x, y, w, h, getStackPosition());
             g.endTransform();
