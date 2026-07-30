@@ -99,7 +99,7 @@ public final class AnvilRun {
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
-                    + "[-drillfile <txt> [-drillstop]] "
+                    + "[-drillfile <txt> [-drillstop]] [-forkobs] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -185,6 +185,26 @@ public final class AnvilRun {
             }
         }
         boolean drillStop = params.containsKey("drillstop");
+
+        // Fork-session store (M4 D3): -forkobs streams every completion's
+        // records to <obs>-forks.zst as a store frame of its own (synthetic
+        // game id, fork provenance header, per-dec wire hist) and announces
+        // the completion's OWN rollout seed to the bridge (per-completion
+        // sampled noise decorrelates). Off = byte-identical to before.
+        boolean forkObs = params.containsKey("forkobs");
+        if (forkObs && rolloutK <= 0) {
+            System.err.println("FATAL: -forkobs requires -rollout <k>");
+            System.exit(2);
+        }
+        if (forkObs && rolloutK > 99) {
+            // synthetic id = (gameIdx*100 + fp)*100 + r
+            System.err.println("FATAL: -forkobs supports -rollout k <= 99");
+            System.exit(2);
+        }
+        if (forkObs && !params.containsKey("obs")) {
+            System.err.println("FATAL: -forkobs requires -obs (replay fidelity rule)");
+            System.exit(2);
+        }
 
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
@@ -301,6 +321,12 @@ public final class AnvilRun {
             if (params.containsKey("obs")) {
                 try {
                     Obs.open(params.get("obs").get(0));
+                    if (forkObs) {
+                        String p = params.get("obs").get(0);
+                        Obs.openForks(p.endsWith(".zst")
+                                ? p.substring(0, p.length() - 4) + "-forks.zst"
+                                : p + "-forks.zst");
+                    }
                 } catch (java.io.IOException e) {
                     // The observation log is the corpus artifact — same rule as
                     // the results file: fail loud, never play unaccounted games.
@@ -388,7 +414,8 @@ public final class AnvilRun {
                 if (rolloutK > 0) {
                     game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
-                            type.toString(), labels, watchdogs, drillTurns, drillStop));
+                            type.toString(), labels, watchdogs, drillTurns, drillStop,
+                            forkObs));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
@@ -518,13 +545,14 @@ public final class AnvilRun {
         final PrintWriter labels;
         final ScheduledExecutorService watchdogs;
         final boolean stopAfter;
+        final boolean forkObs;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
         RolloutMonitor(Game game, int gameIdx, long seed, int k, int points,
                 boolean reshuffle, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs,
-                int[] drillTurns, boolean stopAfter) {
+                int[] drillTurns, boolean stopAfter, boolean forkObs) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -535,6 +563,7 @@ public final class AnvilRun {
             this.labels = labels;
             this.watchdogs = watchdogs;
             this.stopAfter = stopAfter;
+            this.forkObs = forkObs;
             if (drillTurns != null) {
                 // Drill mode: explicit fork turns from the manifest.
                 for (int t : drillTurns) {
@@ -615,8 +644,9 @@ public final class AnvilRun {
                     continue;
                 }
                 copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
-                Random rollRng = new Random(splitmix64(
-                        seed ^ (myFp * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L)));
+                long rollSeed = splitmix64(
+                        seed ^ (myFp * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L));
+                Random rollRng = new Random(rollSeed);
                 if (reshuffle) {
                     // Determinization: silently re-randomize both libraries
                     // (Zone.setCards — no shuffle events/triggers) so the K
@@ -636,9 +666,21 @@ public final class AnvilRun {
                 copy.getPhaseHandler().devResumeAtPriority();
                 copy.copyLastState();
                 String wid = "g" + gameIdx + ".f" + myFp + "r" + r;
-                Obs.startWireGame(copy, wid, seed, fmt, game);
-                bridge.gameStart(wid, seed, Obs.lastHeaderForBridge(copy));
+                if (forkObs) {
+                    // Per-completion identity + seed: synthetic unique game id
+                    // for the store/mu joins; the completion's own seed so
+                    // server-side sampled noise decorrelates across the K.
+                    Obs.startForkGame(copy, wid, (gameIdx * 100 + myFp) * 100 + r,
+                            rollSeed, fmt, game, gameIdx, myFp, r, targetTurn);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                } else {
+                    Obs.startWireGame(copy, wid, seed, fmt, game);
+                    bridge.gameStart(wid, seed, Obs.lastHeaderForBridge(copy));
+                }
                 MyRandom.setRandom(rollRng);
+                long compT0 = System.currentTimeMillis();
+                int wi = -1;
+                boolean crashed = false;
                 ScheduledFuture<?> clock = watchdogs.schedule(
                         () -> copy.setGameOver(GameEndReason.Draw),
                         ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
@@ -648,7 +690,6 @@ public final class AnvilRun {
                         draws++;
                     } else {
                         String w = copy.getOutcome().getWinningLobbyPlayer().getName();
-                        int wi = -1;
                         for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
                             if (copy.getRegisteredPlayers().get(j).getName().equals(w)) {
                                 wi = j;
@@ -663,6 +704,7 @@ public final class AnvilRun {
                     }
                 } catch (Throwable t) {
                     crashes++;
+                    crashed = true;
                     if (Boolean.getBoolean("anvil.crash.trace")) {
                         System.err.println("[rollout] completion crash g" + gameIdx
                                 + " fp" + myFp + " r" + r + ":");
@@ -674,6 +716,16 @@ public final class AnvilRun {
                         copy.setGameOver(GameEndReason.Draw);
                     }
                     MyRandom.setRandom(restoreRng(rngState));
+                    if (forkObs) {
+                        int turns = -1;
+                        try {
+                            turns = copy.getPhaseHandler().getTurn();
+                        } catch (Exception ignored) {
+                        }
+                        Obs.endForkGame(copy,
+                                crashed ? "crash" : (wi >= 0 ? "won" : "draw"),
+                                wi, turns, System.currentTimeMillis() - compT0);
+                    }
                     Obs.endWireGame(copy);
                 }
             }
