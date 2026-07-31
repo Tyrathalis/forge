@@ -44,6 +44,13 @@ cp "$JAR" "$OUT/$JAR_ASSET"
 
 echo "Hashing res tree + jar for the manifest (this takes a minute)..."
 MANIFEST="$OUT/manifest.txt"
+# Bridge format (the 07.31 URL-encoding incident): parsers shipped through
+# 07.29 never percent-encoded raw-file URLs, so any delta touching a path with
+# a space aborts on them. Plain entries therefore list ONLY the jar (a release
+# asset - its URL needs no encoding), which legacy clients can always apply;
+# the full file list rides on "#2 " lines those parsers skip as unknown
+# headers and fixed parsers prefer. A legacy client hops the jar, restarts,
+# and the fixed jar's self-heal pass completes res/ with encoded URLs.
 {
     echo "#forge-playable-manifest v1"
     echo "#version $VERSION"
@@ -52,10 +59,11 @@ MANIFEST="$OUT/manifest.txt"
     sha=$(sha256sum "$OUT/$JAR_ASSET" | cut -d' ' -f1)
     size=$(stat -c%s "$OUT/$JAR_ASSET")
     printf '%s\t%s\t%s\n' "$sha" "$size" "$JAR_ASSET"
+    printf '#2 %s\t%s\t%s\n' "$sha" "$size" "$JAR_ASSET"
     (cd forge-gui && find res -type f | sort | while read -r f; do
         sha=$(sha256sum "$f" | cut -d' ' -f1)
         size=$(stat -c%s "$f")
-        printf '%s\t%s\t%s\n' "$sha" "$size" "$f"
+        printf '#2 %s\t%s\t%s\n' "$sha" "$size" "$f"
     done)
 } > "$MANIFEST"
 
@@ -63,7 +71,7 @@ echo
 echo "Release assembled in $OUT:"
 ls -la "$OUT"
 echo
-echo "Manifest: $(grep -vc '^#' "$MANIFEST") files, commit $COMMIT"
+echo "Manifest: $(grep -c '^#2 ' "$MANIFEST") files (+ legacy jar-only entry), commit $COMMIT"
 echo "Publish with:"
 echo "  gh release create daily-snapshots --prerelease --title \"Playable snapshots\" --notes \"Rolling playable build\" || true"
 echo "  gh release upload daily-snapshots $OUT/* --clobber"

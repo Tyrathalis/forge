@@ -27,9 +27,21 @@ import java.util.function.Function;
  * Paths are relative to the install root; the launcher jar is the manifest
  * entry named by the #jar header, everything else lives under res/. Kept
  * deliberately not-JSON: line-per-file diffs cleanly and needs no parser.
+ *
+ * <p><b>Bridge format (the 07.31 URL-encoding incident):</b> parsers shipped
+ * through 07.29 build raw-file URLs without percent-encoding, so any delta
+ * touching a path with a space aborts - those clients can only ever complete a
+ * jar-only plan (the jar is a release asset; its URL needs no encoding). A
+ * bridge manifest therefore lists ONLY the jar as a plain entry, and carries
+ * the full file list on {@code #2 }-prefixed lines, which old parsers skip as
+ * unknown headers. This parser prefers the {@code #2 } set when present, so a
+ * fixed client sees the full delta while a legacy client hops the jar first
+ * and completes res/ on its next boot (the self-heal pass).
  */
 public final class DeltaManifest {
     public static final String HEADER = "#forge-playable-manifest v1";
+    /** Prefix of full-entry lines in a bridge manifest; invisible to ≤07.29 parsers. */
+    public static final String V2_ENTRY_PREFIX = "#2 ";
 
     public record Entry(String sha256, long size, String path) {
     }
@@ -71,6 +83,7 @@ public final class DeltaManifest {
     public static DeltaManifest parse(String text) throws IOException {
         String version = null, commit = null, jarPath = null;
         final Map<String, Entry> entries = new LinkedHashMap<>();
+        final Map<String, Entry> v2Entries = new LinkedHashMap<>();
         boolean headerSeen = false;
         for (final String rawLine : text.split("\n")) {
             final String line = rawLine.strip();
@@ -86,32 +99,39 @@ public final class DeltaManifest {
                     commit = line.substring("#commit ".length()).strip();
                 } else if (line.startsWith("#jar ")) {
                     jarPath = line.substring("#jar ".length()).strip();
+                } else if (line.startsWith(V2_ENTRY_PREFIX)) {
+                    addEntry(line.substring(V2_ENTRY_PREFIX.length()), v2Entries);
                 }
                 continue; //unknown # lines are future headers - skip, don't fail
             }
-            final String[] parts = line.split("\t");
-            if (parts.length != 3) {
-                throw new IOException("Malformed manifest line: " + line);
-            }
-            final long size;
-            try {
-                size = Long.parseLong(parts[1]);
-            } catch (final NumberFormatException ex) {
-                throw new IOException("Malformed manifest size: " + line);
-            }
-            final String path = parts[2];
-            if (isUnsafePath(path)) {
-                throw new IOException("Refusing unsafe manifest path: " + path);
-            }
-            entries.put(path, new Entry(parts[0].toLowerCase(), size, path));
+            addEntry(line, entries);
         }
         if (!headerSeen) {
             throw new IOException("Not a playable-fork delta manifest");
         }
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && v2Entries.isEmpty()) {
             throw new IOException("Empty delta manifest");
         }
-        return new DeltaManifest(version, commit, jarPath, entries);
+        //a bridge manifest's plain entries are the legacy jar-only hop; the #2 set is the truth
+        return new DeltaManifest(version, commit, jarPath, v2Entries.isEmpty() ? entries : v2Entries);
+    }
+
+    private static void addEntry(final String line, final Map<String, Entry> into) throws IOException {
+        final String[] parts = line.split("\t");
+        if (parts.length != 3) {
+            throw new IOException("Malformed manifest line: " + line);
+        }
+        final long size;
+        try {
+            size = Long.parseLong(parts[1]);
+        } catch (final NumberFormatException ex) {
+            throw new IOException("Malformed manifest size: " + line);
+        }
+        final String path = parts[2];
+        if (isUnsafePath(path)) {
+            throw new IOException("Refusing unsafe manifest path: " + path);
+        }
+        into.put(path, new Entry(parts[0].toLowerCase(), size, path));
     }
 
     /** Traversal must be judged per path SEGMENT - real res files (wastetown..tmx)
@@ -136,11 +156,21 @@ public final class DeltaManifest {
      * costs none.
      */
     public List<Entry> diffAgainst(Function<String, File> localFileResolver) throws IOException {
+        return diffAgainst(localFileResolver, false);
+    }
+
+    /**
+     * sizeOnly skips hashing when sizes agree - the cheap consistency probe the
+     * self-heal boot pass uses (a full hash pass over ~2GB of res is too slow
+     * to run speculatively; a same-size content change is caught by the next
+     * release's normal, hash-verified delta).
+     */
+    public List<Entry> diffAgainst(Function<String, File> localFileResolver, boolean sizeOnly) throws IOException {
         final List<Entry> changed = new ArrayList<>();
         for (final Entry entry : entries.values()) {
             final File local = localFileResolver.apply(entry.path());
             if (local == null || !local.isFile() || local.length() != entry.size()
-                    || !sha256(local).equals(entry.sha256())) {
+                    || (!sizeOnly && !sha256(local).equals(entry.sha256()))) {
                 changed.add(entry);
             }
         }

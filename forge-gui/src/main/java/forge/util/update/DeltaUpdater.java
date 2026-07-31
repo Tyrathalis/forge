@@ -8,6 +8,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -52,7 +53,13 @@ public final class DeltaUpdater {
 
     /** Null when the delta is implausible (runaway change count) - fall back. */
     public static Plan makePlan(DeltaManifest manifest, Function<String, File> localFileResolver) throws IOException {
-        final List<DeltaManifest.Entry> changed = manifest.diffAgainst(localFileResolver);
+        return makePlan(manifest, localFileResolver, false);
+    }
+
+    /** sizeOnly = the cheap self-heal probe; see {@link DeltaManifest#diffAgainst(Function, boolean)}. */
+    public static Plan makePlan(DeltaManifest manifest, Function<String, File> localFileResolver, boolean sizeOnly)
+            throws IOException {
+        final List<DeltaManifest.Entry> changed = manifest.diffAgainst(localFileResolver, sizeOnly);
         long totalBytes = 0;
         boolean jarChanged = false;
         for (final DeltaManifest.Entry entry : changed) {
@@ -80,11 +87,12 @@ public final class DeltaUpdater {
         for (final DeltaManifest.Entry entry : plan.changed()) {
             final String sourceUrl;
             if (entry.path().equals(plan.manifest().getJarPath())) {
-                sourceUrl = snapshotBaseUrl + entry.path(); //release asset
+                sourceUrl = snapshotBaseUrl + encodePath(entry.path()); //release asset
             } else if (entry.path().startsWith("res/")) {
-                sourceUrl = rawBaseUrl + commit + "/" + REPO_RES_PREFIX + entry.path().substring("res/".length());
+                sourceUrl = rawBaseUrl + commit + "/"
+                        + encodePath(REPO_RES_PREFIX + entry.path().substring("res/".length()));
             } else {
-                sourceUrl = snapshotBaseUrl + entry.path();
+                sourceUrl = snapshotBaseUrl + encodePath(entry.path());
             }
             final File staged = new File(stagingDir, entry.path());
             if (staged.getParentFile() != null && !staged.getParentFile().isDirectory()
@@ -135,6 +143,23 @@ public final class DeltaUpdater {
             }
         }
         dir.delete();
+    }
+
+    /**
+     * Percent-encodes each path segment for use in a URL, keeping the '/'
+     * separators. The res tree carries 30K+ paths with spaces plus # ' [ ] & !
+     * unicode and a literal % - raw concatenation produced URLs GitHub answers
+     * with HTTP 400 (or, for '#', silently truncates as a fragment).
+     */
+    static String encodePath(final String path) {
+        final StringBuilder sb = new StringBuilder(path.length() + 16);
+        for (final String segment : path.split("/", -1)) {
+            if (sb.length() > 0) {
+                sb.append('/');
+            }
+            sb.append(URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20"));
+        }
+        return sb.toString();
     }
 
     static String readUrlText(String url) throws IOException {

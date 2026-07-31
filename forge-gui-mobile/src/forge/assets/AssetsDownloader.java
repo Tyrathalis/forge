@@ -69,6 +69,7 @@ public class AssetsDownloader {
         boolean verifyUpdatable = false;
         boolean mandatory = false;
         Date snapsTimestamp = null, buildTimeStamp = null;
+        String snapsBuildTxt = null;
 
         String message;
         boolean connectedToInternet = Forge.getDeviceAdapter().isConnectedToInternet();
@@ -93,7 +94,8 @@ public class AssetsDownloader {
                 String snapsBuildDate = "", buildDate = "";
                 if (isSnapshots) {
                     URL url = new URL(snapsURL + "build.txt");
-                    snapsTimestamp = format.parse(FileUtil.readFileToString(url));
+                    snapsBuildTxt = FileUtil.readFileToString(url).strip();
+                    snapsTimestamp = format.parse(snapsBuildTxt);
                     snapsBuildDate = snapsTimestamp.toString();
                     if (!GuiBase.isAndroid()) {
                         buildDate = BuildInfo.getTimestamp().toString();
@@ -123,7 +125,7 @@ public class AssetsDownloader {
                     //in-place delta update instead of the full package + installer handoff)
                     DeltaUpdater.Plan deltaPlan = null;
                     if (!GuiBase.isAndroid() && isSnapshots) {
-                        deltaPlan = prepareDeltaPlan(snapsURL);
+                        deltaPlan = prepareDeltaPlan(snapsURL, false);
                         if (deltaPlan != null && deltaPlan.fileCount() == 0) {
                             //timestamps disagree but every file already matches - silently current
                             run(runnable);
@@ -148,7 +150,7 @@ public class AssetsDownloader {
                             run(runnable);
                     } else if (SOptionPane.showConfirmDialog(message, "New Version Available", "Update Now", "Update Later", true, true)) {
                         if (deltaPlan != null) {
-                            if (executeDeltaUpdate(deltaPlan, snapsURL)) {
+                            if (executeDeltaUpdate(deltaPlan, snapsURL, snapsBuildTxt)) {
                                 return; //applied; restarting or handing off to the applier
                             }
                             //delta failed mid-flight - nothing was applied; fall through to the installer
@@ -173,6 +175,30 @@ public class AssetsDownloader {
                     }
                 } else {
                     if (!GuiBase.isAndroid()) {
+                        //self-heal (the 07.31 bridge): after a jar-only hop through a bridge
+                        //manifest - or any manual jar swap - the local build EQUALS the
+                        //published one, so the strictly-newer gate above never re-opens and
+                        //res/ would silently stay stale under the new jar. One size-only
+                        //diff per published build, remembered in a stamp file, completes
+                        //the update; steady-state boots cost one stamp read.
+                        if (isSnapshots && snapsBuildTxt != null && snapsTimestamp != null
+                                && snapsTimestamp.equals(BuildInfo.getTimestamp())
+                                && !snapsBuildTxt.equals(readResSyncStamp())) {
+                            final DeltaUpdater.Plan healPlan = prepareDeltaPlan(snapsURL, true);
+                            if (healPlan != null && healPlan.fileCount() == 0) {
+                                writeResSyncStamp(snapsBuildTxt); //complete install - never probe this build again
+                            } else if (healPlan != null) {
+                                Forge.getSplashScreen().prepareForDialogs();
+                                message = "This build is current, but " + healPlan.fileCount() + " game files ("
+                                        + humanReadableSize(healPlan.totalBytes()) + ") don't match it yet\n"
+                                        + "(a two-stage update or an interrupted download).\n"
+                                        + "Complete the update now?";
+                                if (SOptionPane.showConfirmDialog(message, "Complete Update", "Download", "Later", true, true)
+                                        && executeDeltaUpdate(healPlan, snapsURL, snapsBuildTxt)) {
+                                    return; //applied; restarting or handing off to the applier
+                                }
+                            }
+                        }
                         run(runnable);
                         return;
                     }
@@ -350,7 +376,7 @@ public class AssetsDownloader {
         }
     }
 
-    private static DeltaUpdater.Plan prepareDeltaPlan(String snapshotBaseUrl) {
+    private static DeltaUpdater.Plan prepareDeltaPlan(String snapshotBaseUrl, boolean sizeOnly) {
         try {
             final File runningJar = getRunningJar();
             if (runningJar == null) {
@@ -361,15 +387,31 @@ public class AssetsDownloader {
                 return null;
             }
             Forge.getSplashScreen().getProgressBar().setDescription("Comparing against update...");
-            return DeltaUpdater.makePlan(manifest, localFileResolver(manifest, runningJar));
+            return DeltaUpdater.makePlan(manifest, localFileResolver(manifest, runningJar), sizeOnly);
         } catch (final Exception ex) {
             ex.printStackTrace();
             return null;
         }
     }
 
+    /** The published build.txt content res/ was last brought fully in line with. */
+    private static File resSyncStampFile() {
+        return new File(ASSETS_DIR, "res-sync.txt");
+    }
+
+    private static String readResSyncStamp() {
+        final File stamp = resSyncStampFile();
+        return stamp.isFile() ? FileUtil.readFileToString(stamp).strip() : "";
+    }
+
+    private static void writeResSyncStamp(String publishedBuildTxt) {
+        if (publishedBuildTxt != null) {
+            FileUtil.writeFile(resSyncStampFile(), publishedBuildTxt);
+        }
+    }
+
     /** True = update applied; the app is restarting (res-only) or exiting into the jar applier. */
-    private static boolean executeDeltaUpdate(DeltaUpdater.Plan plan, String snapshotBaseUrl) {
+    private static boolean executeDeltaUpdate(DeltaUpdater.Plan plan, String snapshotBaseUrl, String publishedBuildTxt) {
         final File stagingDir = new File(ASSETS_DIR, DeltaUpdater.STAGING_DIR_NAME);
         try {
             final File runningJar = getRunningJar();
@@ -378,6 +420,10 @@ public class AssetsDownloader {
                     Forge.getSplashScreen().getProgressBar().setDescription("Downloading update (" + done + "/" + total + ")"));
             //everything downloaded and hash-verified - only now start changing the install
             DeltaUpdater.applyResFiles(plan, stagingDir, localFileResolver(plan.manifest(), runningJar));
+            //res/ now matches the published build - the self-heal pass need not re-probe it.
+            //(A jar-only bridge plan writes it too: harmless, since the strictly-newer gate,
+            //not the stamp, owns the next boot's decision when builds differ.)
+            writeResSyncStamp(publishedBuildTxt);
             if (plan.jarChanged()) {
                 //the running jar cannot be replaced on every platform: hand off to the applier
                 //spawned from the STAGED jar, which retries the swap after this process exits

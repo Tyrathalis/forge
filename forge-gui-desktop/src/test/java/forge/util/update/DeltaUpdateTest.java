@@ -164,6 +164,127 @@ public class DeltaUpdateTest {
         DeltaUpdater.deleteRecursively(root);
     }
 
+    @Test
+    public void pathEncodingIsSegmentWiseAndExact() {
+        Assert.assertEquals(DeltaUpdater.encodePath("res/adventure/Realm of Legends/x.dck"),
+                "res/adventure/Realm%20of%20Legends/x.dck");
+        Assert.assertEquals(DeltaUpdater.encodePath("res/a#b.txt"), "res/a%23b.txt", "# would truncate as a fragment");
+        Assert.assertEquals(DeltaUpdater.encodePath("res/100%.txt"), "res/100%25.txt", "literal % must not double-decode");
+        Assert.assertEquals(DeltaUpdater.encodePath("res/año.txt"), "res/a%C3%B1o.txt", "UTF-8 percent-encoding");
+        Assert.assertEquals(DeltaUpdater.encodePath("res/wastetown..tmx"), "res/wastetown..tmx", "dots pass through");
+        Assert.assertEquals(DeltaUpdater.encodePath("res/a [v2] (old) & new!.txt"),
+                "res/a%20%5Bv2%5D%20%28old%29%20%26%20new%21.txt");
+    }
+
+    @Test
+    public void bridgeManifestPrefersV2EntriesAndValidatesThem() throws Exception {
+        //bridge manifest: plain entry = the legacy jar-only hop; "#2 " lines = the
+        //full list, invisible to ≤07.29 parsers, preferred by this one
+        final DeltaManifest bridge = DeltaManifest.parse(String.join("\n",
+                DeltaManifest.HEADER,
+                "#commit " + COMMIT,
+                "#jar forge-playable.jar",
+                "AA\t10\tforge-playable.jar",
+                "#2 AA\t10\tforge-playable.jar",
+                "#2 BB\t20\tres/adventure/Realm of Legends/deck.dck"));
+        int n = 0;
+        for (@SuppressWarnings("unused") final DeltaManifest.Entry e : bridge.getEntries()) {
+            n++;
+        }
+        Assert.assertEquals(n, 2, "the #2 set is the truth for this parser");
+        Assert.assertNotNull(bridge.getEntry("res/adventure/Realm of Legends/deck.dck"));
+        //v2 lines get the same safety validation as plain ones
+        Assert.assertThrows(IOException.class, () -> DeltaManifest.parse(String.join("\n",
+                DeltaManifest.HEADER, "AA\t1\tres/ok", "#2 AA\t1\tres/../escape")));
+    }
+
+    @Test
+    public void sizeOnlyDiffSkipsContentButNotSizeOrPresence() throws Exception {
+        final File root = Files.createTempDirectory("delta-sizeonly").toFile();
+        final File sameSize = new File(root, "res/samesize.txt");
+        write(sameSize, "AAAA".getBytes(StandardCharsets.UTF_8));
+        final DeltaManifest manifest = DeltaManifest.parse(String.join("\n",
+                DeltaManifest.HEADER,
+                "#commit " + COMMIT,
+                "1111111111111111111111111111111111111111111111111111111111111111\t4\tres/samesize.txt",
+                "2222222222222222222222222222222222222222222222222222222222222222\t9\tres/missing.txt"));
+        final Function<String, File> resolver = path -> new File(root, path);
+        Assert.assertEquals(manifest.diffAgainst(resolver, false).size(), 2, "hash pass sees the content mismatch");
+        Assert.assertEquals(manifest.diffAgainst(resolver, true).size(), 1, "size-only pass trusts equal sizes");
+        Assert.assertEquals(manifest.diffAgainst(resolver, true).get(0).path(), "res/missing.txt");
+        DeltaUpdater.deleteRecursively(root);
+    }
+
+    @Test
+    public void hostileFilenamesSurviveHttpDownload() throws Exception {
+        //v7 field failure: raw.githubusercontent.com answered HTTP 400 for
+        //.../res/adventure/Realm of Legends/decks/legends/nicol_bolas.dck - the URL
+        //builder never percent-encoded paths, and the res tree carries 30K+ paths
+        //with spaces plus # ' [ ] ( ) & ! , unicode and one literal %. file:// URLs
+        //are too lenient to catch this; a real HTTP server rejects raw spaces in
+        //the request line just like GitHub does, so this runs the production
+        //download flow over actual HTTP.
+        final String[] hostile = {
+                "res/adventure/Realm of Legends/decks/legends/nicol_bolas.dck",
+                "res/cards/wastetown..tmx",
+                "res/cards/sharp#name [v2] (old) & more!.txt",
+                "res/cards/año’s card, 100%.txt",
+        };
+        final File root = Files.createTempDirectory("delta-http").toFile();
+        final File docroot = new File(root, "docroot");
+        final File repoRes = new File(docroot, "raw/" + COMMIT + "/forge-gui/res");
+        final StringBuilder manifestText = new StringBuilder(String.join("\n",
+                DeltaManifest.HEADER,
+                "#version test",
+                "#commit " + COMMIT,
+                "#jar forge-playable.jar"));
+        final File jar = new File(docroot, "release/forge-playable.jar");
+        write(jar, "jar-bytes".getBytes(StandardCharsets.UTF_8));
+        manifestText.append("\n").append(line(jar, "forge-playable.jar"));
+        for (final String path : hostile) {
+            final File f = new File(repoRes, path.substring("res/".length()));
+            write(f, ("content of " + path).getBytes(StandardCharsets.UTF_8));
+            manifestText.append("\n").append(line(f, path));
+        }
+        write(new File(docroot, "release/" + DeltaUpdater.MANIFEST_NAME),
+                manifestText.toString().getBytes(StandardCharsets.UTF_8));
+
+        final com.sun.net.httpserver.HttpServer server =
+                com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            //getRequestURI().getPath() percent-DECODES - the file lookup sees real names
+            final File f = new File(docroot, exchange.getRequestURI().getPath().substring(1));
+            if (f.isFile()) {
+                final byte[] bytes = Files.readAllBytes(f.toPath());
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+            } else {
+                exchange.sendResponseHeaders(404, -1);
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            final String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            final DeltaManifest manifest = DeltaUpdater.fetchManifest(base + "/release/");
+            Assert.assertNotNull(manifest, "manifest fetch over http");
+            final File install = new File(root, "install"); //empty: everything is in the plan
+            final Function<String, File> resolver = path ->
+                    path.equals(manifest.getJarPath()) ? new File(install, "forge.jar") : new File(install, path);
+            final DeltaUpdater.Plan plan = DeltaUpdater.makePlan(manifest, resolver);
+            Assert.assertEquals(plan.fileCount(), 1 + hostile.length);
+
+            final File staging = new File(root, "staging");
+            DeltaUpdater.download(plan, base + "/release/", base + "/raw/", staging, null);
+            for (final String path : hostile) {
+                Assert.assertEquals(read(new File(staging, path)), "content of " + path);
+            }
+        } finally {
+            server.stop(0);
+            DeltaUpdater.deleteRecursively(root);
+        }
+    }
+
     private static String line(File file, String path) throws IOException {
         return DeltaManifest.sha256(file) + "\t" + file.length() + "\t" + path;
     }
