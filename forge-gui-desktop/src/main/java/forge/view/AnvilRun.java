@@ -581,6 +581,12 @@ public final class AnvilRun {
 
         @Subscribe
         public void onPriority(GameEventPlayerPriority ev) {
+            if (game.isGameOver()) {
+                // A hard-capped game is setGameOver(Draw) by the runner but
+                // its ABANDONED thread may still be playing; never fork more
+                // completions from it (d6-run10 iter-9 cascade).
+                return;
+            }
             if (targets.isEmpty() || ev.phase() != PhaseType.MAIN1) {
                 return;
             }
