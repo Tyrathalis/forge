@@ -169,7 +169,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
                     }
                 }
 
-                if (Forge.isLandscapeMode() && !alwaysRenderHorizontal) {
+                if (isSidebarLayout() && !alwaysRenderHorizontal) {
                     //render vertically in Landscape mode
                     float y = 0;
                     for (FDisplayObject child : getChildren()) {
@@ -250,7 +250,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
 
         @Override
         public void drawOverlay(Graphics g) {
-            if (Forge.isLandscapeMode()) {
+            if (isSidebarLayout()) {
                 //in landscape mode, draw left border for header
                 g.drawLine(LINE_THICKNESS, getLineColor(), 0, 0, 0, getHeight());
                 if (showBackButtonInLandscapeMode()) { //draw top border for back button
@@ -277,7 +277,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
         protected void doLayout(float width, float height) {
             float x = 0;
             if (btnBack != null) {
-                if (Forge.isLandscapeMode()) { //show back button at bottom for landscape mode
+                if (isSidebarLayout()) { //show back button at bottom for sidebar layout
                     if (showBackButtonInLandscapeMode()) {
                         float backButtonHeight = HEIGHT * 0.7f;
                         btnBack.setBounds(0, height - backButtonHeight, width, backButtonHeight);
@@ -295,6 +295,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
 
         @Override
         public float doLandscapeLayout(float screenWidth, float screenHeight) {
+            setSidebarLayout(true); //before setBounds - it triggers doLayout
             float width = HEIGHT * 1.25f;
             setBounds(screenWidth - width, 0, width, screenHeight);
             return width;
@@ -410,7 +411,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
 
             @Override
             public void draw(Graphics g) {
-                boolean isLandscapeMode = Forge.isLandscapeMode();
+                boolean sidebarTabs = parentScreen.tabHeader.isSidebarLayout();
 
                 float w = getWidth();
                 float h = getHeight();
@@ -421,7 +422,7 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
                 w -= 2 * padding;
 
                 //draw caption and icon
-                if (parentScreen.showCompactTabs() && !isLandscapeMode) {
+                if (parentScreen.showCompactTabs() && !sidebarTabs) {
                     h -= 2 * padding;
                     if (icon == null) {
                         g.drawText(caption, TAB_FONT, getTabForeColor(), padding, padding, w, h, false, Align.center, true);
@@ -472,8 +473,8 @@ public class TabPageScreen<T extends TabPageScreen<T>> extends FScreen {
                 }
 
                 //draw right/bottom border if needed
-                if (parentScreen.tabHeader.finalVisibleTab != this || isLandscapeMode) {
-                    if (isLandscapeMode) {
+                if (parentScreen.tabHeader.finalVisibleTab != this || sidebarTabs) {
+                    if (sidebarTabs) {
                         float y = getHeight() - Header.LINE_THICKNESS / 2;
                         g.drawLine(Header.LINE_THICKNESS, TabHeader.SEPARATOR_COLOR, 0, y, getWidth(), y);
                     }

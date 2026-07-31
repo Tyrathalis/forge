@@ -90,6 +90,7 @@ public abstract class FScreen extends FContainer {
         if ((GuiBase.isAndroid() && Forge.isLandscapeMode())||(width > height)) {
             doLandscapeLayout(width, height); //handle landscape layout special
         } else if (header != null) {
+            header.setSidebarLayout(false); //before setBounds - it triggers the header's doLayout
             header.setBounds(0, 0, width, header.getPreferredHeight());
             doLayout(header.getHeight(), width, height);
         } else {
@@ -106,6 +107,7 @@ public abstract class FScreen extends FContainer {
         if (header != null) {
             float headerWidth = header.doLandscapeLayout(width, height);
             if (headerWidth == 0) { //if header doesn't support landscape layout, make room for it at top
+                header.setSidebarLayout(false);
                 header.setBounds(0, 0, width, header.getPreferredHeight());
                 startY += header.getHeight();
             }
@@ -202,6 +204,21 @@ public abstract class FScreen extends FContainer {
 
         public abstract float getPreferredHeight();
 
+        //Which layout FScreen actually chose for this header. MenuHeader's sidebar
+        //branches key on this rather than re-deriving from Forge.isLandscapeMode():
+        //on desktop the two can disagree - a landscape window whose HOSTED screen is
+        //narrower than tall (the home sidebar takes a slice of the width) lays out
+        //portrait-style - and re-deriving painted the menu as a one-item "sidebar"
+        //inside the top header strip, leaving every other mode unselectable.
+        private boolean sidebarLayout;
+
+        public boolean isSidebarLayout() {
+            return sidebarLayout;
+        }
+        public void setSidebarLayout(boolean sidebarLayout0) {
+            sidebarLayout = sidebarLayout0;
+        }
+
         //handle when screen activated
         protected void onScreenActivate() {
         }
@@ -269,7 +286,7 @@ public abstract class FScreen extends FContainer {
 
         @Override
         public void drawOverlay(Graphics g) {
-            if (Forge.isLandscapeMode() && displaySidebarForLandscapeMode()) {
+            if (isSidebarLayout()) {
                 //in landscape mode, draw left border for header
                 g.drawLine(LINE_THICKNESS, getLineColor(), 0, 0, 0, getHeight());
                 return;
@@ -283,7 +300,7 @@ public abstract class FScreen extends FContainer {
 
             menu.hide(); //ensure menu hidden when screen resized
 
-            if (Forge.isLandscapeMode() && displaySidebarForLandscapeMode()) {
+            if (isSidebarLayout()) {
                 //for landscape mode, hide menu button and display menu as sidebar
                 btnBack.setBounds(0, 0, 0, 0);
                 lblCaption.setBounds(0, 0, 0, 0);
@@ -298,7 +315,7 @@ public abstract class FScreen extends FContainer {
         @Override
         protected void onScreenActivate() {
             //ensure menu layout refreshed for sidebar when screen activated
-            if (Forge.isLandscapeMode() && displaySidebarForLandscapeMode()) {
+            if (isSidebarLayout()) {
                 menu.hide();
                 menu.show(getLeft(), 0, getWidth(), getHeight());
             }
@@ -311,6 +328,7 @@ public abstract class FScreen extends FContainer {
         @Override
         public float doLandscapeLayout(float screenWidth, float screenHeight) {
             if (displaySidebarForLandscapeMode()) {
+                setSidebarLayout(true); //before setBounds - it triggers doLayout
                 float width = screenHeight * HomeScreen.MAIN_MENU_WIDTH_FACTOR * 0.8f;
                 setBounds(screenWidth - width, 0, width, screenHeight);
                 return width;
