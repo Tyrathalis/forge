@@ -89,6 +89,13 @@ public final class Obs {
     private static long forkFileOffset;
     private static CountingStream forkCounting;
     private static OutputStream forkFrame;
+    private static Game forkCurrentGame; // frame owner — the mainline's
+    // currentGame analog. A game hard-cap ABANDONS its thread mid-completion
+    // (TimeLimitedCodeBlock); the abandoned thread keeps running its
+    // completions, and without this binding its fork-frame calls interleave
+    // with the live game's — found live in d6-run10 iter-9 (its interrupted
+    // thread's getChannel().position() closed the fd: every later frame was
+    // a clen-0 phantom).
     private static int forkGameIdx = -1;
     private static long forkGameSeed;
     private static long forkRecs;
@@ -309,7 +316,11 @@ public final class Obs {
      */
     public static synchronized void startForkGame(Game g, String wireId, int synthG,
             long rollSeed, String fmt, Game parent, int parentG, int fp, int r, int tt) {
-        if (forkFile == null) {
+        if (forkFile == null || (parent != null && sessions.get(parent) == null)) {
+            // No parent session = the parent's mainline frame already closed
+            // (hard-cap abandoned thread still running its completions):
+            // wire-only, never the shared frame file. Under --drill-sample
+            // the g=-1 header makes the server refuse, so nothing trains.
             startWireGame(g, wireId, rollSeed, fmt, parent);
             return;
         }
@@ -330,6 +341,7 @@ public final class Obs {
         s.headerRecord = sb.toString();
         sessions.put(g, s);
         lastStartedSession = s;
+        forkCurrentGame = g;
         forkGameIdx = synthG;
         forkGameSeed = rollSeed;
         forkRecs = 0;
@@ -354,6 +366,12 @@ public final class Obs {
             int turns, long ms) {
         Session s = sessions.get(g);
         if (s == null || !s.forkStore) {
+            return;
+        }
+        if (g != forkCurrentGame) {
+            // Stale completion (its frame was defensively closed by a later
+            // startForkGame): session cleanup only — never the live frame.
+            endWireGame(g);
             return;
         }
         if (forkFrame != null) {
@@ -637,10 +655,12 @@ public final class Obs {
         }
         if (ses.store) {
             write(sb);
-        } else if (ses.forkStore && forkFrame != null) {
+        } else if (ses.forkStore && forkFrame != null && g == forkCurrentGame) {
             // Fork frames store the WIRE composite (dec + serve-time hist):
             // the first windows' history includes parent-game entries a
             // loader-side reconstruction from frame records could never see.
+            // Owner check: a hard-cap-abandoned thread's completion must not
+            // write into the live game's frame.
             writeFork(new StringBuilder(lastDecOf(ses)));
         }
         return s;
@@ -667,7 +687,7 @@ public final class Obs {
             return;
         }
         boolean toStore = ses.store && frame != null;
-        boolean toFork = ses.forkStore && forkFrame != null;
+        boolean toFork = ses.forkStore && forkFrame != null && g == forkCurrentGame;
         if (toStore || toFork) {
             StringBuilder sb = new StringBuilder(160);
             sb.append("{\"k\":\"ret\",\"s\":").append(s).append(",\"v\":");
@@ -1112,6 +1132,7 @@ public final class Obs {
         }
         forkFrame = null;
         forkCounting = null;
+        forkCurrentGame = null;
         forkGameIdx = -1;
     }
 
