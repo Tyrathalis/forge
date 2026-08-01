@@ -253,17 +253,21 @@ public class ChronicleOpenScreen extends FScreen {
         return ChronicleHub.boosterArtKey(item.editionCode);
     }
 
-    /** Kick fetches for every card, then hold (bounded) until the files are local. */
+    /** Kick fetches for every card (on the EDT — the fetcher asserts it), then hold (bounded) until the files are local. */
     private void preloadImages(List<ChronicleRevealScene.RevealCard> staged) {
         List<String> keys = new ArrayList<>();
         for (ChronicleRevealScene.RevealCard rc : staged) {
             keys.add(rc.card.getImageKey(false));
-            new CachedCardImage(rc.card) {
-                @Override
-                public void onImageFetched() {
-                }
-            };
         }
+        FThreads.invokeInEdtNowOrLater(() -> {
+            for (ChronicleRevealScene.RevealCard rc : staged) {
+                new CachedCardImage(rc.card) {
+                    @Override
+                    public void onImageFetched() {
+                    }
+                };
+            }
+        });
         long deadline = System.currentTimeMillis() + PRELOAD_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
             boolean allPresent = true;

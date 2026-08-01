@@ -104,8 +104,9 @@ public final class ChronicleHub {
             }
             return ImageKeys.BOOSTER_PREFIX + code;
         });
-        GuiBase.getInterface().getImageFetcher().fetchImage(key, () -> {
-        });
+        //fetchImage asserts the EDT; callers include background staging threads
+        FThreads.invokeInEdtNowOrLater(() -> GuiBase.getInterface().getImageFetcher().fetchImage(key, () -> {
+        }));
         return key;
     }
 }
