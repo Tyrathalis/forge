@@ -14,7 +14,6 @@ import com.badlogic.gdx.utils.Align;
 import forge.CachedCardImage;
 import forge.Forge;
 import forge.Graphics;
-import forge.ImageKeys;
 import forge.assets.FSkinColor;
 import forge.assets.FSkinFont;
 import forge.card.CardRenderer;
@@ -191,15 +190,24 @@ public class ChronicleOpenScreen extends FScreen {
             List<ChronicleRevealScene.RevealPack> packs = new ArrayList<>();
             List<ChronicleRevealScene.RevealCard> allStaged = new ArrayList<>();
             Set<String> glinted = new HashSet<>(); //one glint per identity across the whole opening
+            Map<String, Integer> batchCopies = new LinkedHashMap<>(); //identity -> copies opened this batch
 
             for (SealedItem item : toOpen) {
                 List<PaperCard> cards = controller.openSealed(item.itemId);
                 long openingSeq = log.all().get(log.all().size() - 1).seq;
+                for (PaperCard card : cards) {
+                    batchCopies.merge(identityOf(card), 1, Integer::sum);
+                }
 
                 List<ChronicleRevealScene.RevealCard> staged = new ArrayList<>();
                 for (PaperCard card : cards) {
+                    //first pull = the log's oldest sighting is this opening AND the collection
+                    //holds no copies beyond this batch's. The count cross-check covers runs
+                    //whose early openings predate the acquisition log (it shipped mid-run):
+                    //log-blind history would otherwise glint every re-pull as new.
                     List<ChronicleAcquisitionLog.Entry> events = log.eventsFor(card);
-                    boolean firstPull = !events.isEmpty() && events.get(0).seq == openingSeq;
+                    boolean firstPull = !events.isEmpty() && events.get(0).seq == openingSeq
+                            && controller.getRun().collection.count(card) == batchCopies.get(identityOf(card));
                     staged.add(new ChronicleRevealScene.RevealCard(card, firstPull,
                             pricing.isNotable(card.getName()), pricing.buylistCents(card)));
                 }
@@ -210,8 +218,7 @@ public class ChronicleOpenScreen extends FScreen {
                 //a duplicate inside this opening only glints its first appearance
                 List<ChronicleRevealScene.RevealCard> deduped = new ArrayList<>();
                 for (ChronicleRevealScene.RevealCard rc : staged) {
-                    String identity = rc.card.getName() + "|" + rc.card.getEdition() + "|" + rc.card.getArtIndex();
-                    if (rc.firstPull && !glinted.add(identity)) {
+                    if (rc.firstPull && !glinted.add(identityOf(rc.card))) {
                         rc = new ChronicleRevealScene.RevealCard(rc.card, false, rc.notable, rc.valueCents);
                     }
                     deduped.add(rc);
@@ -235,24 +242,15 @@ public class ChronicleOpenScreen extends FScreen {
         });
     }
 
+    private static String identityOf(PaperCard card) {
+        return card.getName() + "|" + card.getEdition() + "|" + card.getArtIndex() + "|" + card.isFoil();
+    }
+
     private String wrapperArtKey(SealedItem item) {
-        //starters try the tournament-pack product shot first; both fall back to booster art
-        if (item.kind == SealedItem.Kind.STARTER) {
-            String key = ImageKeys.TOURNAMENTPACK_PREFIX + item.editionCode;
-            new CachedCardImage(key) {
-                @Override
-                public void onImageFetched() {
-                }
-            };
-            return key;
-        }
-        String key = ImageKeys.BOOSTER_PREFIX + item.editionCode;
-        new CachedCardImage(key) {
-            @Override
-            public void onImageFetched() {
-            }
-        };
-        return key;
+        //booster art for every product: the fetcher has no o: (tournament pack)
+        //URL lookup, so starter product shots can't download — the set's booster
+        //art is the period identity either way
+        return ChronicleHub.boosterArtKey(item.editionCode);
     }
 
     /** Kick fetches for every card, then hold (bounded) until the files are local. */

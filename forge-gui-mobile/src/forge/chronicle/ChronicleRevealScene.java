@@ -68,9 +68,9 @@ public class ChronicleRevealScene extends FDisplayObject {
             return rarityRank() >= 3 || notable;
         }
 
-        /** Worth a brief hold in the cascade, not a full stop. */
+        /** Worth a brief hold in the cascade, not a full stop: any non-jackpot first pull. */
         boolean softPause() {
-            return firstPull && rarityRank() == 2;
+            return firstPull && !jackpot();
         }
     }
 
@@ -101,10 +101,11 @@ public class ChronicleRevealScene extends FDisplayObject {
     private static final float TEAR_FLY_DURATION = 0.45f;
     private static final float FLIP_DURATION = 0.32f;
     private static final float FLY_DURATION = 0.22f;
-    private static final float CASCADE_FLIP_DURATION = 0.13f;
-    private static final float CASCADE_FLY_DURATION = 0.09f;
-    private static final float CASCADE_DWELL = 0.05f;        //face-up beat between flip and fly in the cascade
-    private static final float SOFT_PAUSE_HOLD = 0.7f;
+    private static final float CASCADE_FLIP_DURATION = 0.18f;
+    private static final float CASCADE_FLY_DURATION = 0.12f;
+    private static final float CASCADE_DWELL = 0.18f;        //face-up beat between flip and fly in the cascade
+    private static final float SOFT_PAUSE_HOLD = 0.75f;      //new uncommons
+    private static final float SOFT_PAUSE_HOLD_COMMON = 0.45f; //new commons/basics
     private static final float BUILDUP_DURATION = 0.9f;
     private static final float BUILDUP_BATCH_DURATION = 0.35f;
     private static final float GLINT_DURATION = 0.8f;
@@ -344,7 +345,8 @@ public class ChronicleRevealScene extends FDisplayObject {
                     }
                     break;
                 case CARD_DOWN:
-                    break; //waiting on the player (ceremony) — cascade never rests here
+                    phaseT += dt; //idle, but the pause-prompt pulse keeps breathing
+                    break;
                 case BUILDUP:
                     phaseT += dt;
                     if (phaseT >= buildupDuration()) {
@@ -360,7 +362,10 @@ public class ChronicleRevealScene extends FDisplayObject {
                 case CARD_UP:
                     phaseT += dt;
                     if (autoAdvancing()) {
-                        float hold = current().softPause() ? SOFT_PAUSE_HOLD : CASCADE_DWELL;
+                        RevealCard rc = current();
+                        float hold = rc.softPause()
+                                ? (rc.rarityRank() == 2 ? SOFT_PAUSE_HOLD : SOFT_PAUSE_HOLD_COMMON)
+                                : CASCADE_DWELL;
                         softHoldT += dt;
                         if (softHoldT >= hold) {
                             startFly();
@@ -492,10 +497,37 @@ public class ChronicleRevealScene extends FDisplayObject {
         if (currentUp) {
             shown.add(current().card);
         }
-        if (!shown.isEmpty()) {
-            CardZoom.show(shown, shown.size() - 1, null);
+        if (shown.isEmpty()) {
+            return true;
         }
+        //a press on the revealed row opens THAT card, not the latest
+        int index = rowIndexAt(x, y);
+        if (index < 0) {
+            index = shown.size() - 1;
+        }
+        CardZoom.show(shown, index, null);
         return true;
+    }
+
+    /** Which revealed-row mini sits under (x, y), or -1 outside the row. Mirrors drawRevealedRow geometry. */
+    private int rowIndexAt(float x, float y) {
+        float h = getHeight();
+        float rowH = h * 0.16f;
+        if (revealedRow.isEmpty() || y < h - rowH) {
+            return -1;
+        }
+        float miniH = rowH - PADDING;
+        float miniW = miniH / FCardPanel.ASPECT_RATIO;
+        float step = miniW * 0.55f;
+        int shown = Math.min(revealedRow.size(), 8);
+        float totalW = miniW + (shown - 1) * step;
+        float startX = (getWidth() - totalW) / 2;
+        if (x < startX || x > startX + totalW) {
+            return -1;
+        }
+        //overlapped fans: the rightmost mini under the press wins, matching what's visible on top
+        int slot = Math.min(shown - 1, (int) ((x - startX) / step));
+        return revealedRow.size() - shown + slot;
     }
 
     //--- drawing -------------------------------------------------------------
@@ -600,8 +632,20 @@ public class ChronicleRevealScene extends FDisplayObject {
 
         drawRevealedRow(g, w, h, rowH);
 
-        if (batch && !cascading && phase == Phase.CARD_UP) {
-            drawHint(g, hintText("lblChronicleTapToResume", "Tap to resume"), w, h, rowH);
+        //batch auto-pause: an unmissable prompt — the tiny hint was invisible in play
+        if (batch && !cascading && (phase == Phase.CARD_UP || phase == Phase.CARD_DOWN)) {
+            String prompt = hintText("lblChronicleTapToContinue", "Tap to continue") + "  ▸";
+            float pw = Utils.scale(160);
+            float ph = Utils.scale(28);
+            float px = (w - pw) / 2;
+            float py = h - rowH - ph - Utils.scale(10);
+            float pulse = 0.75f + 0.25f * (float) Math.sin(phaseT * Math.PI * 1.6);
+            g.setAlphaComposite(pulse);
+            g.fillRoundRect(FSkinColor.getStandardColor(new Color(0.12f, 0.12f, 0.16f, 0.92f)).getColor(),
+                    px, py, pw, ph, ph / 2);
+            g.drawRoundRect(Utils.scale(1), Color.LIGHT_GRAY, px, py, pw, ph, ph / 2);
+            g.drawText(prompt, FSkinFont.get(13), Color.WHITE, px, py, pw, ph, false, Align.center, true);
+            g.resetAlphaComposite();
         }
     }
 

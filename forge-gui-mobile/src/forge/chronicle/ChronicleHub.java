@@ -1,16 +1,21 @@
 package forge.chronicle;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
+import forge.ImageKeys;
 import forge.gui.FThreads;
+import forge.gui.GuiBase;
 import forge.gamemodes.chronicle.ChronicleController;
 import forge.gamemodes.chronicle.ChronicleData;
 import forge.gamemodes.chronicle.ChroniclePaper;
 import forge.item.PaperCard;
 import forge.localinstance.properties.ForgeConstants;
 import forge.screens.LoadingOverlay;
+import forge.util.FileUtil;
 
 /**
  * Chronicle's mobile-side singleton: owns the loaded controller and paper,
@@ -72,5 +77,35 @@ public final class ChronicleHub {
     /** Binder page spine: delegates to the headless (desktop-tree-tested) resolver. */
     public static List<PaperCard> setUniverse(String editionCode) {
         return ChronicleData.setUniverse(editionCode);
+    }
+
+    // --- product art ---------------------------------------------------------
+
+    private static final Map<String, String> productArtKeys = new HashMap<>();
+
+    /**
+     * Resolve a set's booster art to an image key the fetcher can actually
+     * download: the booster-images list carries full filenames (LEA.jpg,
+     * 10E_1.jpg, ...) and the fetcher saves under that exact name, so a bare
+     * "b:LEA" key never matches a cached file. First list match wins — a
+     * stable period identity per set. Falls back to the bare key (placeholder
+     * renders) when a set has no listed art. Also kicks the download; the
+     * fetcher no-ops when the file is already local. CachedCardImage can't do
+     * this: imageKeyFileExists() answers true for every product prefix, so
+     * its fetch() never fires for booster art (upstream fix candidate).
+     */
+    public static String boosterArtKey(String editionCode) {
+        String key = productArtKeys.computeIfAbsent(editionCode, code -> {
+            for (String line : FileUtil.readFile(ForgeConstants.IMAGE_LIST_QUEST_BOOSTERS_FILE)) {
+                String filename = line.substring(line.lastIndexOf('/') + 1).trim();
+                if (filename.startsWith(code + ".") || filename.startsWith(code + "_")) {
+                    return ImageKeys.BOOSTER_PREFIX + filename;
+                }
+            }
+            return ImageKeys.BOOSTER_PREFIX + code;
+        });
+        GuiBase.getInterface().getImageFetcher().fetchImage(key, () -> {
+        });
+        return key;
     }
 }

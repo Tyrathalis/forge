@@ -4,10 +4,8 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.utils.Align;
 
-import forge.CachedCardImage;
 import forge.Forge;
 import forge.Graphics;
-import forge.ImageKeys;
 import forge.assets.FSkinColor;
 import forge.assets.FSkinFont;
 import forge.assets.ImageCache;
@@ -67,17 +65,11 @@ public class ChronicleBinderScreen extends FScreen {
     private class SetTile extends FDisplayObject {
         private final ChronicleRelease release;
         private final String artKey;
-        @SuppressWarnings("unused")
-        private final CachedCardImage artFetch; //constructing it triggers the download if missing
 
         SetTile(ChronicleRelease release) {
             this.release = release;
-            this.artKey = ImageKeys.BOOSTER_PREFIX + release.editionCode;
-            this.artFetch = new CachedCardImage(artKey) {
-                @Override
-                public void onImageFetched() {
-                }
-            };
+            //resolved via the booster-images list (bare b:CODE keys never fetch); kicks the download
+            this.artKey = ChronicleHub.boosterArtKey(release.editionCode);
         }
 
         @Override
