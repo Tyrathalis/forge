@@ -95,15 +95,29 @@ public final class ChronicleHub {
      * its fetch() never fires for booster art (upstream fix candidate).
      */
     public static String boosterArtKey(String editionCode) {
-        String key = productArtKeys.computeIfAbsent(editionCode, code -> {
-            for (String line : FileUtil.readFile(ForgeConstants.IMAGE_LIST_QUEST_BOOSTERS_FILE)) {
+        return productArtKey(ImageKeys.BOOSTER_PREFIX, ForgeConstants.IMAGE_LIST_QUEST_BOOSTERS_FILE, editionCode, null);
+    }
+
+    /** Starter decks show the tournament-pack product shot when one is listed (core sets), else booster art. */
+    public static String starterArtKey(String editionCode) {
+        return productArtKey(ImageKeys.TOURNAMENTPACK_PREFIX, ForgeConstants.IMAGE_LIST_QUEST_TOURNAMENTPACKS_FILE,
+                editionCode, () -> boosterArtKey(editionCode));
+    }
+
+    private static String productArtKey(String prefix, String listFile, String editionCode,
+                                        java.util.function.Supplier<String> fallback) {
+        String key = productArtKeys.computeIfAbsent(prefix + editionCode, k -> {
+            for (String line : FileUtil.readFile(listFile)) {
                 String filename = line.substring(line.lastIndexOf('/') + 1).trim();
-                if (filename.startsWith(code + ".") || filename.startsWith(code + "_")) {
-                    return ImageKeys.BOOSTER_PREFIX + filename;
+                if (filename.startsWith(editionCode + ".") || filename.startsWith(editionCode + "_")) {
+                    return prefix + filename;
                 }
             }
-            return ImageKeys.BOOSTER_PREFIX + code;
+            return ""; //no listed art for this set
         });
+        if (key.isEmpty()) {
+            return fallback != null ? fallback.get() : prefix + editionCode;
+        }
         //fetchImage asserts the EDT; callers include background staging threads
         FThreads.invokeInEdtNowOrLater(() -> GuiBase.getInterface().getImageFetcher().fetchImage(key, () -> {
         }));

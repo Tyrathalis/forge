@@ -247,10 +247,9 @@ public class ChronicleOpenScreen extends FScreen {
     }
 
     private String wrapperArtKey(SealedItem item) {
-        //booster art for every product: the fetcher has no o: (tournament pack)
-        //URL lookup, so starter product shots can't download — the set's booster
-        //art is the period identity either way
-        return ChronicleHub.boosterArtKey(item.editionCode);
+        return item.kind == SealedItem.Kind.STARTER
+                ? ChronicleHub.starterArtKey(item.editionCode)
+                : ChronicleHub.boosterArtKey(item.editionCode);
     }
 
     /** Kick fetches for every card (on the EDT — the fetcher asserts it), then hold (bounded) until the files are local. */

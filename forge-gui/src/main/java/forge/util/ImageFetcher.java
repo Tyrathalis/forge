@@ -92,6 +92,37 @@ public abstract class ImageFetcher {
                 .replace("-", "").replace("!", "").replace(":", "") + ".jpg";
     }
 
+    /** Product images (boosters, tournament packs): URL looked up from the matching image list. */
+    private void fetchProductImage(final String filename, final Callback callback,
+                                   final String listFile, final String cacheDir, final String assetSubdir) {
+        final ArrayList<String> downloadUrls = new ArrayList<>();
+        for (String line : FileUtil.readFile(listFile)) {
+            boolean exactMatch = line.endsWith(filename);
+            boolean filenameHasNoExtension = filename.lastIndexOf('.') == -1;
+            boolean matchesWithExtension = line.matches(".*" + Pattern.quote(filename) + "\\.[^.]+$");
+
+            if (exactMatch || (filenameHasNoExtension && matchesWithExtension)) {
+                if (line.startsWith("http")) {
+                    downloadUrls.add(line);
+                } else {
+                    downloadUrls.add(ForgeConstants.GITHUB_ASSETS_BASE + assetSubdir + line);
+                }
+                break;
+            }
+        }
+
+        if (downloadUrls.isEmpty()) {
+            System.err.println("No product image URL found for: " + filename);
+            return;
+        }
+
+        FileUtil.ensureDirectoryExists(cacheDir);
+        File destFile = new File(cacheDir, filename);
+        if (destFile.exists())
+            return;
+        setupObserver(destFile.getAbsolutePath(), callback, downloadUrls);
+    }
+
     public void fetchImage(final String imageKey, final Callback callback) {
         FThreads.assertExecutedByEdt(true);
 
@@ -105,37 +136,13 @@ public abstract class ImageFetcher {
         if (imageKey.length() < 2)
             return;
         if (imageKey.startsWith(ImageKeys.BOOSTER_PREFIX)) {
-            final ArrayList<String> downloadUrls = new ArrayList<>();
-            final String filename = imageKey.substring(ImageKeys.BOOSTER_PREFIX.length());
-            // Look up the download URL from booster-images.txt
-            final List<String> boosterFileContent = FileUtil.readFile(ForgeConstants.IMAGE_LIST_QUEST_BOOSTERS_FILE);
-
-            for (String line : boosterFileContent) {
-                boolean exactMatch = line.endsWith(filename);
-                boolean filenameHasNoExtension = filename.lastIndexOf('.') == -1;
-                boolean matchesWithExtension = line.matches(".*" + Pattern.quote(filename) + "\\.[^.]+$");
-
-                if (exactMatch || (filenameHasNoExtension && matchesWithExtension)) {
-                    if (line.startsWith("http")) {
-                        downloadUrls.add(line);
-                    } else {
-                        downloadUrls.add(ForgeConstants.GITHUB_ASSETS_BASE + "images/boosters/" + line);
-                    }
-                    break;
-                }
-            }
-
-            if (downloadUrls.isEmpty()) {
-                System.err.println("No booster image URL found for: " + filename);
-                return;
-            }
-
-            FileUtil.ensureDirectoryExists(ForgeConstants.CACHE_BOOSTER_PICS_DIR);
-            File destFile = new File(ForgeConstants.CACHE_BOOSTER_PICS_DIR, filename);
-            System.out.println("Destination File " + destFile.getAbsolutePath() + " exists: " + destFile.exists());
-            if (destFile.exists())
-                return;
-            setupObserver(destFile.getAbsolutePath(), callback, downloadUrls);
+            fetchProductImage(imageKey.substring(ImageKeys.BOOSTER_PREFIX.length()), callback,
+                    ForgeConstants.IMAGE_LIST_QUEST_BOOSTERS_FILE, ForgeConstants.CACHE_BOOSTER_PICS_DIR, "images/boosters/");
+            return;
+        }
+        if (imageKey.startsWith(ImageKeys.TOURNAMENTPACK_PREFIX)) {
+            fetchProductImage(imageKey.substring(ImageKeys.TOURNAMENTPACK_PREFIX.length()), callback,
+                    ForgeConstants.IMAGE_LIST_QUEST_TOURNAMENTPACKS_FILE, ForgeConstants.CACHE_TOURNAMENTPACK_PICS_DIR, "images/tournamentpacks/");
             return;
         }
         if (imageKey.equalsIgnoreCase("t:null"))
