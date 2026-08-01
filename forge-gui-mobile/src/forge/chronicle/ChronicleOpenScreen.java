@@ -1,23 +1,36 @@
 package forge.chronicle;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.utils.Align;
 
-import forge.gui.FThreads;
+import forge.CachedCardImage;
 import forge.Forge;
 import forge.Graphics;
+import forge.ImageKeys;
 import forge.assets.FSkinColor;
 import forge.assets.FSkinFont;
 import forge.card.CardRenderer;
 import forge.card.CardRenderer.CardStackPosition;
+import forge.card.CardZoom;
+import forge.gamemodes.chronicle.ChronicleAcquisitionLog;
+import forge.gamemodes.chronicle.ChronicleController;
+import forge.gamemodes.chronicle.ChroniclePricing;
+import forge.gamemodes.chronicle.ChronicleRelease;
 import forge.gamemodes.chronicle.SealedItem;
+import forge.gui.FThreads;
 import forge.item.PaperCard;
 import forge.screens.FScreen;
 import forge.screens.LoadingOverlay;
+import forge.sound.SoundEffectType;
+import forge.sound.SoundSystem;
 import forge.toolbox.FButton;
 import forge.toolbox.FCardPanel;
 import forge.toolbox.FDisplayObject;
@@ -26,15 +39,16 @@ import forge.toolbox.FScrollPane;
 import forge.util.Utils;
 
 /**
- * PLACEHOLDER opening flow: pick a sealed product, then tap through its
- * committed contents one card at a time (skippable). D3 replaces the reveal
- * with the real scene — wrapper tear, flip, rarity staging, batch register —
- * per the reveal-UX bar; this exists so the D2 daily session script runs
- * start to finish.
+ * Open Sealed: pick a product, then the D3 reveal scene — single-pack ceremony
+ * or the batch register (starters and Open All route through batch) — followed
+ * by a summary spread with first-pull badges and the buylist total.
  */
 public class ChronicleOpenScreen extends FScreen {
 
     private static final float PADDING = Utils.scale(6);
+    private static final long PRELOAD_TIMEOUT_MS = 8000;
+
+    private enum Mode { LIST, REVEAL, SUMMARY }
 
     private final FScrollPane listPane = add(new FScrollPane() {
         @Override
@@ -47,143 +61,437 @@ public class ChronicleOpenScreen extends FScreen {
             return new ScrollBounds(visibleWidth, y);
         }
     });
-    private final RevealPane revealPane = add(new RevealPane());
     private final FButton btnSkip = add(new FButton(Forge.getLocalizer().getMessageorUseDefault("lblSkip", "Skip")));
+    private final FButton btnFlipCommons = add(new FButton(""));
+    private final FButton btnDone = add(new FButton(Forge.getLocalizer().getMessageorUseDefault("lblDone", "Done")));
+    private final FButton btnOpenAnother = add(new FButton(""));
+    private final SummaryPane summaryPane = add(new SummaryPane());
 
-    /** Cards of the pack being revealed; empty = list mode. */
-    private final List<PaperCard> revealing = new ArrayList<>();
-    private int revealIndex;
-    private String revealTitle = "";
+    private Mode mode = Mode.LIST;
+    private ChronicleRevealScene revealScene;
+    private final List<ChronicleRevealScene.RevealCard> lastOpened = new ArrayList<>();
+    private String lastGroupKey;
+    private boolean lastWasBatch;
 
     public ChronicleOpenScreen() {
         super(Forge.getLocalizer().getMessageorUseDefault("lblChronicleOpenSealed", "Open Sealed"));
-        btnSkip.setCommand(e -> endReveal());
+        btnSkip.setCommand(e -> {
+            if (revealScene != null) {
+                revealScene.finishNow();
+            }
+        });
+        btnFlipCommons.setCommand(e -> {
+            if (revealScene != null) {
+                revealScene.batchFlipCommons();
+            }
+        });
+        btnDone.setCommand(e -> showList());
+        btnOpenAnother.setCommand(e -> openAnotherFromLastGroup());
     }
 
     @Override
     public void onActivate() {
         super.onActivate();
-        updateList();
+        if (mode == Mode.LIST) {
+            showList();
+        }
     }
 
-    private void updateList() {
-        revealing.clear();
-        listPane.clear();
-        listPane.setVisible(true);
-        revealPane.setVisible(false);
-        btnSkip.setVisible(false);
+    @Override
+    public void onSwitchAway(java.util.function.Consumer<Boolean> canSwitchCallback) {
+        stopRevealIfRunning(); //leaving mid-reveal must release the animation driver
+        super.onSwitchAway(canSwitchCallback);
+    }
 
-        // One row per (kind, edition) group; opening takes the oldest item of the group.
-        Map<String, List<SealedItem>> groups = new LinkedHashMap<>();
-        for (SealedItem item : ChronicleHub.controller().getRun().sealed.all()) {
-            groups.computeIfAbsent(item.kind + "|" + item.editionCode, k -> new ArrayList<>()).add(item);
+    @Override
+    public void onClose(java.util.function.Consumer<Boolean> canCloseCallback) {
+        stopRevealIfRunning();
+        super.onClose(canCloseCallback);
+    }
+
+    private void stopRevealIfRunning() {
+        if (revealScene != null) {
+            revealScene.finishNow(); //ends the driver; the summary is ready if the player returns
         }
+    }
+
+    //--- list mode -----------------------------------------------------------
+
+    private void showList() {
+        mode = Mode.LIST;
+        if (revealScene != null) {
+            removeRevealScene();
+        }
+        lastOpened.clear();
+        listPane.clear();
+        setModeVisibility();
+
+        Map<String, List<SealedItem>> groups = groupedSealed();
         if (groups.isEmpty()) {
             listPane.add(new FLabel.Builder().text(
                     Forge.getLocalizer().getMessageorUseDefault("lblChronicleNothingSealed", "Nothing sealed - visit the store."))
                     .align(Align.center).build());
         }
         for (Map.Entry<String, List<SealedItem>> group : groups.entrySet()) {
-            SealedItem first = group.getValue().get(0);
+            final String groupKey = group.getKey();
+            List<SealedItem> items = group.getValue();
+            SealedItem first = items.get(0);
             String productName = productName(first);
-            FButton btn = new FButton(productName + "  x" + group.getValue().size());
-            btn.setCommand(e -> openItem(first, productName));
+            FButton btn = new FButton(productName + "  x" + items.size());
+            btn.setCommand(e -> openFromGroup(groupKey, 1));
             listPane.add(btn);
+            if (first.kind == SealedItem.Kind.BOOSTER && items.size() > 1) {
+                final int n = items.size();
+                FButton btnAll = new FButton("  ⇩ " + Forge.getLocalizer().getMessageorUseDefault(
+                        "lblChronicleOpenAll", "Open all") + " x" + n);
+                btnAll.setCommand(e -> openFromGroup(groupKey, n));
+                listPane.add(btnAll);
+            }
         }
         listPane.revalidate();
     }
 
+    private Map<String, List<SealedItem>> groupedSealed() {
+        Map<String, List<SealedItem>> groups = new LinkedHashMap<>();
+        for (SealedItem item : ChronicleHub.controller().getRun().sealed.all()) {
+            groups.computeIfAbsent(item.kind + "|" + item.editionCode, k -> new ArrayList<>()).add(item);
+        }
+        return groups;
+    }
+
     private String productName(SealedItem item) {
-        forge.gamemodes.chronicle.ChronicleRelease release = ChronicleHub.controller().getCalendar().byCode(item.editionCode);
+        ChronicleRelease release = ChronicleHub.controller().getCalendar().byCode(item.editionCode);
         String set = release == null ? item.editionCode : release.name;
         return set + " " + (item.kind == SealedItem.Kind.STARTER
                 ? Forge.getLocalizer().getMessageorUseDefault("lblChronicleStarterDeck", "starter deck")
                 : Forge.getLocalizer().getMessageorUseDefault("lblChronicleBoosterPack", "booster pack"));
     }
 
-    private void openItem(SealedItem item, String productName) {
-        LoadingOverlay.runBackgroundTask("", () -> {
-            final List<PaperCard> cards = ChronicleHub.controller().openSealed(item.itemId);
-            FThreads.invokeInEdtLater(() -> {
-                //kick off image fetches for the whole pack up front, so later cards
-                //are (usually) in by the time the player taps through to them
+    //--- staging: open items, price and badge the contents, preload art ------
+
+    private void openFromGroup(String groupKey, int count) {
+        List<SealedItem> items = groupedSealed().get(groupKey);
+        if (items == null || items.isEmpty()) {
+            showList();
+            return;
+        }
+        int n = Math.min(count, items.size());
+        //starters are 60-card blocks: always the batch register; multi-pack opens too
+        final boolean batch = items.get(0).kind == SealedItem.Kind.STARTER || n > 1;
+        final List<SealedItem> toOpen = new ArrayList<>(items.subList(0, n));
+        final String title = productName(items.get(0));
+        lastGroupKey = groupKey;
+        lastWasBatch = batch && toOpen.get(0).kind != SealedItem.Kind.STARTER;
+
+        LoadingOverlay.runBackgroundTask(
+                Forge.getLocalizer().getMessageorUseDefault("lblChronicleOpening", "Opening..."), () -> {
+            ChronicleController controller = ChronicleHub.controller();
+            ChroniclePricing pricing = controller.getPricing();
+            ChronicleAcquisitionLog log = controller.getRun().acquisitions;
+            List<ChronicleRevealScene.RevealPack> packs = new ArrayList<>();
+            List<ChronicleRevealScene.RevealCard> allStaged = new ArrayList<>();
+            Set<String> glinted = new HashSet<>(); //one glint per identity across the whole opening
+
+            for (SealedItem item : toOpen) {
+                List<PaperCard> cards = controller.openSealed(item.itemId);
+                long openingSeq = log.all().get(log.all().size() - 1).seq;
+
+                List<ChronicleRevealScene.RevealCard> staged = new ArrayList<>();
                 for (PaperCard card : cards) {
-                    new forge.CachedCardImage(card) {
-                        @Override
-                        public void onImageFetched() {
-                        }
-                    };
+                    List<ChronicleAcquisitionLog.Entry> events = log.eventsFor(card);
+                    boolean firstPull = !events.isEmpty() && events.get(0).seq == openingSeq;
+                    staged.add(new ChronicleRevealScene.RevealCard(card, firstPull,
+                            pricing.isNotable(card.getName()), pricing.buylistCents(card)));
                 }
-                revealing.clear();
-                revealing.addAll(cards);
-                revealIndex = 0;
-                revealTitle = productName;
-                listPane.setVisible(false);
-                revealPane.setVisible(true);
-                btnSkip.setVisible(true);
+                //best-last staging: basics and commons first, the money card closes the pack
+                staged.sort(Comparator
+                        .comparingInt(ChronicleRevealScene.RevealCard::rarityRank)
+                        .thenComparingInt(rc -> rc.valueCents));
+                //a duplicate inside this opening only glints its first appearance
+                List<ChronicleRevealScene.RevealCard> deduped = new ArrayList<>();
+                for (ChronicleRevealScene.RevealCard rc : staged) {
+                    String identity = rc.card.getName() + "|" + rc.card.getEdition() + "|" + rc.card.getArtIndex();
+                    if (rc.firstPull && !glinted.add(identity)) {
+                        rc = new ChronicleRevealScene.RevealCard(rc.card, false, rc.notable, rc.valueCents);
+                    }
+                    deduped.add(rc);
+                }
+                allStaged.addAll(deduped);
+
+                String artKey = wrapperArtKey(item);
+                String packTitle = toOpen.size() > 1
+                        ? title + "  " + (packs.size() + 1) + "/" + toOpen.size()
+                        : title;
+                packs.add(new ChronicleRevealScene.RevealPack(packTitle, artKey, deduped));
+            }
+
+            preloadImages(allStaged);
+
+            FThreads.invokeInEdtLater(() -> {
+                lastOpened.clear();
+                lastOpened.addAll(allStaged);
+                startReveal(packs, batch);
             });
         });
     }
 
-    private void advanceReveal() {
-        revealIndex++;
-        if (revealIndex >= revealing.size()) {
-            endReveal();
+    private String wrapperArtKey(SealedItem item) {
+        //starters try the tournament-pack product shot first; both fall back to booster art
+        if (item.kind == SealedItem.Kind.STARTER) {
+            String key = ImageKeys.TOURNAMENTPACK_PREFIX + item.editionCode;
+            new CachedCardImage(key) {
+                @Override
+                public void onImageFetched() {
+                }
+            };
+            return key;
+        }
+        String key = ImageKeys.BOOSTER_PREFIX + item.editionCode;
+        new CachedCardImage(key) {
+            @Override
+            public void onImageFetched() {
+            }
+        };
+        return key;
+    }
+
+    /** Kick fetches for every card, then hold (bounded) until the files are local. */
+    private void preloadImages(List<ChronicleRevealScene.RevealCard> staged) {
+        List<String> keys = new ArrayList<>();
+        for (ChronicleRevealScene.RevealCard rc : staged) {
+            keys.add(rc.card.getImageKey(false));
+            new CachedCardImage(rc.card) {
+                @Override
+                public void onImageFetched() {
+                }
+            };
+        }
+        long deadline = System.currentTimeMillis() + PRELOAD_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            boolean allPresent = true;
+            for (String key : keys) {
+                if (!forge.assets.ImageCache.getInstance().imageKeyFileExists(key)) {
+                    allPresent = false;
+                    break;
+                }
+            }
+            if (allPresent) {
+                return;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
-    private void endReveal() {
-        updateList();
+    //--- reveal mode ---------------------------------------------------------
+
+    private void startReveal(List<ChronicleRevealScene.RevealPack> packs, boolean batch) {
+        mode = Mode.REVEAL;
+        revealScene = add(new ChronicleRevealScene(packs, batch, new ChronicleRevealScene.Listener() {
+            @Override
+            public void onRevealFinished() {
+                showSummary();
+            }
+
+            @Override
+            public void onStateChanged() {
+                syncFlipCommonsButton();
+            }
+        }));
+        setModeVisibility();
+        revalidate();
     }
 
-    private class RevealPane extends FDisplayObject {
+    private void removeRevealScene() {
+        if (revealScene != null) {
+            revealScene.finishNow();
+            remove(revealScene);
+            revealScene = null;
+        }
+    }
+
+    private void syncFlipCommonsButton() {
+        if (revealScene == null) {
+            btnFlipCommons.setVisible(false);
+            return;
+        }
+        boolean can = revealScene.canBatchFlipCommons();
+        btnFlipCommons.setVisible(mode == Mode.REVEAL && can);
+        if (can) {
+            btnFlipCommons.setText(Forge.getLocalizer().getMessageorUseDefault(
+                    "lblChronicleFlipCommons", "Flip commons") + " x" + revealScene.batchFlipCount());
+        }
+    }
+
+    //--- summary mode --------------------------------------------------------
+
+    private void showSummary() {
+        mode = Mode.SUMMARY;
+        if (revealScene != null) {
+            remove(revealScene);
+            revealScene = null;
+        }
+        //group not re-fetched until Done, so "Open another" reflects what's left NOW
+        List<SealedItem> remaining = lastGroupKey == null ? null : groupedSealed().get(lastGroupKey);
+        if (remaining != null && !remaining.isEmpty()) {
+            String verb = lastWasBatch
+                    ? Forge.getLocalizer().getMessageorUseDefault("lblChronicleOpenAll", "Open all") + " x" + remaining.size()
+                    : Forge.getLocalizer().getMessageorUseDefault("lblChronicleOpenAnother", "Open another");
+            btnOpenAnother.setText(verb);
+        }
+        setModeVisibility();
+        summaryPane.setVisible(true);
+        btnOpenAnother.setVisible(remaining != null && !remaining.isEmpty());
+        SoundSystem.instance.play(SoundEffectType.CoinsDrop, false);
+        summaryPane.revalidate();
+        revalidate();
+    }
+
+    private void openAnotherFromLastGroup() {
+        if (lastGroupKey == null) {
+            return;
+        }
+        List<SealedItem> remaining = groupedSealed().get(lastGroupKey);
+        if (remaining == null || remaining.isEmpty()) {
+            showList();
+            return;
+        }
+        openFromGroup(lastGroupKey, lastWasBatch ? remaining.size() : 1);
+    }
+
+    private void setModeVisibility() {
+        listPane.setVisible(mode == Mode.LIST);
+        btnSkip.setVisible(mode == Mode.REVEAL);
+        btnDone.setVisible(mode == Mode.SUMMARY);
+        btnOpenAnother.setVisible(false); //showSummary flips it on when the group has more
+        summaryPane.setVisible(mode == Mode.SUMMARY);
+        syncFlipCommonsButton();
+    }
+
+    private class SummaryPane extends FScrollPane {
+        @Override
+        protected ScrollBounds layoutAndGetScrollBounds(float visibleWidth, float visibleHeight) {
+            return new ScrollBounds(visibleWidth, contentHeight(visibleWidth));
+        }
+
+        private int columns(float width) {
+            return Math.max(3, (int) (width / Utils.scale(110)));
+        }
+
+        private float cellWidth(float width) {
+            int cols = columns(width);
+            return (width - (cols + 1) * PADDING) / cols;
+        }
+
+        private float contentHeight(float width) {
+            int cols = columns(width);
+            float cellH = cellWidth(width) * FCardPanel.ASPECT_RATIO;
+            int rows = (lastOpened.size() + cols - 1) / cols;
+            return headerHeight() + rows * (cellH + PADDING) + PADDING;
+        }
+
+        private float headerHeight() {
+            return Utils.scale(40);
+        }
+
         @Override
         public void draw(Graphics g) {
-            if (revealing.isEmpty() || revealIndex >= revealing.size()) {
+            if (!g.startClip(0, 0, getWidth(), getHeight())) {
                 return;
             }
             float w = getWidth();
-            float h = getHeight();
-            float labelHeight = Utils.scale(24);
-            g.drawText(revealTitle + "  (" + (revealIndex + 1) + "/" + revealing.size() + ")",
-                    FSkinFont.get(14), FLabel.getInlineLabelColor(), 0, 0, w, labelHeight, false, Align.center, true);
-
-            float cardHeight = h - 2 * labelHeight - 2 * PADDING;
-            float cardWidth = cardHeight / FCardPanel.ASPECT_RATIO;
-            if (cardWidth > w - 2 * PADDING) {
-                cardWidth = w - 2 * PADDING;
-                cardHeight = cardWidth * FCardPanel.ASPECT_RATIO;
+            int newCount = 0;
+            long totalCents = 0;
+            for (ChronicleRevealScene.RevealCard rc : lastOpened) {
+                if (rc.firstPull) {
+                    newCount++;
+                }
+                totalCents += rc.valueCents;
             }
-            CardRenderer.drawCard(g, revealing.get(revealIndex), (w - cardWidth) / 2,
-                    labelHeight + PADDING, cardWidth, cardHeight, CardStackPosition.Top);
+            String headline = lastOpened.size() + " "
+                    + Forge.getLocalizer().getMessageorUseDefault("lblChronicleCardsOpened", "cards")
+                    + (newCount > 0 ? "  •  " + newCount + " NEW" : "")
+                    + "  •  " + Forge.getLocalizer().getMessageorUseDefault("lblChronicleBuylist", "Buylist")
+                    + " " + ChronicleHomeScreen.formatCents(totalCents);
+            g.drawText(headline, FSkinFont.get(14), FLabel.getInlineLabelColor(),
+                    0, -getScrollTop(), w, headerHeight(), false, Align.center, true);
 
-            g.drawText(Forge.getLocalizer().getMessageorUseDefault("lblChronicleTapToContinue", "Tap to continue"),
-                    FSkinFont.get(12), FSkinColor.getStandardColor(com.badlogic.gdx.graphics.Color.GRAY),
-                    0, h - labelHeight, w, labelHeight, false, Align.center, true);
+            int cols = columns(w);
+            float cellW = cellWidth(w);
+            float cellH = cellW * FCardPanel.ASPECT_RATIO;
+            for (int i = 0; i < lastOpened.size(); i++) {
+                ChronicleRevealScene.RevealCard rc = lastOpened.get(i);
+                float x = PADDING + (i % cols) * (cellW + PADDING);
+                float y = headerHeight() + (i / cols) * (cellH + PADDING) - getScrollTop();
+                if (y + cellH < 0 || y > getHeight()) {
+                    continue;
+                }
+                CardRenderer.drawCard(g, rc.card, x, y, cellW, cellH, CardStackPosition.Top);
+                if (rc.firstPull) {
+                    float bw = Utils.scale(28);
+                    float bh = Utils.scale(13);
+                    g.fillRoundRect(FSkinColor.getStandardColor(new Color(0.9f, 0.75f, 0.2f, 1f)).getColor(),
+                            x + Utils.scale(3), y + Utils.scale(3), bw, bh, Utils.scale(2));
+                    g.drawText("NEW", FSkinFont.get(10), Color.BLACK,
+                            x + Utils.scale(3), y + Utils.scale(3), bw, bh, false, Align.center, true);
+                }
+            }
+            g.endClip();
         }
 
         @Override
         public boolean tap(float x, float y, int count) {
-            advanceReveal();
-            return true;
+            int index = cellAt(x, y);
+            if (index >= 0) {
+                List<PaperCard> cards = new ArrayList<>();
+                for (ChronicleRevealScene.RevealCard rc : lastOpened) {
+                    cards.add(rc.card);
+                }
+                CardZoom.show(cards, index, null);
+                return true;
+            }
+            return false;
         }
 
-        @Override
-        public boolean longPress(float x, float y) {
-            //the match-inspect zoom (swipe to flip to the oracle rendering);
-            //only cards revealed so far are browsable — no peeking ahead
-            if (!revealing.isEmpty() && revealIndex < revealing.size()) {
-                forge.card.CardZoom.show(revealing.subList(0, revealIndex + 1), revealIndex, null);
+        private int cellAt(float x, float y) {
+            float w = getWidth();
+            int cols = columns(w);
+            float cellW = cellWidth(w);
+            float cellH = cellW * FCardPanel.ASPECT_RATIO;
+            float gy = y + getScrollTop() - headerHeight();
+            if (gy < 0) {
+                return -1;
             }
-            return true;
+            int col = (int) ((x - PADDING) / (cellW + PADDING));
+            int row = (int) (gy / (cellH + PADDING));
+            if (col < 0 || col >= cols) {
+                return -1;
+            }
+            int index = row * cols + col;
+            return index < lastOpened.size() ? index : -1;
         }
     }
+
+    //--- layout --------------------------------------------------------------
 
     @Override
     protected void doLayout(float startY, float width, float height) {
         listPane.setBounds(0, startY, width, height - startY);
+
         float btnHeight = Utils.scale(40);
-        revealPane.setBounds(0, startY, width, height - startY - btnHeight - 2 * PADDING);
-        btnSkip.setBounds(width / 4, height - btnHeight - PADDING, width / 2, btnHeight);
+        float btnY = height - btnHeight - PADDING;
+        if (revealScene != null) {
+            revealScene.setBounds(0, startY, width, btnY - startY - PADDING);
+        }
+        btnSkip.setBounds(width * 0.6f, btnY, width * 0.34f, btnHeight);
+        btnFlipCommons.setBounds(width * 0.06f, btnY, width * 0.46f, btnHeight);
+
+        summaryPane.setBounds(0, startY, width, btnY - startY - PADDING);
+        btnDone.setBounds(width * 0.55f, btnY, width * 0.39f, btnHeight);
+        btnOpenAnother.setBounds(width * 0.06f, btnY, width * 0.44f, btnHeight);
     }
 }
