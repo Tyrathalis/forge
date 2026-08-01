@@ -98,6 +98,24 @@ public class ChronicleCoreTest {
     }
 
     @Test
+    public void timelineDevRewindReArmsTickWithoutTouchingTheGuard() {
+        ChronicleTimeline timeline = new ChronicleTimeline();
+        // Before the first collection the tick is already armed: rewind is a no-op.
+        timeline.devRewindOneDay();
+        assertTrue(timeline.canTick(clockAt("2026-08-01T09:00:00Z")));
+        timeline.tick(clockAt("2026-08-01T09:00:00Z"));
+        assertFalse(timeline.canTick(clockAt("2026-08-01T12:00:00Z")));
+        // One rewind = exactly one extra played day, same wall clock.
+        timeline.devRewindOneDay();
+        assertTrue(timeline.canTick(clockAt("2026-08-01T12:00:00Z")));
+        assertEquals(timeline.tick(clockAt("2026-08-01T12:00:00Z")), 1);
+        assertFalse(timeline.canTick(clockAt("2026-08-01T12:00:00Z")));
+        // The clock-scum guard is untouched: a wound-back clock still can't tick.
+        timeline.devRewindOneDay();
+        assertFalse(timeline.canTick(clockAt("2026-07-25T12:00:00Z")));
+    }
+
+    @Test
     public void timelineSkippedRealDaysDoNotHappen() {
         ChronicleTimeline timeline = new ChronicleTimeline();
         timeline.tick(clockAt("2026-08-01T12:00:00Z"));

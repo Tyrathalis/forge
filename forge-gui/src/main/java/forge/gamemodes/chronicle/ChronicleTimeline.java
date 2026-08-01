@@ -69,6 +69,19 @@ public final class ChronicleTimeline {
         return dayIndex;
     }
 
+    /**
+     * DEV-MODE ONLY: re-arm today's tick by rewinding the last-collected
+     * marker one day. The clock-scum guard is untouched — this is an explicit
+     * testing action (UI gates it behind Forge's dev mode), and day contents
+     * stay deterministic per day index regardless of when they're reached.
+     * No-op before the run's first collection (the tick is already armed).
+     */
+    public void devRewindOneDay() {
+        if (lastCollectedEpochDay != NEVER) {
+            lastCollectedEpochDay--;
+        }
+    }
+
     public ChronicleSaveData save() {
         ChronicleSaveData data = new ChronicleSaveData();
         data.store("dayIndex", dayIndex);

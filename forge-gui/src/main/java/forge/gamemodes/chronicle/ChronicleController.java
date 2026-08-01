@@ -284,6 +284,20 @@ public final class ChronicleController {
         }
     }
 
+    // --- dev-mode testing actions (UI gates these behind Forge dev mode) ----
+
+    /** DEV: re-arm the day tick so the next ration collection plays the next day. */
+    public void devAdvanceDay() {
+        run.timeline.devRewindOneDay();
+        autosave();
+    }
+
+    /** DEV: credit test cash. */
+    public void devGrantCash(long cents) {
+        run.wallet.credit(cents);
+        autosave();
+    }
+
     private void bumpMetaCounter(String key) {
         run.meta.store(key, run.meta.readLong(key) + 1);
     }

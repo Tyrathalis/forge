@@ -57,6 +57,11 @@ public class ChronicleHomeScreen extends FScreen {
     private final FButton btnOpen = scroller.add(new FButton(""));
     private final FButton btnStore = scroller.add(new FButton(caption("lblChronicleStore", "The Store")));
     private final FButton btnBinder = scroller.add(new FButton(caption("lblChronicleBinder", "Binder")));
+    //testing-only actions, visible only while Forge dev mode is on
+    private final FButton btnDevDay = scroller.add(new FButton("DEV: " + caption("lblChronicleDevNewDay", "New day")));
+    private final FButton btnDevCash = scroller.add(new FButton("DEV: +" + formatCents(DEV_CASH_CENTS)));
+
+    private static final long DEV_CASH_CENTS = 2000;
 
     public ChronicleHomeScreen() {
         //the NewGameMenu header keeps every other mode one hamburger-tap away
@@ -67,7 +72,15 @@ public class ChronicleHomeScreen extends FScreen {
         btnOpen.setCommand(e -> Forge.openScreen(new ChronicleOpenScreen()));
         btnStore.setCommand(e -> Forge.openScreen(new ChronicleLgsScreen()));
         btnBinder.setCommand(e -> Forge.openScreen(new ChronicleBinderScreen()));
-        for (FDisplayObject btn : new FDisplayObject[] { btnBegin, btnPaper, btnCollect, btnOpen, btnStore, btnBinder }) {
+        btnDevDay.setCommand(e -> {
+            ChronicleHub.controller().devAdvanceDay();
+            update();
+        });
+        btnDevCash.setCommand(e -> {
+            ChronicleHub.controller().devGrantCash(DEV_CASH_CENTS);
+            update();
+        });
+        for (FDisplayObject btn : new FDisplayObject[] { btnBegin, btnPaper, btnCollect, btnOpen, btnStore, btnBinder, btnDevDay, btnDevCash }) {
             btn.setHeight(Utils.scale(44));
         }
     }
@@ -99,6 +112,10 @@ public class ChronicleHomeScreen extends FScreen {
         btnOpen.setVisible(hasRun);
         btnStore.setVisible(hasRun);
         btnBinder.setVisible(hasRun);
+        boolean devMode = forge.model.FModel.getPreferences().getPrefBoolean(
+                forge.localinstance.properties.ForgePreferences.FPref.DEV_MODE_ENABLED);
+        btnDevDay.setVisible(hasRun && devMode);
+        btnDevCash.setVisible(hasRun && devMode);
         if (hasRun) {
             ChronicleController controller = ChronicleHub.controller();
             lblDay.setText(caption("lblChronicleDay", "Day") + " " + (controller.getRun().timeline.getDayIndex() + 1));
