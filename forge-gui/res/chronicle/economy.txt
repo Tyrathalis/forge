@@ -1,0 +1,21 @@
+# Chronicle economy knobs. All values are D5-numbers-pass tuning surface.
+# Currency is period dollars, integer cents.
+
+# Free daily ration: packs granted at collection (the played-day tick).
+rationPacks=2
+
+# Allowance stipend: weekly lump on the played-day schedule, first payday on
+# day 0 so the day-one starter purchase (895) is affordable. The MVP's only
+# income source - see ADR-0029.
+stipendCents=1000
+stipendPeriodDays=7
+
+# LGS daily deal slots (the seeded stock roll).
+lgsStockSlots=4
+
+# Buylist base (what the shop PAYS), cents per rarity. Notables multiply
+# these - see notables.txt.
+buylistBasicLandCents=1
+buylistCommonCents=2
+buylistUncommonCents=10
+buylistRareCents=40

@@ -124,6 +124,8 @@ public final class ForgeConstants {
     public static final String DEFAULT_CHALLENGES_DIR       = QUEST_DIR + "challenges";
     public static final String THEMES_DIR                   = QUEST_DIR + "themes";
 
+    public static final String CHRONICLE_DATA_DIR           = RES_DIR + "chronicle" + PATH_SEPARATOR;
+
     private static final String CONQUEST_DIR                = RES_DIR + "conquest" + PATH_SEPARATOR;
     public static final String CONQUEST_PLANES_DIR          = CONQUEST_DIR + "planes" + PATH_SEPARATOR;
     public static final String BASE_SKINS_DIR               = RES_DIR + "skins" + PATH_SEPARATOR;
@@ -262,6 +264,8 @@ public final class ForgeConstants {
     public static final String USER_FORMATS_DIR           = USER_CUSTOM_DIR + "formats" + PATH_SEPARATOR;
     public static final String CUSTOM_STARTER_DECK_DIR    = USER_CUSTOM_DIR + "starterdecks" + PATH_SEPARATOR;
     public static final String USER_ADVENTURE_DIR         = USER_DIR + "adventure" + PATH_SEPARATOR;
+    public static final String USER_CHRONICLE_DIR         = USER_DIR + "chronicle" + PATH_SEPARATOR;
+    public static final String CHRONICLE_SAVE_DIR         = USER_CHRONICLE_DIR + "saves" + PATH_SEPARATOR;
     public static final String DECK_DRAFT_DIR             = DECK_BASE_DIR + "draft" + PATH_SEPARATOR;
     public static final String DECK_WINSTON_DIR           = DECK_BASE_DIR + "winston" + PATH_SEPARATOR;
     public static final String DECK_SEALED_DIR            = DECK_BASE_DIR + "sealed" + PATH_SEPARATOR;

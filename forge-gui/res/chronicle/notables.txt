@@ -1,0 +1,18 @@
+# Chronicle famous-card allowlist — MVP column: the 1994-desirability tier
+# table. Multiplier over the rarity buylist base (economy.txt). One entry per
+# STORY; the stage-2 allowlist grows event-leg columns to the right of these
+# (schedule legs anchored to event IDs, settle multipliers, paper hooks).
+#
+# Authoring policy: seed + calibrate — entries beyond this seed enter only
+# when a calibration pass fails on a famous card. In 1994 a Black Lotus was
+# worth about a dozen packs (buylist ~$12 = 30x rare base), not $20,000.
+# The pack-EV-negative invariant is re-checked against this table in the D5
+# numbers pass (and continuously by ChroniclePackEvTest).
+#
+# story-id|name[;name...]|multiplier
+black-lotus|Black Lotus|30
+power-nine|Ancestral Recall;Time Walk;Timetwister;Mox Pearl;Mox Sapphire;Mox Jet;Mox Ruby;Mox Emerald|20
+duals|Tundra;Underground Sea;Badlands;Taiga;Savannah;Scrubland;Volcanic Island;Bayou;Plateau;Tropical Island|8
+juzam|Juzám Djinn|10
+notables-1994|Shivan Dragon;Chaos Orb;Time Vault;Mishra's Workshop;Library of Alexandria;Bazaar of Baghdad;Diamond Valley;Candelabra of Tawnos;Moat;The Abyss;Nether Void;Karakas;Mana Drain|5
+staples-1994|Wheel of Fortune;Regrowth;Braingeyser;Fork;Copy Artifact;Vesuvan Doppelganger;Clone;Balance;Land Tax;Sylvan Library;City of Brass;Fellwar Stone;Ball Lightning;Maze of Ith;Sol Ring|2

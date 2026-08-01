@@ -1,0 +1,20 @@
+# Chronicle release calendar — the curated master release list, MVP window
+# (1993-94, Alpha -> Fallen Empires). Grows era by era.
+#
+# Pacing is normalized (~one release per played week), NOT historical; shelf
+# windows keep historical character as tuned exceptions (Alpha/Beta short and
+# scarce, Fallen Empires long and glutted). Prices are period dollars in
+# integer cents, normalized rather than exact. Starter cents empty = no
+# starter product (expansions historically had none). All numbers are
+# D5-numbers-pass tuning surface.
+#
+# order|code|name|kind|releaseDay|shelfDays|boosterCents|starterCents|boxCents|packsPerBox|rationEligible
+1|LEA|Limited Edition Alpha|primary|0|7|245|895|7995|36|true
+2|LEB|Limited Edition Beta|primary|7|14|245|895|7995|36|true
+3|2ED|Unlimited Edition|primary|21|28|245|895|7995|36|true
+4|ARN|Arabian Nights|primary|28|28|145||7995|60|true
+5|ATQ|Antiquities|primary|35|28|145||7995|60|true
+6|3ED|Revised Edition|primary|42|42|245|895|7995|36|true
+7|LEG|Legends|primary|49|28|245||7995|36|true
+8|DRK|The Dark|primary|56|28|145||7995|60|true
+9|FEM|Fallen Empires|primary|63|56|145||7995|60|true
