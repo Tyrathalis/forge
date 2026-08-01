@@ -7,7 +7,6 @@ import java.util.List;
 
 import forge.StaticData;
 import forge.item.PaperCard;
-import forge.gamemodes.chronicle.io.ChronicleSaveData;
 import forge.gamemodes.chronicle.io.ChronicleSaveIO;
 
 /**
