@@ -105,6 +105,15 @@ public class ChronicleOpenScreen extends FScreen {
         LoadingOverlay.runBackgroundTask("", () -> {
             final List<PaperCard> cards = ChronicleHub.controller().openSealed(item.itemId);
             FThreads.invokeInEdtLater(() -> {
+                //kick off image fetches for the whole pack up front, so later cards
+                //are (usually) in by the time the player taps through to them
+                for (PaperCard card : cards) {
+                    new forge.CachedCardImage(card) {
+                        @Override
+                        public void onImageFetched() {
+                        }
+                    };
+                }
                 revealing.clear();
                 revealing.addAll(cards);
                 revealIndex = 0;
@@ -156,6 +165,16 @@ public class ChronicleOpenScreen extends FScreen {
         @Override
         public boolean tap(float x, float y, int count) {
             advanceReveal();
+            return true;
+        }
+
+        @Override
+        public boolean longPress(float x, float y) {
+            //the match-inspect zoom (swipe to flip to the oracle rendering);
+            //only cards revealed so far are browsable — no peeking ahead
+            if (!revealing.isEmpty() && revealIndex < revealing.size()) {
+                forge.card.CardZoom.show(revealing.subList(0, revealIndex + 1), revealIndex, null);
+            }
             return true;
         }
     }

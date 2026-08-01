@@ -66,18 +66,20 @@ public class ChronicleLgsScreen extends FScreen {
         lblCash.setText(ChronicleHomeScreen.formatCents(controller.getRun().wallet.getCents()));
         scroller.clear();
 
-        scroller.add(sectionLabel(caption("lblChronicleOnTheShelf", "On the shelf")));
+        //deals first: the daily roll is the check-in hook, and a discounted product
+        //should greet the player before its full-price shelf button
         int today = controller.getRun().timeline.getDayIndex();
-        for (ChronicleRelease release : controller.shelf()) {
-            scroller.add(new ProductTile(release, today));
-        }
-
         List<ChronicleLgs.StockOffer> stock = controller.lgsStock();
         if (!stock.isEmpty()) {
             scroller.add(sectionLabel(caption("lblChronicleTodaysDeals", "Today's deals")));
             for (ChronicleLgs.StockOffer offer : stock) {
                 scroller.add(dealRow(offer, today));
             }
+        }
+
+        scroller.add(sectionLabel(caption("lblChronicleOnTheShelf", "On the shelf")));
+        for (ChronicleRelease release : controller.shelf()) {
+            scroller.add(new ProductTile(release, today));
         }
         scroller.revalidate();
     }

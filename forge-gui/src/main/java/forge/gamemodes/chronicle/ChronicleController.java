@@ -256,6 +256,7 @@ public final class ChronicleController {
         }
         List<PaperCard> cards = ChroniclePackGenerator.open(item);
         run.collection.addAll(cards);
+        run.acquisitions.record(run.timeline.getDayIndex(), item.kind, item.editionCode, cards);
         bumpMetaCounter(item.kind == SealedItem.Kind.BOOSTER ? "totalPacksOpened" : "totalStartersOpened");
         autosave();
         return cards;

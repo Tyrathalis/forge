@@ -128,6 +128,46 @@ public class ChroniclePackTest extends AITest {
     }
 
     @Test
+    public void acquisitionLogRecordsProvenanceAndSurvivesReload() {
+        ChronicleAcquisitionLog log = new ChronicleAcquisitionLog();
+        List<PaperCard> pack1 = ChroniclePackGenerator.open(new SealedItem(1, SealedItem.Kind.BOOSTER, "LEA", 11L, 0));
+        List<PaperCard> pack2 = ChroniclePackGenerator.open(new SealedItem(2, SealedItem.Kind.BOOSTER, "ARN", 22L, 3));
+        log.record(0, SealedItem.Kind.BOOSTER, "LEA", pack1);
+        log.record(3, SealedItem.Kind.BOOSTER, "ARN", pack2);
+
+        assertEquals(log.all().size(), 2);
+        PaperCard firstPull = pack1.get(0);
+        assertEquals(log.eventsFor(firstPull).get(0).dayIndex, 0, "provenance: the pull's day is recorded");
+        assertEquals(log.firstAcquiredOrdinal(firstPull), 1, "the run's first-ever pull has ordinal 1");
+        assertTrue(log.firstAcquiredOrdinal(pack2.get(0)) > log.firstAcquiredOrdinal(firstPull),
+                "later first-pulls get later ordinals (the true opening-order sort key)");
+
+        ChronicleAcquisitionLog loaded = new ChronicleAcquisitionLog();
+        loaded.load(log.save());
+        assertEquals(loaded.all().size(), 2);
+        assertEquals(loaded.firstAcquiredOrdinal(firstPull), log.firstAcquiredOrdinal(firstPull));
+        assertEquals(loaded.eventsFor(firstPull).size(), log.eventsFor(firstPull).size());
+    }
+
+    @Test
+    public void sourcesForAnswersWhereACardCanBePulled() {
+        ChronicleCalendar calendar = ChronicleData.loadCalendar();
+        PaperCard arnCommon = ChronicleData.setUniverse("ARN").get(0);
+        assertEquals(ChronicleAcquisitionLog.sourcesFor(arnCommon, calendar),
+                java.util.Arrays.asList(SealedItem.Kind.BOOSTER), "ARN has no starter: booster only");
+
+        PaperCard leaPlains = StaticData.instance().getCommonCards().getCard("Plains", "LEA");
+        assertTrue(leaPlains != null);
+        assertEquals(ChronicleAcquisitionLog.sourcesFor(leaPlains, calendar),
+                java.util.Arrays.asList(SealedItem.Kind.STARTER),
+                "basic lands never appear in Forge's era booster sheets: starter only");
+
+        PaperCard leaRare = StaticData.instance().getCommonCards().getCard("Black Lotus", "LEA");
+        assertEquals(ChronicleAcquisitionLog.sourcesFor(leaRare, calendar),
+                java.util.Arrays.asList(SealedItem.Kind.BOOSTER, SealedItem.Kind.STARTER));
+    }
+
+    @Test
     public void setUniverseResolvesVariantPrintingsInCollectorOrder() {
         List<PaperCard> atq = ChronicleData.setUniverse("ATQ");
         assertTrue(atq.size() >= 100, "ATQ carries 100 printings incl. a/b/c/d art variants, got " + atq.size());

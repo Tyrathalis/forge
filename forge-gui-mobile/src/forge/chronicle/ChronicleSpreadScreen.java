@@ -37,8 +37,10 @@ public class ChronicleSpreadScreen extends FScreen {
         ChronicleController controller = ChronicleHub.controller();
         ItemManagerConfig config = ItemManagerConfig.CHRONICLE_BINDER;
         Map<ColumnDef, ItemColumn> colOverrides = new HashMap<>();
+        //sort key = true acquisition order (first-pull ordinal; 0 = never pulled),
+        //not the binary NEW flag — "Sort: New" walks the run's opening history
         ItemColumn.addColOverride(config, colOverrides, ColumnDef.NEW,
-                from -> controller.getRun().collection.isNew((PaperCard) from.getKey()) ? 1 : 0,
+                from -> controller.getRun().acquisitions.firstAcquiredOrdinal((PaperCard) from.getKey()),
                 from -> {
                     PaperCard card = (PaperCard) from.getKey();
                     if (controller.getRun().collection.isNew(card)) {

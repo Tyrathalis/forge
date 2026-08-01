@@ -19,6 +19,7 @@ public final class ChronicleRun {
     public final ChronicleCollection collection = new ChronicleCollection();
     public final ChronicleSealedInventory sealed = new ChronicleSealedInventory();
     public final ChronicleLgs lgs = new ChronicleLgs();
+    public final ChronicleAcquisitionLog acquisitions = new ChronicleAcquisitionLog();
     /** Meta-progress blob: survives prestige. Opaque key-value; owners read their own keys defensively. */
     public final ChronicleSaveData meta = new ChronicleSaveData();
 
@@ -50,6 +51,7 @@ public final class ChronicleRun {
         data.store("collection", collection.save());
         data.store("sealed", sealed.save());
         data.store("lgs", lgs.save());
+        data.store("acquisitions", acquisitions.save());
         data.store("meta", meta);
         return data;
     }
@@ -75,6 +77,10 @@ public final class ChronicleRun {
         block = data.readSubData("lgs");
         if (block != null) {
             run.lgs.load(block);
+        }
+        block = data.readSubData("acquisitions");
+        if (block != null) {
+            run.acquisitions.load(block);
         }
         block = data.readSubData("meta");
         if (block != null) {
