@@ -59,7 +59,8 @@ public class ChronicleHomeScreen extends FScreen {
     private final FButton btnBinder = scroller.add(new FButton(caption("lblChronicleBinder", "Binder")));
 
     public ChronicleHomeScreen() {
-        super("");
+        //the NewGameMenu header keeps every other mode one hamburger-tap away
+        super("", forge.screens.home.NewGameMenu.getMenu());
         btnBegin.setCommand(e -> beginRun());
         btnPaper.setCommand(e -> Forge.openScreen(new ChroniclePaperScreen()));
         btnCollect.setCommand(e -> collectRation());

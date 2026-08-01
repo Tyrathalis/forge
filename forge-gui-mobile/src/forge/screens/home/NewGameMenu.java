@@ -94,11 +94,13 @@ public class NewGameMenu extends FPopupMenu {
     }
     public static void setPreferredScreen(NewGameScreen preferredScreen0) {
         if (preferredScreen == preferredScreen0) { return; }
+        //Chronicle never becomes the preferred screen, in memory or on disk: the New Game
+        //button would keep reopening it for the rest of the session (and it can be pref-hidden again)
+        if (NewGameScreen.Chronicle.equals(preferredScreen0)) { return; }
         preferredScreen = preferredScreen0;
         String prefName = preferredScreen.name();
         //don't save adventure mode launchscreen, default to constructed
-        //(nor Chronicle - it can be pref-hidden again, and the remembered screen must always be openable)
-        if (NewGameScreen.Adventure.equals(preferredScreen) || NewGameScreen.Chronicle.equals(preferredScreen))
+        if (NewGameScreen.Adventure.equals(preferredScreen))
             prefName = NewGameScreen.Constructed.name();
         prefs.setPref(FPref.NEW_GAME_SCREEN, prefName);
         prefs.save();
