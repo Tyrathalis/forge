@@ -77,12 +77,14 @@ public class ChronicleRevealScene extends FDisplayObject {
     /** One sealed product staged for reveal (a pack, or a starter's card block). */
     public static final class RevealPack {
         public final String title;
-        public final String artKey; //booster/tournament-pack art, may miss (placeholder drawn)
+        public final String artKey;         //preferred product art (may never arrive — host gone)
+        public final String fallbackArtKey; //drawn while/if the preferred art is missing; null = none
         public final List<RevealCard> cards;
 
-        public RevealPack(String title, String artKey, List<RevealCard> cards) {
+        public RevealPack(String title, String artKey, String fallbackArtKey, List<RevealCard> cards) {
             this.title = title;
             this.artKey = artKey;
+            this.fallbackArtKey = fallbackArtKey;
             this.cards = cards;
         }
     }
@@ -621,7 +623,7 @@ public class ChronicleRevealScene extends FDisplayObject {
                 float t = smooth(Math.min(1, phaseT / INTERSTITIAL_DURATION));
                 float artX = w * 1.1f - (w * 1.1f - (cx - cardW / 2)) * t; //slides in from the right, settles center
 
-                drawPackArt(g, pack().artKey, pack().title, artX, cardY, cardW, cardH, 1);
+                drawPackArt(g, packArt(pack()), pack().title, artX, cardY, cardW, cardH, 1);
                 g.drawText(pack().title, FSkinFont.get(13), FLabel.getInlineLabelColor(),
                         0, cardY + cardH + PADDING, w, Utils.scale(18), false, Align.center, false);
                 break;
@@ -681,13 +683,26 @@ public class ChronicleRevealScene extends FDisplayObject {
                 wiggle, cy + stageH / 2 - Utils.scale(2), w, Utils.scale(18), false, Align.center, false);
     }
 
+    /** Best available product art for a pack: preferred key, else fallback, else null. */
+    private static Texture packArt(RevealPack pack) {
+        Texture art = loadedArt(pack.artKey);
+        return art != null ? art : loadedArt(pack.fallbackArtKey);
+    }
+
+    private static Texture loadedArt(String artKey) {
+        if (artKey == null) {
+            return null;
+        }
+        Texture art = ImageCache.getInstance().getImage(artKey, true);
+        return art == null || art == ImageCache.getInstance().getDefaultImage() ? null : art;
+    }
+
     /** Wrapper art split at the tear line; flyT > 0 animates strip + body leaving. */
     private void drawTornWrapper(Graphics g, float cx, float cy, float stageH, float flyT) {
         float artH = stageH * 0.8f;
         float artW = artH * 0.72f;
-        String artKey = pack().artKey;
-        Texture art = artKey == null ? null : ImageCache.getInstance().getImage(artKey, true);
-        boolean real = art != null && art != ImageCache.getInstance().getDefaultImage();
+        Texture art = packArt(pack());
+        boolean real = art != null;
         if (real) {
             float texAspect = (float) art.getWidth() / art.getHeight();
             artW = artH * Math.min(texAspect, 0.85f);
@@ -742,9 +757,8 @@ public class ChronicleRevealScene extends FDisplayObject {
         }
     }
 
-    private void drawPackArt(Graphics g, String artKey, String title, float x, float y, float w, float h, float alpha) {
-        Texture art = artKey == null ? null : ImageCache.getInstance().getImage(artKey, true);
-        boolean real = art != null && art != ImageCache.getInstance().getDefaultImage();
+    private void drawPackArt(Graphics g, Texture art, String title, float x, float y, float w, float h, float alpha) {
+        boolean real = art != null;
         if (alpha < 1) {
             g.setAlphaComposite(alpha);
         }

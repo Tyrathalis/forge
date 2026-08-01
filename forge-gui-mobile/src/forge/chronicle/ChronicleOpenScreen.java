@@ -226,10 +226,14 @@ public class ChronicleOpenScreen extends FScreen {
                 allStaged.addAll(deduped);
 
                 String artKey = wrapperArtKey(item);
+                //starters prefer the deck-box shot, but its host is gone (downloads.cardforge.org
+                //has no DNS record) — booster art stands in until upstream rehosts the images
+                String fallbackKey = item.kind == SealedItem.Kind.STARTER
+                        ? ChronicleHub.boosterArtKey(item.editionCode) : null;
                 String packTitle = toOpen.size() > 1
                         ? title + "  " + (packs.size() + 1) + "/" + toOpen.size()
                         : title;
-                packs.add(new ChronicleRevealScene.RevealPack(packTitle, artKey, deduped));
+                packs.add(new ChronicleRevealScene.RevealPack(packTitle, artKey, fallbackKey, deduped));
             }
 
             preloadImages(allStaged);
