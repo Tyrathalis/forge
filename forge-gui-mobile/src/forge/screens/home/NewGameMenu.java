@@ -27,7 +27,8 @@ public class NewGameMenu extends FPopupMenu {
         PuzzleMode(Forge.getLocalizer().getMessageorUseDefault("lblPuzzleMode", "Puzzle Mode"), FSkinImage.MENU_PUZZLE, PuzzleScreen.class),
         PlanarConquest(Forge.getLocalizer().getMessageorUseDefault("lblPlanarConquest", "Planar Conquest"), FSkinImage.MENU_GALAXY, NewConquestScreen.class),
         Gauntlet(Forge.getLocalizer().getMessageorUseDefault("lblGauntlet", "Gauntlet"), FSkinImage.MENU_GAUNTLET, NewGauntletScreen.class),
-        Adventure(Forge.getLocalizer().getMessageorUseDefault("lblAdventureMode", "Adventure Mode"), FSkinImage.MENU_ADVLOGO, AdventureScreen.class);
+        Adventure(Forge.getLocalizer().getMessageorUseDefault("lblAdventureMode", "Adventure Mode"), FSkinImage.MENU_ADVLOGO, AdventureScreen.class),
+        Chronicle(Forge.getLocalizer().getMessageorUseDefault("lblChronicleMode", "Chronicle"), FSkinImage.QUEST_BOOK, forge.chronicle.ChronicleHomeScreen.class);
 
         private final FMenuItem item;
         private final Class<? extends FScreen> screenClass;
@@ -96,7 +97,8 @@ public class NewGameMenu extends FPopupMenu {
         preferredScreen = preferredScreen0;
         String prefName = preferredScreen.name();
         //don't save adventure mode launchscreen, default to constructed
-        if (NewGameScreen.Adventure.equals(preferredScreen))
+        //(nor Chronicle - it can be pref-hidden again, and the remembered screen must always be openable)
+        if (NewGameScreen.Adventure.equals(preferredScreen) || NewGameScreen.Chronicle.equals(preferredScreen))
             prefName = NewGameScreen.Constructed.name();
         prefs.setPref(FPref.NEW_GAME_SCREEN, prefName);
         prefs.save();
@@ -113,6 +115,10 @@ public class NewGameMenu extends FPopupMenu {
     protected void buildMenu() {
         FScreen currentScreen = Forge.getCurrentScreen();
         for (NewGameScreen ngs : NewGameScreen.values()) {
+            // Chronicle stays hidden until its dogfood gate passes (pref default off).
+            if (ngs == NewGameScreen.Chronicle && !prefs.getPrefBoolean(FPref.CHRONICLE_MODE_ENABLED)) {
+                continue;
+            }
             addItem(ngs.item);
             ngs.item.setSelected(currentScreen == ngs.screen);
         }

@@ -190,6 +190,11 @@ public abstract class ItemManager<T extends InventoryItem> extends FContainer im
         setup(config0, null);
     }
 
+    /** Optional image-view group-caption composer — lets collection browsers show completion stats in group headers. */
+    public void setImageGroupCaptionFn(Function<String, String> fn) {
+        imageView.setGroupCaptionFn(fn);
+    }
+
     public void setup(ItemManagerConfig config0, Map<ColumnDef, ItemColumn> colOverrides) {
         config = config0;
         setWantUnique(config0.getUniqueCardsOnly());

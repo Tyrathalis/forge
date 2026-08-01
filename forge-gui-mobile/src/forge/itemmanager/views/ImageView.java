@@ -64,6 +64,9 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     private static final float SEL_BORDER_SIZE = Utils.scale(1);
     private static final int MIN_COLUMN_COUNT = Forge.isLandscapeMode() ? 2 : 1;
     private static final int MAX_COLUMN_COUNT = 10;
+    //collection browsing (see fnOwnedCount/fnIsNew): dim for image-less unowned placeholders, gold for the NEW glint
+    private static final Color UNOWNED_TINT = new Color(0, 0, 0, 0.6f);
+    private static final Color NEW_BADGE_COLOR = new Color(1f, 0.84f, 0.28f, 0.9f);
 
     private Supplier<List<Integer>> selectedIndices = Suppliers.memoize(ArrayList::new);
     private int columnCount = 4;
@@ -76,6 +79,9 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     private Supplier<List<ItemInfo>> orderedItems = Suppliers.memoize(ArrayList::new);
     private Supplier<List<Group>> groups = Suppliers.memoize(ArrayList::new);
     private Function<Entry<? extends InventoryItem, Integer>, ?> fnIsFavorite = ColumnDef.FAVORITE.fnDisplay, fnPrice = null;
+    //collection browsing decorations, active only when a NEW/OWNED column override supplies them (e.g. the Chronicle binder)
+    private Function<Entry<? extends InventoryItem, Integer>, ?> fnIsNew = null, fnOwnedCount = null;
+    private Function<String, String> groupCaptionFn = null;
 
     private class SafeList<T> {
         private final List<T> internalList;
@@ -250,7 +256,18 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
             if (colOverrides.containsKey(ColumnDef.PRICE) && colOverrides.get(ColumnDef.PRICE).getFnDisplay() != null) {
                 this.fnPrice = colOverrides.get(ColumnDef.PRICE).getFnDisplay();
             }
+            if (colOverrides.containsKey(ColumnDef.NEW) && colOverrides.get(ColumnDef.NEW).getFnDisplay() != null) {
+                this.fnIsNew = colOverrides.get(ColumnDef.NEW).getFnDisplay();
+            }
+            if (colOverrides.containsKey(ColumnDef.OWNED) && colOverrides.get(ColumnDef.OWNED).getFnDisplay() != null) {
+                this.fnOwnedCount = colOverrides.get(ColumnDef.OWNED).getFnDisplay();
+            }
         }
+    }
+
+    /** Optional group-caption composer (group name in, full caption out) — lets collection browsers show completion stats in headers. */
+    public void setGroupCaptionFn(Function<String, String> fn) {
+        groupCaptionFn = fn;
     }
 
     public GroupDef getGroupBy() {
@@ -968,7 +985,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                 //draw group name and horizontal line
                 float x = GROUP_HEADER_GLYPH_WIDTH + PADDING + 1;
                 float y = 0;
-                String caption = name + " (" + items.size() + ")";
+                String caption = groupCaptionFn != null ? groupCaptionFn.apply(name) : name + " (" + items.size() + ")";
                 g.drawText(caption, GROUP_HEADER_FONT, getGroupHeaderForeColor(), x, y, getWidth(), GROUP_HEADER_HEIGHT, false, Align.left, true);
                 x += GROUP_HEADER_FONT.getBounds(caption).width + PADDING;
                 y += GROUP_HEADER_HEIGHT / 2;
@@ -1218,7 +1235,40 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
             }
 
             if (item instanceof PaperCard pc) {
+                Integer ownedCount = null;
+                if (fnOwnedCount != null) {
+                    Object owned = fnOwnedCount.apply(this);
+                    if (owned instanceof Integer) {
+                        ownedCount = (Integer) owned;
+                    }
+                }
+                if (ownedCount != null && ownedCount == 0) {
+                    //collection browsing: unowned cards render as grayscale (or a dimmed
+                    //composed placeholder when no image is on disk) and skip decorations
+                    Texture img = ImageCache.getInstance().getImage(pc.getImageKey(false), true);
+                    if (img != null && img != ImageCache.getInstance().getDefaultImage()) {
+                        g.drawCardImage(img, null, x, y, w, h, true, false);
+                    } else {
+                        CardRenderer.drawCard(g, pc, x, y, w, h, pos);
+                        g.fillRect(UNOWNED_TINT, x, y, w, h);
+                    }
+                    return;
+                }
                 CardRenderer.drawCard(g, pc, x, y, w, h, pos);
+                if (ownedCount != null && ownedCount > 1) {
+                    drawSubLabel(g, "x" + ownedCount, Color.TAN, x, y, w, h);
+                }
+                if (fnIsNew != null) {
+                    Object flag = fnIsNew.apply(this);
+                    if (flag != null && !flag.toString().isEmpty()) {
+                        //right-aligned band near the top: the NEW glint
+                        float lblHeight = h / 8;
+                        float lblWidth = w / 2.5f;
+                        g.fillRect(NEW_BADGE_COLOR, x + w - lblWidth, y + h * 0.05f, lblWidth, lblHeight);
+                        g.drawText(flag.toString(), FSkinFont.forHeight(lblHeight * 0.7f), Color.BLACK,
+                                x + w - lblWidth, y + h * 0.05f, lblWidth, lblHeight, false, Align.center, true);
+                    }
+                }
                 if (showRanking) {
                     float rankSize = w / 2;
                     float y2 = y + (rankSize - (rankSize * 0.1f));

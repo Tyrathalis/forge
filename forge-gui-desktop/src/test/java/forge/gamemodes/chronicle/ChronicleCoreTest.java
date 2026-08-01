@@ -358,6 +358,28 @@ public class ChronicleCoreTest {
         assertTrue(loaded.recordPurchase(config, tomorrow, 1));
     }
 
+    // --- paper --------------------------------------------------------------
+
+    @Test
+    public void paperComposesEventsAndDeterministicFlavor() {
+        ChronicleCalendar calendar = ChronicleCalendar.parse(CALENDAR_LINES);
+        ChronicleConfig config = ChronicleConfig.parse(Arrays.asList("stipendPeriodDays=7"));
+        ChroniclePaper paper = new ChroniclePaper(calendar, config,
+                Arrays.asList("# comment", "flavor one", "flavor two", "flavor three"));
+        ChronicleLgs lgs = new ChronicleLgs();
+
+        // Day 7: Beta releases, payday.
+        ChroniclePaper.Issue day7 = paper.composeFor(42L, 7, lgs.stockFor(calendar, config, 42L, 7));
+        assertTrue(day7.headlines.stream().anyMatch(h -> h.contains("Beta") && h.contains("hits shelves")));
+        assertTrue(day7.headlines.stream().anyMatch(h -> h.contains("Allowance")));
+        assertEquals(day7.flavor, paper.composeFor(42L, 7, lgs.stockFor(calendar, config, 42L, 7)).flavor,
+                "flavor pick is deterministic per day");
+
+        // Day 6: Alpha's last shelf day.
+        ChroniclePaper.Issue day6 = paper.composeFor(42L, 6, lgs.stockFor(calendar, config, 42L, 6));
+        assertTrue(day6.headlines.stream().anyMatch(h -> h.contains("Last day for Alpha")));
+    }
+
     // --- effective-day arithmetic sanity ------------------------------------
 
     @Test

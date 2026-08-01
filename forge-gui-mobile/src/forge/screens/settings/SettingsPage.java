@@ -323,6 +323,10 @@ public class SettingsPage extends TabPage<SettingsScreen> {
                         MatchController.instance.resetPlayerPanels();
                 }
             }, 1);
+        lstSettings.addItem(new BooleanSetting(FPref.CHRONICLE_MODE_ENABLED,
+            Forge.getLocalizer().getMessage("lblEnableChronicle"),
+            Forge.getLocalizer().getMessage("nlEnableChronicle")),
+            0);
         lstSettings.addItem(new BooleanSetting(FPref.UI_ANIMATED_CARD_TAPUNTAP,
             Forge.getLocalizer().getMessage("lblAnimatedCardTapUntap"),
             Forge.getLocalizer().getMessage("nlAnimatedCardTapUntap")) {

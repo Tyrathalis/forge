@@ -216,6 +216,13 @@ public final class SColumnUtil {
         return columns;
     }
 
+    public static Map<ColumnDef, ItemColumnConfig> getBinderDefaultColumns() {
+        //collection binder: full-set pool browsed in collector-number order, OWNED/NEW as image decorations
+        Map<ColumnDef, ItemColumnConfig> columns = getCardColumns(null, false, true, false, true, false);
+        columns.get(ColumnDef.COLLECTOR_ORDER).setSortPriority(1);
+        return columns;
+    }
+
     public static Map<ColumnDef, ItemColumnConfig> getConquestDeckEditorDefaultColumns() {
         Map<ColumnDef, ItemColumnConfig> columns = getCardColumns(ColumnDef.DECK_QUANTITY, false, false, false, true, false);
         columns.get(ColumnDef.CMC).setSortPriority(1);

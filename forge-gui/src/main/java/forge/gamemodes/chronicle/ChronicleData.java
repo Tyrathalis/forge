@@ -19,6 +19,7 @@ public final class ChronicleData {
     public static final String RELEASES_FILE = "releases.txt";
     public static final String ECONOMY_FILE = "economy.txt";
     public static final String NOTABLES_FILE = "notables.txt";
+    public static final String PAPER_FLAVOR_FILE = "paper-flavor.txt";
 
     private ChronicleData() {
     }
@@ -36,6 +37,10 @@ public final class ChronicleData {
                 ChroniclePricing.parseNotables(readDataFile(NOTABLES_FILE)));
     }
 
+    public static ChroniclePaper loadPaper(ChronicleCalendar calendar, ChronicleConfig config) {
+        return new ChroniclePaper(calendar, config, readDataFile(PAPER_FLAVOR_FILE));
+    }
+
     /** Production controller: res-loaded data, card-DB resolver, system clock, autosave into the user save dir. */
     public static ChronicleController createController() {
         FileUtil.ensureDirectoryExists(ForgeConstants.CHRONICLE_SAVE_DIR);
@@ -48,5 +53,34 @@ public final class ChronicleData {
 
     private static List<String> readDataFile(String name) {
         return FileUtil.readFile(ForgeConstants.CHRONICLE_DATA_DIR + name);
+    }
+
+    private static final java.util.Map<String, List<forge.item.PaperCard>> setUniverses = new java.util.HashMap<>();
+
+    /**
+     * All obtainable printings of a set in collector-number order, resolved
+     * once and cached — the binder page spine and the completion denominator.
+     * Art/rarity variants (ATQ's split-rarity Urza lands, ARN's dagger
+     * commons) are distinct printings and distinct entries.
+     */
+    public static synchronized List<forge.item.PaperCard> setUniverse(String editionCode) {
+        return setUniverses.computeIfAbsent(editionCode, code -> {
+            forge.card.CardEdition edition = forge.StaticData.instance().getEditions().get(code);
+            if (edition == null) {
+                return new java.util.ArrayList<>();
+            }
+            List<forge.card.CardEdition.EditionEntry> entries = new java.util.ArrayList<>(edition.getObtainableCards());
+            entries.sort((a, b) -> forge.card.CardEdition.getSortableCollectorNumber(a.collectorNumber())
+                    .compareTo(forge.card.CardEdition.getSortableCollectorNumber(b.collectorNumber())));
+            java.util.Set<forge.item.PaperCard> resolved = new java.util.LinkedHashSet<>();
+            for (forge.card.CardEdition.EditionEntry entry : entries) {
+                forge.item.PaperCard card = forge.StaticData.instance().getCommonCards()
+                        .getCard(entry.name(), code, entry.collectorNumber());
+                if (card != null) {
+                    resolved.add(card);
+                }
+            }
+            return new java.util.ArrayList<>(resolved);
+        });
     }
 }

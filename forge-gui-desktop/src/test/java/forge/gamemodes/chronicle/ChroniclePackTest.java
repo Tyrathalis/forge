@@ -128,6 +128,35 @@ public class ChroniclePackTest extends AITest {
     }
 
     @Test
+    public void setUniverseResolvesVariantPrintingsInCollectorOrder() {
+        List<PaperCard> atq = ChronicleData.setUniverse("ATQ");
+        assertTrue(atq.size() >= 100, "ATQ carries 100 printings incl. a/b/c/d art variants, got " + atq.size());
+
+        // The split-rarity gotcha: Urza's Mine prints at both Uncommon (83a/b) and
+        // Common (83c/d) — all four must be distinct entries in the universe.
+        int urzasMines = 0;
+        for (PaperCard card : atq) {
+            if (card.getName().equals("Urza's Mine")) {
+                urzasMines++;
+            }
+        }
+        assertEquals(urzasMines, 4, "all four Urza's Mine art variants must be distinct printings");
+
+        // Collector order, not name order: spot-check monotonic sortable collector numbers.
+        List<PaperCard> arn = ChronicleData.setUniverse("ARN");
+        assertTrue(arn.size() >= 78);
+        String prev = null;
+        for (PaperCard card : arn) {
+            String sortable = forge.card.CardEdition.getSortableCollectorNumber(card.getCollectorNumber());
+            if (prev != null) {
+                assertTrue(sortable.compareTo(prev) >= 0,
+                        "ARN universe must be in collector order: " + prev + " then " + sortable);
+            }
+            prev = sortable;
+        }
+    }
+
+    @Test
     public void sealedInventoryCommitsSeedsAtAcquisitionAndSurvivesReload() {
         ChronicleSealedInventory inventory = new ChronicleSealedInventory();
         List<SealedItem> bought = inventory.acquire(555L, SealedItem.Kind.BOOSTER, "LEB", 2, 3);

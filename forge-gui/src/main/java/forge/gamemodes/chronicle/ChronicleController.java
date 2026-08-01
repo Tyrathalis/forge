@@ -272,6 +272,18 @@ public final class ChronicleController {
         return credit;
     }
 
+    /** Binder pass: clear the NEW badge for cards actually viewed, one autosave for the batch. */
+    public void markSeen(Iterable<PaperCard> cards) {
+        boolean any = false;
+        for (PaperCard card : cards) {
+            run.collection.markSeen(card);
+            any = true;
+        }
+        if (any) {
+            autosave();
+        }
+    }
+
     private void bumpMetaCounter(String key) {
         run.meta.store(key, run.meta.readLong(key) + 1);
     }

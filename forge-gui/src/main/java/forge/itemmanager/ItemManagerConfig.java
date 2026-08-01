@@ -135,6 +135,8 @@ public enum ItemManagerConfig {
             null, null, 6, 0),
     ADVENTURE_SIDEBOARD(SColumnUtil.getDeckEditorDefaultColumns(), false, false, true,
             null, null, 6, 0),
+    CHRONICLE_BINDER(SColumnUtil.getBinderDefaultColumns(), false, false, true,
+            null, null, 4, 1),
     SIDEBOARD(SColumnUtil.getDeckEditorDefaultColumns(), false, false, true,
             GroupDef.DEFAULT, ColumnDef.CMC, 3, 0);
 
