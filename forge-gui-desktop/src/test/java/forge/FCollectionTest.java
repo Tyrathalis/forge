@@ -50,8 +50,16 @@ public class FCollectionTest {
         List<CompletableFuture<Integer>> futures = new ArrayList<>();
         for (Card c : cc.threadSafeIterable()) {
             futures.add(CompletableFuture.supplyAsync(() -> {
-                if (c.getId() % 2 > 0)
-                    cc.remove(c);
+                if (c.getId() % 2 > 0) {
+                    // FCollection stopped being internally synchronized in b858b48fde;
+                    // unsynchronized concurrent removes race on the backing ArrayList and
+                    // intermittently lose one (reproducible ~1/100 under stress). What this
+                    // test still guarantees: iterating the threadSafeIterable() snapshot
+                    // while the collection mutates never throws or corrupts.
+                    synchronized (cc) {
+                        cc.remove(c);
+                    }
+                }
                 return 0;
             }));
         }
