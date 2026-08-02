@@ -1140,7 +1140,16 @@ public abstract class ItemManager<T extends InventoryItem> extends FContainer im
             float screenWidth = screen.getWidth();
             float screenHeight = screen.getHeight();
 
-            Rectangle scrollerBounds = currentView.getScroller().screenPos;;
+            //selection and scroller bounds are global screen coordinates, but this
+            //menu is positioned in its container's local space — translate by the
+            //container's screen position (zero on phones, nonzero when the screen
+            //is embedded beside other chrome, e.g. mobile-dev's desktop shell)
+            float containerOffsetX = getContainer().screenPos.x;
+            float containerOffsetY = getContainer().screenPos.y;
+
+            Rectangle scrollerBounds = new Rectangle(currentView.getScroller().screenPos);
+            scrollerBounds.x -= containerOffsetX;
+            scrollerBounds.y -= containerOffsetY;
 
             paneSize = updateAndGetPaneSize(screenWidth, screenHeight);
             float w = paneSize.getWidth();
@@ -1148,6 +1157,8 @@ public abstract class ItemManager<T extends InventoryItem> extends FContainer im
 
             try {
                 Rectangle bounds = currentView.getSelectionBounds();
+                bounds.x -= containerOffsetX;
+                bounds.y -= containerOffsetY;
 
                 //try displaying right of selection if possible
                 float x = bounds.x + bounds.width;
