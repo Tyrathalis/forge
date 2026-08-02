@@ -147,6 +147,17 @@ public class ChroniclePackTest extends AITest {
         assertEquals(loaded.all().size(), 2);
         assertEquals(loaded.firstAcquiredOrdinal(firstPull), log.firstAcquiredOrdinal(firstPull));
         assertEquals(loaded.eventsFor(firstPull).size(), log.eventsFor(firstPull).size());
+
+        int copies = 0;
+        for (PaperCard card : pack1) {
+            if (card.equals(firstPull)) {
+                copies++;
+            }
+        }
+        assertEquals(ChronicleAcquisitionLog.copiesIn(log.eventsFor(firstPull).get(0), firstPull), copies,
+                "copiesIn counts the printing's occurrences within one opening");
+        assertEquals(ChronicleAcquisitionLog.copiesIn(log.all().get(1), firstPull), 0,
+                "an event that never contained the printing reports zero copies");
     }
 
     @Test

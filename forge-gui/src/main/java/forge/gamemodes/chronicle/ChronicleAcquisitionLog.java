@@ -83,6 +83,11 @@ public final class ChronicleAcquisitionLog {
         return firstAcquired.getOrDefault(identityOf(card), 0L);
     }
 
+    /** How many copies of this printing one opening event contained (a starter can carry duplicates). */
+    public static int copiesIn(Entry entry, PaperCard card) {
+        return Collections.frequency(entry.cardIdentities, identityOf(card));
+    }
+
     /**
      * Which product kinds of the card's own set can yield this printing: the
      * booster (Forge's era sheets carry no basic lands there) and the starter
