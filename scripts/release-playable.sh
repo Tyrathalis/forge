@@ -8,9 +8,11 @@
 #   mvn -pl forge-gui-mobile-dev -am package -DskipTests
 #   scripts/release-playable.sh
 #
-# Publishing is a deliberate human step (needs gh auth on Tyrathalis/forge):
-#   gh release create daily-snapshots --prerelease --title "Playable snapshots" --notes "Rolling playable build" || true
-#   gh release upload daily-snapshots target/playable-release/* --clobber
+# Publishing is a deliberate human step (needs gh auth on Tyrathalis/forge).
+# ALWAYS pin -R: this clone's gh default repo is Card-Forge/forge (for PR
+# work), so bare release commands target UPSTREAM's daily-snapshots release:
+#   gh release create daily-snapshots -R Tyrathalis/forge --prerelease --title "Playable snapshots" --notes "Rolling playable build" || true
+#   gh release upload daily-snapshots target/playable-release/* --clobber -R Tyrathalis/forge
 #
 # The res/ delta needs no uploading at all: the updater fetches changed res
 # files from raw.githubusercontent.com at the commit recorded in the manifest,
@@ -72,7 +74,7 @@ echo "Release assembled in $OUT:"
 ls -la "$OUT"
 echo
 echo "Manifest: $(grep -c '^#2 ' "$MANIFEST") files (+ legacy jar-only entry), commit $COMMIT"
-echo "Publish with:"
-echo "  gh release create daily-snapshots --prerelease --title \"Playable snapshots\" --notes \"Rolling playable build\" || true"
-echo "  gh release upload daily-snapshots $OUT/* --clobber"
+echo "Publish with (-R is REQUIRED: this clone's gh default repo is Card-Forge/forge):"
+echo "  gh release create daily-snapshots -R Tyrathalis/forge --prerelease --title \"Playable snapshots\" --notes \"Rolling playable build\" || true"
+echo "  gh release upload daily-snapshots $OUT/* --clobber -R Tyrathalis/forge"
 echo "Remember: the manifest commit must be pushed to Tyrathalis/forge for res delta fetches to resolve."
