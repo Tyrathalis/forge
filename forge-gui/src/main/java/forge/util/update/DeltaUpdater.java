@@ -12,7 +12,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -113,9 +117,11 @@ public final class DeltaUpdater {
 
     /**
      * Moves every staged non-jar file into place via the resolver. Only safe
-     * before the app has loaded assets (i.e. at the splash screen). Files not
-     * listed in the manifest are deliberately never deleted - user-modified or
-     * extra res files are left alone.
+     * before the app has loaded assets (i.e. at the splash screen). This method
+     * itself never deletes; after a successful apply the caller runs
+     * {@link #deleteOrphanedResFiles} so upstream renames/removals don't
+     * accumulate (the original leave-extras-alone policy let a stale edition
+     * file keep an old set code alive against the current edition using it).
      */
     public static void applyResFiles(Plan plan, File stagingDir, Function<String, File> localFileResolver) throws IOException {
         for (final DeltaManifest.Entry entry : plan.changed()) {
@@ -132,6 +138,91 @@ public final class DeltaUpdater {
                 throw new IOException("Could not create " + target.getParentFile());
             }
             Files.move(staged.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /** Deletion never runs off a manifest without a substantial res tree — the
+     *  legacy jar-only bridge view lists one file and must not empty an install. */
+    static final int MIN_MANIFEST_RES_FILES = 1000;
+    /** Orphans accumulate a handful per release; an implausible count means a
+     *  wrong root or a truncated manifest — delete nothing rather than a lot. */
+    static final int MAX_ORPHAN_DELETIONS = 500;
+
+    /**
+     * Deletes files under resRoot that the manifest's res/ list no longer
+     * carries. Upstream renames and removals otherwise accumulate in every
+     * install forever — one such leftover, a stale edition file, kept an old
+     * set code alive and collided with the current edition using it. The
+     * manifest lists the complete res tree, so absence is authoritative.
+     *
+     * Runs only after a successful apply; failures here are logged, never
+     * thrown — cleanup is best-effort, not part of the update. Guards make
+     * mass deletion structurally impossible: no deletion off a manifest
+     * without a substantial res list ({@link #MIN_MANIFEST_RES_FILES}), no
+     * deletion of an implausible orphan count
+     * ({@link #MAX_ORPHAN_DELETIONS}), and a path matching a manifest entry
+     * case-insensitively is skipped — after a case-only rename, on a
+     * case-insensitive filesystem, it IS the manifest file.
+     *
+     * @return manifest-relative paths actually deleted
+     */
+    public static List<String> deleteOrphanedResFiles(DeltaManifest manifest, File resRoot) {
+        final List<String> deleted = new ArrayList<>();
+        if (resRoot == null || !resRoot.isDirectory()) {
+            return deleted;
+        }
+        final Set<String> known = new HashSet<>();
+        final Set<String> knownLower = new HashSet<>();
+        for (final DeltaManifest.Entry entry : manifest.getEntries()) {
+            if (entry.path().startsWith("res/")) {
+                known.add(entry.path());
+                knownLower.add(entry.path().toLowerCase(Locale.ROOT));
+            }
+        }
+        if (known.size() < MIN_MANIFEST_RES_FILES) {
+            return deleted;
+        }
+        final List<String> onDisk = new ArrayList<>();
+        collectFilesUnder(resRoot, "res", onDisk);
+        final List<String> orphans = new ArrayList<>();
+        for (final String rel : onDisk) {
+            if (!known.contains(rel) && !knownLower.contains(rel.toLowerCase(Locale.ROOT))) {
+                orphans.add(rel);
+            }
+        }
+        if (orphans.size() > MAX_ORPHAN_DELETIONS) {
+            System.err.println("Orphan cleanup skipped: " + orphans.size()
+                    + " candidates exceeds the safety cap of " + MAX_ORPHAN_DELETIONS);
+            return deleted;
+        }
+        for (final String rel : orphans) {
+            final File file = new File(resRoot, rel.substring("res/".length()));
+            if (file.delete()) {
+                deleted.add(rel);
+                //prune directories the deletion emptied, up to (never including) resRoot
+                File dir = file.getParentFile();
+                while (dir != null && !dir.equals(resRoot) && dir.delete()) {
+                    dir = dir.getParentFile();
+                }
+            } else {
+                System.err.println("Orphan cleanup could not delete " + rel);
+            }
+        }
+        return deleted;
+    }
+
+    private static void collectFilesUnder(File dir, String relPrefix, List<String> out) {
+        final File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (final File child : children) {
+            final String rel = relPrefix + "/" + child.getName();
+            if (child.isDirectory()) {
+                collectFilesUnder(child, rel, out);
+            } else {
+                out.add(rel);
+            }
         }
     }
 

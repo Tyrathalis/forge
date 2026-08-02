@@ -285,6 +285,103 @@ public class DeltaUpdateTest {
         }
     }
 
+    //--- orphan cleanup (the never-delete policy's falsification: a stale edition
+    //file kept an old set code alive and collided with the current edition) ------
+
+    /** A manifest whose res/ list clears the deletion floor, padded with absent-on-disk filler. */
+    private static DeltaManifest bigResManifest(String... realResLines) throws IOException {
+        final StringBuilder sb = new StringBuilder(String.join("\n",
+                DeltaManifest.HEADER, "#commit " + COMMIT, "#jar forge-playable.jar",
+                "AA\t1\tforge-playable.jar"));
+        for (final String line : realResLines) {
+            sb.append("\n").append(line);
+        }
+        for (int i = 0; i < DeltaUpdater.MIN_MANIFEST_RES_FILES; i++) {
+            sb.append("\nBB\t1\tres/filler/f").append(i).append(".txt");
+        }
+        return DeltaManifest.parse(sb.toString());
+    }
+
+    @Test
+    public void orphanedResFilesAreDeletedAfterApply() throws Exception {
+        final File root = Files.createTempDirectory("delta-orphan").toFile();
+        final File resRoot = new File(root, "res");
+        final File kept = new File(resRoot, "editions/Current Set.txt");
+        final File orphanEdition = new File(resRoot, "editions/Renamed Away.txt");
+        final File orphanNested = new File(resRoot, "cardsfolder/upcoming/old_name.txt");
+        write(kept, "keep".getBytes(StandardCharsets.UTF_8));
+        write(orphanEdition, "stale".getBytes(StandardCharsets.UTF_8));
+        write(orphanNested, "stale".getBytes(StandardCharsets.UTF_8));
+        final File outsideRes = new File(root, "res-sync.txt"); //sibling of res/, never in scope
+        write(outsideRes, "stamp".getBytes(StandardCharsets.UTF_8));
+
+        final DeltaManifest manifest = bigResManifest(line(kept, "res/editions/Current Set.txt"));
+        final java.util.List<String> deleted = DeltaUpdater.deleteOrphanedResFiles(manifest, resRoot);
+
+        Assert.assertTrue(kept.isFile(), "manifest-listed file kept");
+        Assert.assertTrue(outsideRes.isFile(), "files outside res/ are out of scope");
+        Assert.assertFalse(orphanEdition.exists(), "orphaned edition file deleted");
+        Assert.assertFalse(orphanNested.exists(), "orphaned nested file deleted");
+        Assert.assertFalse(orphanNested.getParentFile().exists(), "emptied dirs pruned");
+        Assert.assertTrue(resRoot.isDirectory(), "res root itself never pruned");
+        Assert.assertEqualsNoOrder(deleted.toArray(),
+                new String[] {"res/editions/Renamed Away.txt", "res/cardsfolder/upcoming/old_name.txt"});
+        DeltaUpdater.deleteRecursively(root);
+    }
+
+    @Test
+    public void jarOnlyBridgeManifestNeverDeletes() throws Exception {
+        //the legacy bridge view lists ONLY the jar: driving deletion off it would
+        //empty the whole res tree. The floor guard must make that impossible.
+        final File root = Files.createTempDirectory("delta-orphan-bridge").toFile();
+        final File resRoot = new File(root, "res");
+        final File anything = new File(resRoot, "cards/a.txt");
+        write(anything, "x".getBytes(StandardCharsets.UTF_8));
+        final DeltaManifest jarOnly = DeltaManifest.parse(String.join("\n",
+                DeltaManifest.HEADER, "#commit " + COMMIT, "#jar forge-playable.jar",
+                "AA\t1\tforge-playable.jar"));
+        Assert.assertEquals(DeltaUpdater.deleteOrphanedResFiles(jarOnly, resRoot).size(), 0);
+        Assert.assertTrue(anything.isFile(), "nothing deleted under a jar-only manifest");
+        DeltaUpdater.deleteRecursively(root);
+    }
+
+    @Test
+    public void implausibleOrphanCountDeletesNothing() throws Exception {
+        final File root = Files.createTempDirectory("delta-orphan-cap").toFile();
+        final File resRoot = new File(root, "res");
+        for (int i = 0; i <= DeltaUpdater.MAX_ORPHAN_DELETIONS; i++) {
+            write(new File(resRoot, "bulk/o" + i + ".txt"), "x".getBytes(StandardCharsets.UTF_8));
+        }
+        final DeltaManifest manifest = bigResManifest();
+        Assert.assertEquals(DeltaUpdater.deleteOrphanedResFiles(manifest, resRoot).size(), 0,
+                "over-cap candidate set deletes nothing at all");
+        Assert.assertTrue(new File(resRoot, "bulk/o0.txt").isFile());
+        DeltaUpdater.deleteRecursively(root);
+    }
+
+    @Test
+    public void caseVariantOfManifestEntryIsNotAnOrphan() throws Exception {
+        //after a case-only upstream rename, a case-insensitive filesystem (macOS
+        //default) resolves old and new name to the SAME file - deleting the
+        //"orphan" would delete the manifest file itself
+        final File root = Files.createTempDirectory("delta-orphan-case").toFile();
+        final File resRoot = new File(root, "res");
+        final File onDisk = new File(resRoot, "editions/some set.txt");
+        write(onDisk, "x".getBytes(StandardCharsets.UTF_8));
+        final DeltaManifest manifest = bigResManifest("CC\t1\tres/editions/Some Set.txt");
+        Assert.assertEquals(DeltaUpdater.deleteOrphanedResFiles(manifest, resRoot).size(), 0);
+        Assert.assertTrue(onDisk.isFile(), "case variant of a manifest path survives");
+        DeltaUpdater.deleteRecursively(root);
+    }
+
+    @Test
+    public void missingResRootIsANoOp() throws Exception {
+        final DeltaManifest manifest = bigResManifest();
+        Assert.assertEquals(DeltaUpdater.deleteOrphanedResFiles(manifest,
+                new File("/nonexistent/res")).size(), 0);
+        Assert.assertEquals(DeltaUpdater.deleteOrphanedResFiles(manifest, null).size(), 0);
+    }
+
     private static String line(File file, String path) throws IOException {
         return DeltaManifest.sha256(file) + "\t" + file.length() + "\t" + path;
     }

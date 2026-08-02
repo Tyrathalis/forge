@@ -420,6 +420,14 @@ public class AssetsDownloader {
                     Forge.getSplashScreen().getProgressBar().setDescription("Downloading update (" + done + "/" + total + ")"));
             //everything downloaded and hash-verified - only now start changing the install
             DeltaUpdater.applyResFiles(plan, stagingDir, localFileResolver(plan.manifest(), runningJar));
+            //upstream renames/deletions otherwise accumulate forever (a stale edition
+            //file once kept an old set code alive against the current edition using it);
+            //guarded internally: jar-only bridge manifests and runaway counts delete nothing
+            final java.util.List<String> removed =
+                    DeltaUpdater.deleteOrphanedResFiles(plan.manifest(), new File(ASSETS_DIR, "res"));
+            if (!removed.isEmpty()) {
+                System.out.println("Update removed " + removed.size() + " obsolete res file(s): " + removed);
+            }
             //res/ now matches the published build - the self-heal pass need not re-probe it.
             //(A jar-only bridge plan writes it too: harmless, since the strictly-newer gate,
             //not the stamp, owns the next boot's decision when builds differ.)
