@@ -101,12 +101,15 @@ def zipdir(zpath, srcdir):
 zipdir(base + '/res/cardsfolder/cardsfolder.zip', '../forge-gui/res/cardsfolder')
 zipdir('target/assets.zip', base)
 EOF
+#published standalone too: the in-app res delta refreshes cards as this one
+#asset (~17MB) instead of the full assets.zip when any card script changed
+cp "$STAGE/res/cardsfolder/cardsfolder.zip" target/
 rm -rf "$STAGE"
 
 echo "== Staging android-release/ =="
 OUT=target/android-release
 rm -rf "$OUT"; mkdir -p "$OUT"
-cp "$SIGNED" target/assets.zip target/classes/assets/version.txt target/classes/assets/build.txt "$OUT/"
+cp "$SIGNED" target/assets.zip target/cardsfolder.zip target/classes/assets/version.txt target/classes/assets/build.txt "$OUT/"
 ls -lh "$OUT"
 echo
 echo "Publish (deliberate step — note -R pin):"

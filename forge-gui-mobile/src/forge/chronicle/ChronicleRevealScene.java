@@ -821,16 +821,24 @@ public class ChronicleRevealScene extends FDisplayObject {
                 g.endClip();
             }
         }
-        //NEW badge, held while the card is face-up
+        //NEW badge, held while the card is face-up. Above the card, not on it -
+        //at phone card sizes an on-card badge sits exactly over the name line,
+        //hiding what the card IS the first time it's ever seen
         if (rc.firstPull) {
             float fade = Math.min(1, glintT / 0.3f);
             float bw = Utils.scale(34);
             float bh = Utils.scale(16);
+            float bx = x + (w - bw) / 2;
+            float by = y - bh - Utils.scale(4);
+            if (by < 0) {
+                by = y + PADDING; //no headroom (shouldn't happen for the centered ceremony card)
+                bx = x + PADDING;
+            }
             g.setAlphaComposite(fade);
             g.fillRoundRect(FSkinColor.getStandardColor(new Color(0.9f, 0.75f, 0.2f, 1f)).getColor(),
-                    x + PADDING, y + PADDING, bw, bh, Utils.scale(3));
+                    bx, by, bw, bh, Utils.scale(3));
             g.drawText("NEW", FSkinFont.get(11), Color.BLACK,
-                    x + PADDING, y + PADDING, bw, bh, false, Align.center, true);
+                    bx, by, bw, bh, false, Align.center, true);
             g.resetAlphaComposite();
         }
     }

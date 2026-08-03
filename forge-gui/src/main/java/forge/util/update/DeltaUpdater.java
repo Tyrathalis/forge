@@ -167,6 +167,16 @@ public final class DeltaUpdater {
      * @return manifest-relative paths actually deleted
      */
     public static List<String> deleteOrphanedResFiles(DeltaManifest manifest, File resRoot) {
+        return deleteOrphanedResFiles(manifest, resRoot, null);
+    }
+
+    /**
+     * keep, when non-null, exempts manifest-relative paths from the sweep —
+     * for install layouts that legitimately carry files the manifest cannot
+     * know (Android's cardsfolder.zip and res/build.txt).
+     */
+    public static List<String> deleteOrphanedResFiles(DeltaManifest manifest, File resRoot,
+            java.util.function.Predicate<String> keep) {
         final List<String> deleted = new ArrayList<>();
         if (resRoot == null || !resRoot.isDirectory()) {
             return deleted;
@@ -186,6 +196,9 @@ public final class DeltaUpdater {
         collectFilesUnder(resRoot, "res", onDisk);
         final List<String> orphans = new ArrayList<>();
         for (final String rel : onDisk) {
+            if (keep != null && keep.test(rel)) {
+                continue;
+            }
             if (!known.contains(rel) && !knownLower.contains(rel.toLowerCase(Locale.ROOT))) {
                 orphans.add(rel);
             }
@@ -258,6 +271,11 @@ public final class DeltaUpdater {
         try (InputStream in = conn.getInputStream()) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    /** Plain fetch for release assets that are not manifest entries (Android's cardsfolder.zip). */
+    public static void downloadFile(String url, File target) throws IOException {
+        downloadTo(url, target);
     }
 
     private static void downloadTo(String url, File target) throws IOException {

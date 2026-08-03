@@ -3,15 +3,22 @@ package forge.assets;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import com.badlogic.gdx.files.FileHandle;
 import forge.gui.GuiBase;
 import forge.util.BuildInfo;
-import forge.util.DateUtil;
 import org.apache.commons.lang3.StringUtils;
 
 import com.badlogic.gdx.Gdx;
@@ -107,8 +114,10 @@ public class AssetsDownloader {
                         if (buildTxtFileHandle.exists()) {
                             buildTimeStamp = format.parse(buildTxtFileHandle.readString());
                             buildDate = buildTimeStamp.toString();
-                            // if morethan 23 hours the difference, then allow to update..
-                            verifyUpdatable = DateUtil.getElapsedHours(buildTimeStamp, snapsTimestamp) > 23;
+                            //strictly-newer, like desktop: the APK is a 19MB download and the
+                            //asset refresh below is a priced res delta, so upstream's >23h
+                            //shield against same-day full re-pulls no longer buys anything
+                            verifyUpdatable = snapsTimestamp.after(buildTimeStamp);
                         } else {
                             //fallback to old version comparison
                             verifyUpdatable = !StringUtils.isEmpty(version) && !versionString.equals(version);
@@ -275,6 +284,27 @@ public class AssetsDownloader {
         if (mandatory && connectedToInternet)
             canIgnoreDownload = false;
 
+        //priced res delta (fork): refresh per-file off the release manifest instead of
+        //re-pulling the full assets.zip after every APK update. cardsfolder is one zip
+        //on this platform, so its 33K manifest entries are compared against the zip's
+        //central directory and refreshed as a single release asset when any differ.
+        //The diff is size-only — hashing ~2GB of res on-device is too slow to run
+        //speculatively (the desktop self-heal pass makes the same trade); every loose
+        //file downloaded is still hash-verified against the manifest before apply.
+        AndroidResDelta resDelta = null;
+        if (isSnapshots && connectedToInternet) {
+            resDelta = prepareAndroidResDelta(snapsURL);
+        }
+        if (resDelta != null && resDelta.plan().fileCount() == 0 && !resDelta.cardsChanged()) {
+            //stamps disagreed (an APK update landed) but every res file already matches
+            //the published manifest — sync the stamps and boot; nothing to download
+            if (buildTxtFileHandle.exists())
+                FileUtil.writeFile(new File(RES_DIR, "build.txt"), buildTxtFileHandle.readString());
+            FileUtil.writeFile(versionFile.file(), versionString);
+            run(runnable);
+            return;
+        }
+
         if (!connectedToInternet) {
             message = "Updated resource files cannot be downloaded due to lack of internet connection.\n\n";
             if (canIgnoreDownload) {
@@ -294,12 +324,21 @@ public class AssetsDownloader {
         }
 
         //prompt user whether they wish to download the updated resource files
-        message = "There are updated resource files to download. " +
-                "This download is around " + packageSize + ", ";
-        if (Forge.getDeviceAdapter().isConnectedToWifi()) {
-            message += "which shouldn't take long if your wifi connection is good.";
+        if (resDelta != null) {
+            message = "There are updated resource files to download.\nOnly changed files will be fetched: "
+                    + resDelta.plan().fileCount() + " file(s), " + humanReadableSize(resDelta.plan().totalBytes());
+            if (resDelta.cardsChanged()) {
+                message += ", plus a refreshed card archive (~20 MB)";
+            }
+            message += ".";
         } else {
-            message += "so it's highly recommended that you connect to wifi first.";
+            message = "There are updated resource files to download. " +
+                    "This download is around " + packageSize + ", ";
+            if (Forge.getDeviceAdapter().isConnectedToWifi()) {
+                message += "which shouldn't take long if your wifi connection is good.";
+            } else {
+                message += "so it's highly recommended that you connect to wifi first.";
+            }
         }
         final List<String> options;
         message += "\n\n";
@@ -329,9 +368,15 @@ public class AssetsDownloader {
 
         //allow deletion on Android 10 or if using app-specific directory
         boolean allowDeletion = Forge.androidVersion < 30 || GuiBase.isUsingAppDirectory();
-        String assetURL = isSnapshots ? snapsURL + "assets.zip" : releaseURL + versionString + "/" + "assets.zip";
-        new GuiDownloadZipService("", "resource files", assetURL,
-                ASSETS_DIR, RES_DIR, Forge.getSplashScreen().getProgressBar(), allowDeletion).downloadAndUnzip();
+        boolean deltaApplied = resDelta != null
+                && executeAndroidResDelta(resDelta, snapsURL, buildTxtFileHandle);
+        if (!deltaApplied) {
+            //no manifest, an implausible delta, or a mid-delta failure - the full
+            //package re-extracts everything, so it repairs any partial apply too
+            String assetURL = isSnapshots ? snapsURL + "assets.zip" : releaseURL + versionString + "/" + "assets.zip";
+            new GuiDownloadZipService("", "resource files", assetURL,
+                    ASSETS_DIR, RES_DIR, Forge.getSplashScreen().getProgressBar(), allowDeletion).downloadAndUnzip();
+        }
 
         if (allowDeletion)
             FSkinFont.deleteCachedFiles(); //delete cached font files in case any skin's .ttf file changed
@@ -446,6 +491,140 @@ public class AssetsDownloader {
                 DeltaUpdater.deleteRecursively(stagingDir);
                 Forge.getDeviceAdapter().restart();
             }
+            return true;
+        } catch (final Exception ex) {
+            ex.printStackTrace();
+            DeltaUpdater.deleteRecursively(stagingDir);
+            return false;
+        }
+    }
+
+    /** The Android res refresh: loose res files diffed per-file, cardsfolder as one unit. */
+    private record AndroidResDelta(DeltaUpdater.Plan plan, boolean cardsChanged) {
+    }
+
+    /** cardsfolder.zip is a fork release asset (build-android.sh publishes it). */
+    private static final String CARDSFOLDER_ZIP_ASSET = "cardsfolder.zip";
+    private static final String CARDSFOLDER_PREFIX = "res/cardsfolder/";
+    /** Above this many changed loose files (fresh install, wrecked res) the full
+     *  assets.zip is the cheaper transport - thousands of raw fetches are not. */
+    private static final int ANDROID_DELTA_MAX_FILES = 1500;
+
+    private static File androidCardsfolderZip() {
+        return new File(RES_DIR + "cardsfolder" + File.separator + CARDSFOLDER_ZIP_ASSET);
+    }
+
+    private static Function<String, File> androidResResolver() {
+        return path -> path.startsWith("res/") ? new File(ASSETS_DIR, path) : null;
+    }
+
+    /** Null = no viable delta (no manifest, no commit, implausibly large diff) - use assets.zip. */
+    private static AndroidResDelta prepareAndroidResDelta(String snapshotBaseUrl) {
+        try {
+            final DeltaManifest manifest = DeltaUpdater.fetchManifest(snapshotBaseUrl);
+            if (manifest == null || manifest.getCommit() == null) {
+                return null;
+            }
+            Forge.getSplashScreen().getProgressBar().setDescription("Comparing against update...");
+
+            //the local cardsfolder is one zip; compare the manifest's per-file entries
+            //against its central directory (sizes - same trade as the loose-file diff)
+            final Map<String, Long> zippedCards = new HashMap<>();
+            final File cardsZip = androidCardsfolderZip();
+            if (cardsZip.isFile()) {
+                try (ZipFile zip = new ZipFile(cardsZip)) {
+                    final Enumeration<? extends ZipEntry> e = zip.entries();
+                    while (e.hasMoreElements()) {
+                        final ZipEntry entry = e.nextElement();
+                        if (!entry.isDirectory()) {
+                            zippedCards.put(entry.getName(), entry.getSize());
+                        }
+                    }
+                }
+            }
+
+            boolean cardsChanged = !cardsZip.isFile();
+            int cardsInManifest = 0;
+            final List<DeltaManifest.Entry> changed = new ArrayList<>();
+            long totalBytes = 0;
+            for (final DeltaManifest.Entry entry : manifest.getEntries()) {
+                final String path = entry.path();
+                if (path.equals(manifest.getJarPath())) {
+                    continue; //code arrives via the APK, not the desktop jar
+                }
+                if (path.startsWith(CARDSFOLDER_PREFIX)) {
+                    cardsInManifest++;
+                    final Long zipSize = zippedCards.get(path.substring(CARDSFOLDER_PREFIX.length()));
+                    if (zipSize == null || zipSize != entry.size()) {
+                        cardsChanged = true;
+                    }
+                    continue;
+                }
+                if (!path.startsWith("res/")) {
+                    continue;
+                }
+                final File local = new File(ASSETS_DIR, path);
+                if (!local.isFile() || local.length() != entry.size()) {
+                    changed.add(entry);
+                    totalBytes += entry.size();
+                }
+            }
+            if (zippedCards.size() > cardsInManifest) {
+                cardsChanged = true; //the manifest is authoritative - zip carries removed cards
+            }
+            if (changed.size() > ANDROID_DELTA_MAX_FILES) {
+                return null;
+            }
+            return new AndroidResDelta(new DeltaUpdater.Plan(manifest, changed, totalBytes, false), cardsChanged);
+        } catch (final Exception ex) {
+            ex.printStackTrace();
+            return null;
+        }
+    }
+
+    /** True = res refreshed in place (loose files hash-verified; cardsfolder.zip swapped whole). */
+    private static boolean executeAndroidResDelta(AndroidResDelta delta, String snapshotBaseUrl, FileHandle apkBuildTxt) {
+        final File stagingDir = new File(ASSETS_DIR, DeltaUpdater.STAGING_DIR_NAME);
+        try {
+            DeltaUpdater.deleteRecursively(stagingDir); //stale leftovers from an interrupted run
+            DeltaUpdater.download(delta.plan(), snapshotBaseUrl, GITHUB_RAW_URL, stagingDir, (done, total) ->
+                    Forge.getSplashScreen().getProgressBar().setDescription("Downloading update (" + done + "/" + total + ")"));
+            File stagedCards = null;
+            if (delta.cardsChanged()) {
+                Forge.getSplashScreen().getProgressBar().setDescription("Downloading card archive...");
+                stagedCards = new File(stagingDir, CARDSFOLDER_ZIP_ASSET);
+                if (!stagingDir.isDirectory() && !stagingDir.mkdirs()) {
+                    throw new IOException("Could not create " + stagingDir);
+                }
+                //the aggregate zip has no manifest hash; it rides the same HTTPS release
+                //channel as assets.zip, which is not verified either
+                DeltaUpdater.downloadFile(snapshotBaseUrl + CARDSFOLDER_ZIP_ASSET, stagedCards);
+            }
+            //everything is staged - only now start changing the install
+            DeltaUpdater.applyResFiles(delta.plan(), stagingDir, androidResResolver());
+            if (stagedCards != null) {
+                final File target = androidCardsfolderZip();
+                if (target.getParentFile() != null && !target.getParentFile().isDirectory()
+                        && !target.getParentFile().mkdirs()) {
+                    throw new IOException("Could not create " + target.getParentFile());
+                }
+                Files.move(stagedCards.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            //orphan cleanup keeps upstream renames/removals from accumulating; on this
+            //platform cardsfolder.zip and build.txt live under res/ without manifest
+            //entries, so they must survive the sweep
+            final List<String> removed = DeltaUpdater.deleteOrphanedResFiles(delta.plan().manifest(),
+                    new File(ASSETS_DIR, "res"),
+                    path -> path.startsWith(CARDSFOLDER_PREFIX) || path.equals("res/build.txt"));
+            if (!removed.isEmpty()) {
+                System.out.println("Update removed " + removed.size() + " obsolete res file(s): " + removed);
+            }
+            //the zip path gets res/build.txt from inside the archive; the delta must
+            //stamp it itself or every boot re-plans until the next APK update
+            if (apkBuildTxt.exists()) {
+                FileUtil.writeFile(new File(RES_DIR, "build.txt"), apkBuildTxt.readString());
+            }
+            DeltaUpdater.deleteRecursively(stagingDir);
             return true;
         } catch (final Exception ex) {
             ex.printStackTrace();
