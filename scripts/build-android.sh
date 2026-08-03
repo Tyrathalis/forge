@@ -82,17 +82,24 @@ mkdir -p "$STAGE/res/cardsfolder"
 python3 - "$STAGE" <<'EOF'
 import sys, zipfile, os
 base = sys.argv[1]
-src = '../forge-gui/res/cardsfolder'
-with zipfile.ZipFile(base + '/res/cardsfolder/cardsfolder.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-    for root, dirs, files in os.walk(src):
-        for f in files:
-            p = os.path.join(root, f)
-            z.write(p, os.path.relpath(p, src))
-with zipfile.ZipFile('target/assets.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-    for root, dirs, files in os.walk(base):
-        for f in files:
-            p = os.path.join(root, f)
-            z.write(p, os.path.relpath(p, base))
+
+# GuiDownloadZipService.extract() only mkdirs on explicit DIRECTORY entries
+# (parents-first, the way ant writes them) and per-file failures are silently
+# counted, not fatal — a zip without dir entries extracts 0 files and the app
+# loops on the download prompt. Emit dir entries exactly like ant does.
+def zipdir(zpath, srcdir):
+    with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        for root, dirs, files in os.walk(srcdir):
+            dirs.sort(); files.sort()
+            for d in dirs:
+                rel = os.path.relpath(os.path.join(root, d), srcdir)
+                z.writestr(zipfile.ZipInfo(rel + '/'), b'')
+            for f in files:
+                p = os.path.join(root, f)
+                z.write(p, os.path.relpath(p, srcdir))
+
+zipdir(base + '/res/cardsfolder/cardsfolder.zip', '../forge-gui/res/cardsfolder')
+zipdir('target/assets.zip', base)
 EOF
 rm -rf "$STAGE"
 

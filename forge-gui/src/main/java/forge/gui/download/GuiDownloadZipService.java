@@ -234,6 +234,14 @@ public class GuiDownloadZipService extends GuiDownloadService {
         final byte[] buffer = new byte[1024];
         int len;
 
+        //zips without explicit directory entries (python zipfile, jar) never hit the
+        //mkdir branch in extract(), and per-entry failures there are swallowed — every
+        //file silently fails and the caller believes extraction succeeded
+        final File parent = new File(outPath).getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+
         try (BufferedOutputStream out = new BufferedOutputStream(java.nio.file.Files.newOutputStream(Paths.get(outPath)))) {
             while ((len = in.read(buffer)) >= 0) {
                 out.write(buffer, 0, len);
