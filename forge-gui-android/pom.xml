@@ -291,8 +291,11 @@
                         <version>4.6.2</version>
                         <extensions>true</extensions>
                         <configuration>
+                            <!-- in-process jarsigner needs sun.security.pkcs internals (broken on
+                                 JDK 17+); sign externally with tools/uber-apk-signer.jar instead,
+                                 same as the release profile -->
                             <sign>
-                                <debug>true</debug>
+                                <debug>false</debug>
                             </sign>
                             <sdk>
                                 <platform>${androidPlatform}</platform>
