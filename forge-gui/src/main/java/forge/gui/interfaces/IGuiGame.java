@@ -60,6 +60,14 @@ public interface IGuiGame {
     void setGameView(GameView gameView);
     GameView getGameView();
 
+    /**
+     * Push current trackable-view state to this gui now, outside a regular
+     * protocol dispatch. No-op for local guis (they share the host's view
+     * objects); the net server override flushes deltas to the remote client.
+     * Game-thread-only.
+     */
+    default void flushGameView() { }
+
     void setOriginalGameController(PlayerView view, IGameController gameController);
     void setGameController(PlayerView player, IGameController gameController);
 

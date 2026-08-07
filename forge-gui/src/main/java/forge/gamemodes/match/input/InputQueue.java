@@ -17,7 +17,10 @@
  */
 package forge.gamemodes.match.input;
 
+import forge.game.Game;
 import forge.game.GameView;
+import forge.game.event.GameEventAwaitingInput;
+import forge.game.player.PlayerView;
 import forge.util.IHasForgeLog;
 import forge.player.PlayerControllerHuman;
 
@@ -62,19 +65,27 @@ public class InputQueue extends Observable implements IHasForgeLog {
             // if topMostInput is null then it means the inputstack is already empty, why this is called twice?
            inputStack.pop();
         }
+        if (inputStack.isEmpty()) {
+            // Safe off the game thread: the game thread is parked on this input's
+            // latch until stop() counts it down, after removeInput returns.
+            markAwaitingInput(inp.getOwner(), false, false);
+        }
         updateObservers();
     }
 
     public final void clearInputs() {
         netLog.trace("clearInputs() called, stack size = {}", inputStack.size());
         int count = 0;
+        PlayerView owner = null;
         while(!inputStack.isEmpty()) {
             InputSynchronized inp = inputStack.pop();
+            owner = inp.getOwner();
             netLog.trace("Stopping input #{}: {}", count, inp.getClass().getSimpleName());
             inp.stop();
             count++;
         }
         netLog.trace("clearInputs() done, stopped {} inputs", count);
+        markAwaitingInput(owner, false, false);
 
         updateObservers();
     }
@@ -97,8 +108,29 @@ public class InputQueue extends Observable implements IHasForgeLog {
             //HostedMatch.setCurrentPlayer(game.getPlayer(input.getOwner()));
         //}
         inputStack.push(input);
+        markAwaitingInput(input.getOwner(), true, true);
         syncPoint();
         updateObservers();
+    }
+
+    /**
+     * Stamps whether the game is blocked waiting on this queue's player, and on
+     * a transition to awaiting fires GameEventAwaitingInput so net-play handlers
+     * can flush the updated view to every client. Firing is restricted to
+     * setInput, which runs on the game thread (showAndWait) — the delta flush in
+     * RemoteClientGuiGame is game-thread-only.
+     */
+    private void markAwaitingInput(final PlayerView owner, final boolean awaiting, final boolean fireEvent) {
+        if (owner == null || owner.getAwaitingInput() == awaiting) {
+            return;
+        }
+        owner.setAwaitingInput(awaiting);
+        if (fireEvent) {
+            final Game game = gameView.getGame();
+            if (game != null) {
+                game.fireEvent(new GameEventAwaitingInput(owner, awaiting));
+            }
+        }
     }
 
     void syncPoint() {

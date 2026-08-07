@@ -215,6 +215,15 @@ public class FControlGameEventHandler extends IGameEventVisitor.Base<Void> {
     }
 
     @Override
+    public Void visit(final GameEventAwaitingInput event) {
+        // Fires on the game thread after the AwaitingInput flag is stamped, so
+        // this flush delivers a view in which the flag is already current —
+        // unlike GameEventPlayerPriority, which fires before HasPriority updates.
+        matchController.flushGameView();
+        return processEvent();
+    }
+
+    @Override
     public Void visit(final GameEventTurnBegan event) {
         turnUpdate = event.turnOwner();
         processPlayer(event.turnOwner(), livesUpdate);

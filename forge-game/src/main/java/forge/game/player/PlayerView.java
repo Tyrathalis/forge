@@ -237,6 +237,16 @@ public class PlayerView extends GameEntityView {
         set(TrackableProperty.HasPriority, val);
     }
 
+    // True while the game is blocked waiting on this player's input (any Input,
+    // not just priority holds — combat declarations and resolution-time choices
+    // set this where HasPriority lags a step behind).
+    public boolean getAwaitingInput() {
+        return get(TrackableProperty.AwaitingInput);
+    }
+    public void setAwaitingInput(final boolean val) {
+        set(TrackableProperty.AwaitingInput, val);
+    }
+
     public int getMaxHandSize() {
         return get(TrackableProperty.MaxHandSize);
     }

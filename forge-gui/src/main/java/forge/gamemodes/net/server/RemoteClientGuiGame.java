@@ -194,6 +194,11 @@ public class RemoteClientGuiGame extends NetworkGuiGame implements IHasForgeLog 
     public void updateGameView() {
         updateGameView(true);
     }
+    @Override
+    public void flushGameView() {
+        if (paused) { return; }
+        updateGameView();
+    }
     private void updateGameView(boolean flush) {
         GameView gameView = getGameView();
         if (gameView == null) {

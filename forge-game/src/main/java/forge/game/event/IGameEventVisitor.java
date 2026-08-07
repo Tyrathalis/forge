@@ -3,6 +3,7 @@ package forge.game.event;
 public interface IGameEventVisitor<T> {
     T visit(GameEventAnteCardsSelected event);
     T visit(GameEventAttackersDeclared event);
+    T visit(GameEventAwaitingInput event);
     T visit(GameEventBlockersDeclared event);
     T visit(GameEventCardDamaged event);
     T visit(GameEventCardDestroyed event);
@@ -64,6 +65,7 @@ public interface IGameEventVisitor<T> {
     class Base<T> implements IGameEventVisitor<T>{
         public T visit(GameEventAnteCardsSelected event) { return null; }
         public T visit(GameEventAttackersDeclared event) { return null; }
+        public T visit(GameEventAwaitingInput event) { return null; }
         public T visit(GameEventBlockersDeclared event) { return null; }
         public T visit(GameEventCardDamaged event) { return null; }
         public T visit(GameEventCardDestroyed event) { return null; }

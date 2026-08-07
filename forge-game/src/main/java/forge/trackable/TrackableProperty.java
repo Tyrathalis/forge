@@ -205,6 +205,7 @@ public enum TrackableProperty {
     IsExtraTurn(TrackableTypes.BooleanType),
     ExtraTurnCount(TrackableTypes.IntegerType),
     HasPriority(TrackableTypes.BooleanType, FreezeMode.IgnoresFreeze),
+    AwaitingInput(TrackableTypes.BooleanType, FreezeMode.IgnoresFreeze),
     AvatarLifeDifference(TrackableTypes.IntegerType, FreezeMode.IgnoresFreeze),
     HasLost(TrackableTypes.BooleanType),
     HasAvailableActions(TrackableTypes.BooleanType),

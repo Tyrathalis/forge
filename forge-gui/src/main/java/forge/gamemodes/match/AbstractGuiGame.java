@@ -606,9 +606,8 @@ public abstract class AbstractGuiGame implements IGuiGame, IMayViewCards {
     @Override
     public void showWaitingTimer(final PlayerView forPlayer, final String waitingForPlayerName) {
         cancelWaitingTimer();
-        if (waitingForPlayerName == null) {
-            return;
-        }
+        // A null name is no reason to skip the timer — each tick recomputes the
+        // waited-on player, so the display recovers once one is identifiable.
         this.waitingStartTime = System.currentTimeMillis();
         // Capture timer so stale EDT tick runnables detect cancel/restart and skip
         final Timer myTimer = new Timer("waitingTimer");
@@ -637,7 +636,16 @@ public abstract class AbstractGuiGame implements IGuiGame, IMayViewCards {
         } else {
             timeStr = String.format("%d:%02d", elapsedSec / 60, elapsedSec % 60);
         }
-        String waiting = Localizer.getInstance().getMessage("lblWaitingForPlayer", waitingForPlayerName) + " (" + timeStr + ")";
+        // Recompute each tick — the name captured at timer start goes stale when
+        // the wait hands off between players without this client seeing an input.
+        String currentName = findWaitingForPlayerName(forPlayer);
+        if (currentName == null) {
+            currentName = waitingForPlayerName;
+        }
+        if (currentName == null) {
+            return; //leave the generic "Waiting for opponent..." prompt until someone is identifiable
+        }
+        String waiting = Localizer.getInstance().getMessage("lblWaitingForPlayer", currentName) + " (" + timeStr + ")";
         String yieldMsg = currentYieldMessage();
         showPromptMessageNoCancel(forPlayer, yieldMsg != null ? yieldMsg + "\n\n" + waiting : waiting);
     }
@@ -653,6 +661,15 @@ public abstract class AbstractGuiGame implements IGuiGame, IMayViewCards {
 
     private String findWaitingForPlayerName(final PlayerView forPlayer) {
         if (gameView.getPlayers() != null) {
+            // AwaitingInput is stamped when the game actually blocks on a player's
+            // input, covering combat declarations and resolution-time choices where
+            // HasPriority lags a step behind (it only updates at the end of each
+            // PhaseHandler step). Prefer it; fall back to priority for old views.
+            for (PlayerView pv : gameView.getPlayers()) {
+                if (pv.getAwaitingInput() && (forPlayer == null || pv.getId() != forPlayer.getId())) {
+                    return pv.getName();
+                }
+            }
             for (PlayerView pv : gameView.getPlayers()) {
                 if (pv.getHasPriority() && (forPlayer == null || pv.getId() != forPlayer.getId())) {
                     return pv.getName();

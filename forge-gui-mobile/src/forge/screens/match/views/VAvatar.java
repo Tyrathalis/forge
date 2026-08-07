@@ -30,6 +30,12 @@ public class VAvatar extends FDisplayObject {
     private final AvatarAnimation avatarAnimation;
     private static final FSkinFont LIFE_FONT = FSkinFont.get(18);
     private static final FSkinFont LIFE_FONT_ALT = FSkinFont.get(22);
+    //turn = gold outer ring, awaiting-input = green inset ring; distinct hue AND
+    //position so the two states stay readable when one player has both
+    private static final Color TURN_COLOR = Color.GOLD;
+    private static final Color AWAITING_COLOR = new Color(0.15f, 1f, 0.3f, 1f);
+    private final AwaitingPulseAnimation awaitingPulse = new AwaitingPulseAnimation();
+    private boolean wasAwaitingInput;
 
     public VAvatar(PlayerView player0) {
         player = player0;
@@ -149,25 +155,24 @@ public class VAvatar extends FDisplayObject {
         }
     }
     private void drawPlayerIndicator(Graphics g, float w, float h, float alphaModifier) {
-        float oldAlpha = g.getfloatAlphaComposite();
-        boolean displayPriority = true;
-        for (PlayerView playerView : MatchController.instance.getGameView().getPlayers()) {
-            if (playerView.isAI()) {
-                //only display priority indicator if there's no AI player
-                displayPriority = false;
-                break;
-            }
-        }
-        //turn indicator
+        //turn indicator — gold outer ring on the turn player
         if (player == MatchController.instance.getGameView().getPlayerTurn()) {
-            float alpha = displayPriority ? 1f : 0.8f;
-            if (alphaModifier < 1)
-                alpha = alphaModifier;
-            g.drawRect(w / 16f, FSkinColor.getStandardColor(Color.CYAN).alphaColor(alpha), 0, 0, w, h);
+            float alpha = alphaModifier < 1 ? alphaModifier : 0.9f;
+            g.drawRect(w / 14f, FSkinColor.getStandardColor(TURN_COLOR).alphaColor(alpha), 0, 0, w, h);
         }
-        //priority indicator
-        if (displayPriority && player.getHasPriority() && alphaModifier == 1) {
-            g.drawRect(w / 16f, FSkinColor.getStandardColor(Color.LIME).alphaColor(0.6f), 0, 0, w, h);
+        //action indicator — green inset ring while the game is blocked on this
+        //player's input (any input, not just priority holds — set for human players
+        //only, so AI avatars never flicker). Pulses briefly when the wait first
+        //lands on the player to catch the eye, then holds steady.
+        boolean awaiting = player.getAwaitingInput();
+        if (awaiting && !wasAwaitingInput) {
+            awaitingPulse.begin();
+        }
+        wasAwaitingInput = awaiting;
+        if (awaiting && alphaModifier == 1) {
+            float inset = w / 7f;
+            g.drawRect(w / 12f, FSkinColor.getStandardColor(AWAITING_COLOR).alphaColor(awaitingPulse.getRingAlpha()),
+                    inset, inset, w - 2 * inset, h - 2 * inset);
         }
         //highlighted
         if (MatchController.instance.isHighlighted(player)) {
@@ -180,6 +185,39 @@ public class VAvatar extends FDisplayObject {
                     g.drawRect(w / 16f, Color.ORANGE, 0, 0, w, h);
                 }
             }
+        }
+    }
+
+    private static class AwaitingPulseAnimation extends ForgeAnimation {
+        private static final float DURATION = 2.8f;
+        private static final float CYCLES = 3f;
+        private static final float STEADY_ALPHA = 0.9f;
+        private float progress = -1; //negative = not animating
+
+        private void begin() {
+            if (progress < 0) {
+                progress = 0;
+                start();
+            }
+        }
+
+        private float getRingAlpha() {
+            if (progress < 0) {
+                return STEADY_ALPHA;
+            }
+            //cosine pulse starting and ending bright
+            return 0.3f + 0.7f * (0.5f + 0.5f * (float)Math.cos(progress / DURATION * CYCLES * 2 * Math.PI));
+        }
+
+        @Override
+        protected boolean advance(float dt) {
+            progress += dt;
+            return progress < DURATION;
+        }
+
+        @Override
+        protected void onEnd(boolean endingAll) {
+            progress = -1;
         }
     }
 
