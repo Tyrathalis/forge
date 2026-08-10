@@ -20,10 +20,24 @@ import java.util.Map;
  * a time, so a single writer is safe (rec() is synchronized regardless).
  */
 public final class Census {
+    /**
+     * Per-game byte cap on census rows — the runaway guard mirroring
+     * Obs.RAW_CAP. A game wedged in a decision loop until the hard-cap
+     * timeout writes one row per callback for the whole 360s (d6-run13
+     * i006: one such game grew a worker's census.jsonl to GB scale; every
+     * stale-data pass to date has trimmed this exact pattern). A healthy
+     * game emits ~15 KB, so 16 MiB is ~1000x headroom; past it, rows for
+     * the current game are dropped after one loud "census_cap" marker.
+     * Start/end records still land, so per-game accounting stays intact.
+     */
+    private static final long RAW_CAP = Long.getLong("anvil.census.rawcap", 16L << 20);
+
     private static PrintWriter out;
     private static long seq;
     private static int gameIdx = -1;
     private static long gameStartMs;
+    private static long gameBytes;
+    private static boolean capped;
 
     private Census() {
     }
@@ -43,6 +57,8 @@ public final class Census {
     public static synchronized void startGame(int idx, long seed) {
         gameIdx = idx;
         gameStartMs = System.currentTimeMillis();
+        gameBytes = 0;
+        capped = false;
         if (out != null) {
             out.println("{\"ev\":\"start\",\"g\":" + idx + ",\"seed\":" + seed + "}");
         }
@@ -51,13 +67,14 @@ public final class Census {
     public static synchronized void endGame(String winner, int turns) {
         if (out != null) {
             out.println("{\"ev\":\"end\",\"g\":" + gameIdx + ",\"winner\":" + quote(winner)
-                    + ",\"turns\":" + turns + ",\"ms\":" + (System.currentTimeMillis() - gameStartMs) + "}");
+                    + ",\"turns\":" + turns + ",\"ms\":" + (System.currentTimeMillis() - gameStartMs)
+                    + (capped ? ",\"cap\":true" : "") + "}");
             out.flush();
         }
     }
 
     public static synchronized void rec(Game g, Player p, String method, Object... kv) {
-        if (out == null) {
+        if (out == null || capped) {
             return;
         }
         int turn = -1;
@@ -83,6 +100,18 @@ public final class Census {
             sb.append(",\"").append(kv[i]).append("\":").append(val(kv[i + 1]));
         }
         sb.append('}');
+        // sb.length()+1 approximates UTF-8 bytes (rows are ASCII-dominated);
+        // a cap this coarse doesn't need exact byte accounting
+        if (gameBytes + sb.length() + 1 > RAW_CAP) {
+            capped = true;
+            System.err.println("Census: game " + gameIdx + " hit raw cap ("
+                    + gameBytes + " bytes), dropping rows until game end");
+            out.println("{\"ev\":\"census_cap\",\"g\":" + gameIdx + ",\"s\":" + seq
+                    + ",\"bytes\":" + gameBytes + "}");
+            out.flush();
+            return;
+        }
+        gameBytes += sb.length() + 1;
         out.println(sb);
     }
 
