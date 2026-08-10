@@ -220,6 +220,12 @@ public final class GrpcBridge implements AnvilBridge {
     @Override
     public CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
             String observation, int attempt) {
+        return priorityCastPlan(tag, optionLabels, observation, attempt, false);
+    }
+
+    @Override
+    public CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation, int attempt, boolean forbidDecline) {
         if (!oneShotCast) {
             return null;
         }
@@ -227,6 +233,10 @@ public final class GrpcBridge implements AnvilBridge {
         DecisionRequest.Builder req = DecisionRequest.newBuilder()
                 .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
                 .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+        if (forbidDecline) {
+            // M7 forced-branch act ask: server masks the pass logit.
+            req.setForbidDecline(true);
+        }
         lastPrioritySeq = seq;
         if (attempt > 0 && prevPrioritySeq > 0) {
             // Re-ask after veto: mark the superseded request so server stats

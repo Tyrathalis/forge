@@ -51,6 +51,17 @@ public interface AnvilBridge {
     }
 
     /**
+     * Forced-branch variant (M7 D2): forbidDecline asks the server to mask
+     * the null/pass answer — the response must be a cast. Transports that
+     * don't understand the constraint fall back to the unconstrained ask
+     * (the caller adjudicates a pass response as branch_skip, loudly).
+     */
+    default CastPlanAnswer priorityCastPlan(String tag, List<String> optionLabels,
+            String observation, int attempt, boolean forbidDecline) {
+        return priorityCastPlan(tag, optionLabels, observation, attempt);
+    }
+
+    /**
      * M2 D5 combat declarations (bridge-protocol-v0 AttackMap/BlockMap,
      * entity-ref form). Null means this bridge doesn't answer the shape —
      * the caller keeps the heuristic path (local-random/echo arms, servers
