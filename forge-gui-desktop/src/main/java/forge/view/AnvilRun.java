@@ -197,7 +197,7 @@ public final class AnvilRun {
             System.exit(2);
         }
         if (forkObs && rolloutK > 99) {
-            // synthetic id = (gameIdx*100 + fp)*100 + r
+            // synthetic id = FORK_G_BASE + (gameIdx*100 + fp)*100 + r
             System.err.println("FATAL: -forkobs supports -rollout k <= 99");
             System.exit(2);
         }
@@ -533,6 +533,13 @@ public final class AnvilRun {
     // ------------------------------------------------------------------
 
     private static final int ROLLOUT_TIMEOUT_S = 120;
+    // Fork-store synthetic game ids live in their own namespace above any
+    // reachable mainline index: base + (gameIdx*100 + fp)*100 + r. Without
+    // the base, a drilled source game with gameIdx=0 encodes forks 0..k-1,
+    // colliding with mainline store indices (the run13 iteration-0 crash).
+    // Store-format change — era-scoped: stores written before this constant
+    // existed keep the un-based ids; never mix eras in one MultiStore join.
+    private static final long FORK_G_BASE = 1_000_000_000_000L;
 
     private static final class RolloutMonitor {
         final Game game;
@@ -676,7 +683,8 @@ public final class AnvilRun {
                     // Per-completion identity + seed: synthetic unique game id
                     // for the store/mu joins; the completion's own seed so
                     // server-side sampled noise decorrelates across the K.
-                    Obs.startForkGame(copy, wid, (gameIdx * 100 + myFp) * 100 + r,
+                    Obs.startForkGame(copy, wid,
+                            FORK_G_BASE + ((long) gameIdx * 100 + myFp) * 100 + r,
                             rollSeed, fmt, game, gameIdx, myFp, r, targetTurn);
                     bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
                 } else {
