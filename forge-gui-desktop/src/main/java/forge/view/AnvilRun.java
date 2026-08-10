@@ -99,7 +99,7 @@ public final class AnvilRun {
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
-                    + "[-drillfile <txt> [-drillstop]] [-forkobs] "
+                    + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -203,6 +203,23 @@ public final class AnvilRun {
         }
         if (forkObs && !params.containsKey("obs")) {
             System.err.println("FATAL: -forkobs requires -obs (replay fidelity rule)");
+            System.exit(2);
+        }
+
+        // M7 forced-branch paired rollouts (m7-plan D2): per fork point, two
+        // branches (act/hold) x k completions with PAIRED rollout seeds — the
+        // drilled seat's first post-fork decision is forced (act = bridge ask
+        // with pass masked; hold = one forced pass). Labels-only product
+        // (pin 3): no fork stores, so -forkobs is excluded by design, and the
+        // wire sessions announce per-completion seeds (instrument serving).
+        boolean forceBranch = params.containsKey("forcebranch");
+        if (forceBranch && (drillTargets == null || rolloutK <= 0)) {
+            System.err.println("FATAL: -forcebranch requires -drillfile + -rollout <k>");
+            System.exit(2);
+        }
+        if (forceBranch && forkObs) {
+            System.err.println("FATAL: -forcebranch excludes -forkobs "
+                    + "(m7-plan D2 pin 3: forced completions never build stores)");
             System.exit(2);
         }
 
@@ -415,14 +432,15 @@ public final class AnvilRun {
                     game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
                             type.toString(), labels, watchdogs, drillTurns, drillStop,
-                            forkObs));
+                            forkObs, forceBranch));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
                 // below the per-rollout timeout, so a pathological point can't
-                // eat the whole game budget).
+                // eat the whole game budget). Forced-branch mode runs 2xK.
                 int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
-                int extraS = rolloutK > 0 ? fpBudget * rolloutK * 45 : 0;
+                int perPoint = (forceBranch ? 2 : 1) * rolloutK;
+                int extraS = rolloutK > 0 ? fpBudget * perPoint * 45 : 0;
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
                     drawClockHit[0] = true;
@@ -553,13 +571,15 @@ public final class AnvilRun {
         final ScheduledExecutorService watchdogs;
         final boolean stopAfter;
         final boolean forkObs;
+        final boolean forceBranch;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
         RolloutMonitor(Game game, int gameIdx, long seed, int k, int points,
                 boolean reshuffle, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs,
-                int[] drillTurns, boolean stopAfter, boolean forkObs) {
+                int[] drillTurns, boolean stopAfter, boolean forkObs,
+                boolean forceBranch) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -571,6 +591,7 @@ public final class AnvilRun {
             this.watchdogs = watchdogs;
             this.stopAfter = stopAfter;
             this.forkObs = forkObs;
+            this.forceBranch = forceBranch;
             if (drillTurns != null) {
                 // Drill mode: explicit fork turns from the manifest.
                 for (int t : drillTurns) {
@@ -631,6 +652,10 @@ public final class AnvilRun {
         }
 
         private void doRollouts(int turn, int targetTurn) {
+            if (forceBranch) {
+                doForcedRollouts(turn, targetTurn);
+                return;
+            }
             int myFp = fp++;
             // The mark keys this fork point to the NEXT mainline priority
             // window in the obs stream (the label's training window).
@@ -767,6 +792,223 @@ public final class AnvilRun {
                     labels.println(sb);
                     labels.flush();
                 }
+            }
+        }
+
+        /** M7 forced-branch paired rollouts (m7-plan D2): two branches x k
+         *  completions per fork point, branch pairs (fp, r) sharing rollSeed
+         *  (identical determinization + downstream RNG + announced server
+         *  noise seed — common random numbers; divergence comes only from the
+         *  forced first decision). One labels row per fork point with both
+         *  branches; a pair with a crashed/skipped member drops whole. */
+        private void doForcedRollouts(int turn, int targetTurn) {
+            int myFp = fp++;
+            PhaseHandler ph = game.getPhaseHandler();
+            Player prio = ph.getPriorityPlayer();
+            boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
+                    && ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            if (!bridgeSeat) {
+                // Guard (pin 5ii): forcing a heuristic seat measures nothing.
+                // Loud row keeps drill accounting exact; no Obs.mark (nothing
+                // will join here).
+                if (labels != null) {
+                    synchronized (labels) {
+                        labels.println("{\"i\":" + gameIdx + ",\"seed\":" + seed
+                                + ",\"fp\":" + myFp + ",\"t\":" + turn
+                                + ",\"tt\":" + targetTurn
+                                + ",\"forced\":true,\"seat_skip\":true}");
+                        labels.flush();
+                    }
+                }
+                return;
+            }
+            Obs.mark(game, "fork", "fp", myFp, "kr", k);
+            byte[] rngState = snapshotRng();
+            int np = game.getRegisteredPlayers().size();
+            // outcome[b][r]: -3 forced-skip, -2 crash, -1 draw, >=0 winner idx
+            int[][] outcome = new int[2][k];
+            java.util.Map<String, Integer> skips = new java.util.TreeMap<>();
+            String seatName = prio.getName();
+            long block0 = System.nanoTime();
+            long copyMsTotal = 0;
+            for (int r = 0; r < k; r++) {
+                long rollSeed = splitmix64(
+                        seed ^ (myFp * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L));
+                for (int b = 0; b < 2; b++) {
+                    Game copy;
+                    long c0 = System.nanoTime();
+                    try {
+                        copy = new GameCopier(game).makeCopy();
+                    } catch (Throwable t) {
+                        outcome[b][r] = -2;
+                        if (Boolean.getBoolean("anvil.crash.trace")) {
+                            System.err.println("[forced] copy crash g" + gameIdx
+                                    + " fp" + myFp + " r" + r + (b == 0 ? "a" : "h") + ":");
+                            t.printStackTrace();
+                        }
+                        MyRandom.setRandom(restoreRng(rngState));
+                        continue;
+                    }
+                    copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
+                    // Fresh Random per branch from the SHARED seed: identical
+                    // shuffle consumption -> identical post-shuffle RNG state.
+                    Random rollRng = new Random(rollSeed);
+                    if (reshuffle) {
+                        for (Player p : copy.getPlayers()) {
+                            List<Card> lib = new ArrayList<>();
+                            for (Card c : p.getZone(ZoneType.Library)) {
+                                lib.add(c);
+                            }
+                            Collections.shuffle(lib, rollRng);
+                            p.getZone(ZoneType.Library).setCards(lib);
+                        }
+                    }
+                    copy.getPhaseHandler().devResumeAtPriority();
+                    copy.copyLastState();
+                    String wid = "g" + gameIdx + ".f" + myFp + "r" + r + (b == 0 ? "a" : "h");
+                    // Wire session announces the COMPLETION seed (not the
+                    // parent's): instrument-mode sampled serving decorrelates
+                    // across r while branch pairs stay correlated (pin 4).
+                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                    PlayerControllerAnvil.armForcedFirst(copy, seatName,
+                            b == 0 ? PlayerControllerAnvil.ForcedFirst.ACT
+                                   : PlayerControllerAnvil.ForcedFirst.HOLD);
+                    MyRandom.setRandom(rollRng);
+                    int wi = -1;
+                    boolean crashed = false;
+                    ScheduledFuture<?> clock = watchdogs.schedule(
+                            () -> copy.setGameOver(GameEndReason.Draw),
+                            ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                    try {
+                        copy.getPhaseHandler().mainGameLoop();
+                        if (copy.getOutcome() != null && !copy.getOutcome().isDraw()) {
+                            String w = copy.getOutcome().getWinningLobbyPlayer().getName();
+                            for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                                if (copy.getRegisteredPlayers().get(j).getName().equals(w)) {
+                                    wi = j;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        crashed = true;
+                        if (Boolean.getBoolean("anvil.crash.trace")) {
+                            System.err.println("[forced] completion crash g" + gameIdx
+                                    + " fp" + myFp + " r" + r + (b == 0 ? "a" : "h") + ":");
+                            t.printStackTrace();
+                        }
+                    } finally {
+                        clock.cancel(false);
+                        if (!copy.isGameOver()) {
+                            copy.setGameOver(GameEndReason.Draw);
+                        }
+                        MyRandom.setRandom(restoreRng(rngState));
+                        PlayerControllerAnvil.ForcedResult fres =
+                                PlayerControllerAnvil.forcedResult(copy);
+                        PlayerControllerAnvil.clearForced(copy);
+                        if (crashed) {
+                            outcome[b][r] = -2;
+                        } else if (b == 0
+                                && fres != PlayerControllerAnvil.ForcedResult.CAST) {
+                            // Act branch didn't cast: skip, reason counted.
+                            outcome[b][r] = -3;
+                            skips.merge(fres.name(), 1, Integer::sum);
+                        } else if (b == 1
+                                && fres != PlayerControllerAnvil.ForcedResult.HELD) {
+                            // Hold anomaly (seat never asked, e.g. lethal on
+                            // resume): skip, distinct key.
+                            outcome[b][r] = -3;
+                            skips.merge("HOLD_" + fres.name(), 1, Integer::sum);
+                        } else {
+                            outcome[b][r] = wi; // -1 draw or winner idx
+                        }
+                        Obs.endWireGame(copy);
+                    }
+                }
+            }
+            // Re-announce the mainline: the fork wire sessions re-bound the
+            // server's per-stream header.
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+            if (labels == null) {
+                return;
+            }
+            // Pair accounting: r contributes iff BOTH branches completed
+            // (draw or decisive). Draws stay in the denominator (pairs).
+            int pairs = 0;
+            int[] wAct = new int[np];
+            int[] wHold = new int[np];
+            int drawAct = 0;
+            int drawHold = 0;
+            int[] crash = new int[2];
+            int skipAct = 0;
+            int holdAnom = 0;
+            for (int r = 0; r < k; r++) {
+                for (int b = 0; b < 2; b++) {
+                    if (outcome[b][r] == -2) {
+                        crash[b]++;
+                    }
+                }
+                if (outcome[0][r] == -3) {
+                    skipAct++;
+                }
+                if (outcome[1][r] == -3) {
+                    holdAnom++;
+                }
+                if (outcome[0][r] >= -1 && outcome[1][r] >= -1) {
+                    pairs++;
+                    if (outcome[0][r] >= 0) {
+                        wAct[outcome[0][r]]++;
+                    } else {
+                        drawAct++;
+                    }
+                    if (outcome[1][r] >= 0) {
+                        wHold[outcome[1][r]]++;
+                    } else {
+                        drawHold++;
+                    }
+                }
+            }
+            StringBuilder sb = new StringBuilder(256);
+            sb.append("{\"i\":").append(gameIdx)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"fp\":").append(myFp)
+                    .append(",\"t\":").append(turn)
+                    .append(",\"tt\":").append(targetTurn)
+                    .append(",\"k\":").append(k)
+                    .append(",\"forced\":true")
+                    .append(",\"seat\":\"").append(jstr(seatName)).append('"')
+                    .append(",\"pairs\":").append(pairs)
+                    .append(",\"w_act\":[");
+            for (int j = 0; j < np; j++) {
+                sb.append(j > 0 ? "," : "").append(wAct[j]);
+            }
+            sb.append("],\"w_hold\":[");
+            for (int j = 0; j < np; j++) {
+                sb.append(j > 0 ? "," : "").append(wHold[j]);
+            }
+            sb.append("],\"draw_act\":").append(drawAct)
+                    .append(",\"draw_hold\":").append(drawHold)
+                    .append(",\"crash_act\":").append(crash[0])
+                    .append(",\"crash_hold\":").append(crash[1])
+                    .append(",\"skip_act\":").append(skipAct)
+                    .append(",\"hold_anom\":").append(holdAnom);
+            if (!skips.isEmpty()) {
+                sb.append(",\"skips\":{");
+                boolean first = true;
+                for (java.util.Map.Entry<String, Integer> e : skips.entrySet()) {
+                    sb.append(first ? "" : ",").append('"').append(jstr(e.getKey()))
+                            .append("\":").append(e.getValue());
+                    first = false;
+                }
+                sb.append('}');
+            }
+            sb.append(",\"copy_ms\":").append(copyMsTotal)
+                    .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000)
+                    .append('}');
+            synchronized (labels) {
+                labels.println(sb);
+                labels.flush();
             }
         }
     }

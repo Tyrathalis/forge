@@ -55,6 +55,14 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return bridgedTags.contains(tag);
     }
 
+    /** Does this seat answer priority over the bridge? (M7 forced-branch
+     *  seat guard: both seats carry this controller class, but non-bridged
+     *  seats have empty tag sets and play heuristic — forcing them would
+     *  measure nothing.) */
+    public boolean bridgesPriority() {
+        return bridged(TAG_PRIORITY);
+    }
+
     /**
      * D6 run-2 re-ask-on-veto (d6-vtrace-loop §6b): on an M1 CastPlan veto,
      * re-issue the priority decision with the vetoed candidate removed instead
@@ -71,6 +79,70 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         reaskOnVeto = v;
     }
 
+    // ---- M7 forced-branch first decision (m7-plan D2) ----------------------
+    // A one-shot directive on a fork copy: the drilled seat's FIRST
+    // chooseSpellAbilityToPlay is forced to ACT (bridge ask with the pass
+    // answer masked; §6b-style re-ask on veto with pass still masked) or HOLD
+    // (pass without asking; play free afterwards). Keyed on Game identity
+    // (the Obs stale-thread pattern): an abandoned hard-capped rollout thread
+    // must never consume a directive armed for a later copy. WeakHashMap so
+    // dead copies don't pin entries.
+
+    public enum ForcedFirst { ACT, HOLD }
+
+    /** Outcome of a consumed (or never-consumed) directive. CAST/HELD are the
+     *  two branch-defining results; every SKIP_* drops the completion from
+     *  pairing, loudly, with the reason in the labels row. */
+    public enum ForcedResult {
+        PENDING,            // armed, seat never asked (e.g. game ended first)
+        CAST, HELD,
+        SKIP_NO_OPTIONS,    // window had no castable candidates at all
+        SKIP_EXHAUSTED,     // every candidate vetoed (or re-ask cap hit)
+        SKIP_PASS_RESPONSE, // server answered pass despite the mask
+        SKIP_NO_ONESHOT     // bridge lacks the composite path (M0 shape)
+    }
+
+    private static final class Forced {
+        final ForcedFirst first;
+        final String playerName;
+        volatile ForcedResult result = ForcedResult.PENDING;
+
+        Forced(ForcedFirst f, String p) {
+            first = f;
+            playerName = p;
+        }
+    }
+
+    private static final java.util.Map<Game, Forced> forced =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    public static void armForcedFirst(Game g, String playerName, ForcedFirst f) {
+        forced.put(g, new Forced(f, playerName));
+    }
+
+    /** PENDING if armed but never consumed; null-safe (PENDING when unarmed —
+     *  callers only read games they armed). */
+    public static ForcedResult forcedResult(Game g) {
+        Forced f = forced.get(g);
+        return f == null ? ForcedResult.PENDING : f.result;
+    }
+
+    public static void clearForced(Game g) {
+        forced.remove(g);
+    }
+
+    /** Consume the directive iff it targets this seat and is still pending.
+     *  Non-matching seat leaves it armed (defensive: the first ask should
+     *  always be the drilled seat — GameCopier resumes at its priority). */
+    private Forced consumeForced() {
+        Forced f = forced.get(getGame());
+        if (f == null || f.result != ForcedResult.PENDING
+                || !f.playerName.equals(player.getName())) {
+            return null;
+        }
+        return f;
+    }
+
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         if (!bridged(TAG_PRIORITY)) {
@@ -79,6 +151,20 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         // Mutable copy: re-ask removes vetoed candidates between attempts.
         List<SpellAbility> options =
                 Lists.newArrayList(AnvilOptions.priorityOptions(getGame(), player));
+
+        Forced fd = consumeForced();
+        if (fd != null && fd.first == ForcedFirst.HOLD) {
+            // Forced hold: pass this window without asking; free afterwards.
+            fd.result = ForcedResult.HELD;
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "forced", "pick", "pass");
+            return null;
+        }
+        boolean forcedAct = fd != null; // fd.first == ACT
+        if (forcedAct && options.isEmpty()) {
+            fd.result = ForcedResult.SKIP_NO_OPTIONS;
+            return null;
+        }
 
         for (int attempt = 0;; attempt++) {
             // Index 0 = pass; one round-trip per attempt.
@@ -95,13 +181,28 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
             // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
             CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
-                    Obs.lastDecForBridge(getGame()), attempt);
+                    Obs.lastDecForBridge(getGame()), attempt, forcedAct);
             if (plan != null) {
                 OneShot r = oneShotCast(options, plan, obsSeq, attempt);
                 if (r.vetoedOption <= 0) {
+                    if (forcedAct) {
+                        // sas null under the mask = server passed anyway
+                        // (candidate-set mismatch or transport-failure PASS);
+                        // the pair drops, loudly.
+                        fd.result = r.sas != null ? ForcedResult.CAST
+                                : ForcedResult.SKIP_PASS_RESPONSE;
+                    }
                     return r.sas; // realized cast, model pass, or oor pass
                 }
-                if (!reaskOnVeto || attempt + 1 >= REASK_CAP) {
+                if (forcedAct) {
+                    // Forced act re-asks on veto regardless of the global
+                    // §6b flag: the branch is DEFINED as the best realizable
+                    // cast under the mask. Exhaustion = skip, never pass.
+                    if (attempt + 1 >= REASK_CAP) {
+                        fd.result = ForcedResult.SKIP_EXHAUSTED;
+                        return null;
+                    }
+                } else if (!reaskOnVeto || attempt + 1 >= REASK_CAP) {
                     return null; // pre-amendment behavior: veto = pass
                 }
                 SpellAbility vetoed = options.get(r.vetoedOption - 1);
@@ -113,9 +214,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     options.remove(r.vetoedOption - 1);
                 }
                 if (options.isEmpty()) {
+                    if (forcedAct) {
+                        fd.result = ForcedResult.SKIP_EXHAUSTED;
+                    }
                     return null; // only pass remains; nothing left to ask
                 }
                 continue;
+            }
+            if (forcedAct) {
+                // M0-shape bridge can't honor the mask; skip, drop the pair.
+                fd.result = ForcedResult.SKIP_NO_ONESHOT;
             }
             return selectOnePick(options, labels, obsSeq);
         }
