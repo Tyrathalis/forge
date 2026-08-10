@@ -96,7 +96,7 @@ public final class Obs {
     // with the live game's — found live in d6-run10 iter-9 (its interrupted
     // thread's getChannel().position() closed the fd: every later frame was
     // a clen-0 phantom).
-    private static int forkGameIdx = -1;
+    private static long forkGameIdx = -1;
     private static long forkGameSeed;
     private static long forkRecs;
     private static long forkRawBytes;
@@ -314,7 +314,7 @@ public final class Obs {
      * verbatim (the wire composite): the first windows' history includes
      * parent-game entries a loader-side reconstruction could never see.
      */
-    public static synchronized void startForkGame(Game g, String wireId, int synthG,
+    public static synchronized void startForkGame(Game g, String wireId, long synthG,
             long rollSeed, String fmt, Game parent, int parentG, int fp, int r, int tt) {
         if (forkFile == null || (parent != null && sessions.get(parent) == null)) {
             // No parent session = the parent's mainline frame already closed
@@ -388,7 +388,7 @@ public final class Obs {
 
     /** The "game" header record; wire sessions carry a "wid" field (the
      *  derived wire game id) and g=-1 (no store index). */
-    private static StringBuilder buildHeader(int idx0, long seed, Game g, String fmt,
+    private static StringBuilder buildHeader(long idx0, long seed, Game g, String fmt,
             String wireId) {
         StringBuilder sb = new StringBuilder(512);
         sb.append("{\"k\":\"game\",\"sv\":").append(SCHEMA_VERSION)
