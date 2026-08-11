@@ -99,7 +99,7 @@ public final class AnvilRun {
                     + "[-census <out.jsonl>] [-obs <out.zst>] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
-                    + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] "
+                    + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -220,6 +220,19 @@ public final class AnvilRun {
         if (forceBranch && forkObs) {
             System.err.println("FATAL: -forcebranch excludes -forkobs "
                     + "(m7-plan D2 pin 3: forced completions never build stores)");
+            System.exit(2);
+        }
+        // M7 D2 sequence probe (routing pin 2026-08-11): -forceseq <n> = three
+        // arms per fork point (natural / hold-n-turns / act-n-turns) x K
+        // paired completions; persistent directive, labels-only.
+        int forceSeq = params.containsKey("forceseq")
+                ? Integer.parseInt(params.get("forceseq").get(0)) : 0;
+        if (forceSeq > 0 && (drillTargets == null || rolloutK <= 0)) {
+            System.err.println("FATAL: -forceseq requires -drillfile + -rollout <k>");
+            System.exit(2);
+        }
+        if (forceSeq > 0 && (forkObs || forceBranch)) {
+            System.err.println("FATAL: -forceseq excludes -forkobs and -forcebranch");
             System.exit(2);
         }
 
@@ -432,14 +445,15 @@ public final class AnvilRun {
                     game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
                             type.toString(), labels, watchdogs, drillTurns, drillStop,
-                            forkObs, forceBranch));
+                            forkObs, forceBranch, forceSeq));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
                 // below the per-rollout timeout, so a pathological point can't
-                // eat the whole game budget). Forced-branch mode runs 2xK.
+                // eat the whole game budget). Forced-branch mode runs 2xK;
+                // sequence mode 3xK.
                 int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
-                int perPoint = (forceBranch ? 2 : 1) * rolloutK;
+                int perPoint = (forceSeq > 0 ? 3 : (forceBranch ? 2 : 1)) * rolloutK;
                 int extraS = rolloutK > 0 ? fpBudget * perPoint * 45 : 0;
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
@@ -572,6 +586,7 @@ public final class AnvilRun {
         final boolean stopAfter;
         final boolean forkObs;
         final boolean forceBranch;
+        final int forceSeq;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
@@ -579,7 +594,7 @@ public final class AnvilRun {
                 boolean reshuffle, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs,
                 int[] drillTurns, boolean stopAfter, boolean forkObs,
-                boolean forceBranch) {
+                boolean forceBranch, int forceSeq) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -592,6 +607,7 @@ public final class AnvilRun {
             this.stopAfter = stopAfter;
             this.forkObs = forkObs;
             this.forceBranch = forceBranch;
+            this.forceSeq = forceSeq;
             if (drillTurns != null) {
                 // Drill mode: explicit fork turns from the manifest.
                 for (int t : drillTurns) {
@@ -652,6 +668,10 @@ public final class AnvilRun {
         }
 
         private void doRollouts(int turn, int targetTurn) {
+            if (forceSeq > 0) {
+                doSeqRollouts(turn, targetTurn);
+                return;
+            }
             if (forceBranch) {
                 doForcedRollouts(turn, targetTurn);
                 return;
@@ -1004,6 +1024,178 @@ public final class AnvilRun {
                 sb.append('}');
             }
             sb.append(",\"copy_ms\":").append(copyMsTotal)
+                    .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000)
+                    .append('}');
+            synchronized (labels) {
+                labels.println(sb);
+                labels.flush();
+            }
+        }
+
+        /** M7 D2 sequence probe (routing pin 2026-08-11): THREE arms per fork
+         *  point — natural (no directive) / hold-N / act-N — x k completions,
+         *  arms of an (fp, r) triple sharing rollSeed (common random numbers,
+         *  divergence only from the directive over the N-turn horizon). A
+         *  triple with a crashed member drops whole. Labels-only, same seat
+         *  guard as the one-shot mode. */
+        private void doSeqRollouts(int turn, int targetTurn) {
+            int myFp = fp++;
+            PhaseHandler ph = game.getPhaseHandler();
+            Player prio = ph.getPriorityPlayer();
+            boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
+                    && ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            if (!bridgeSeat) {
+                if (labels != null) {
+                    synchronized (labels) {
+                        labels.println("{\"i\":" + gameIdx + ",\"seed\":" + seed
+                                + ",\"fp\":" + myFp + ",\"t\":" + turn
+                                + ",\"tt\":" + targetTurn
+                                + ",\"seq\":true,\"seat_skip\":true}");
+                        labels.flush();
+                    }
+                }
+                return;
+            }
+            Obs.mark(game, "fork", "fp", myFp, "kr", k);
+            byte[] rngState = snapshotRng();
+            int np = game.getRegisteredPlayers().size();
+            // outcome[arm][r]: -2 crash, -1 draw, >=0 winner idx
+            // arms: 0 = natural, 1 = hold-N, 2 = act-N
+            int[][] outcome = new int[3][k];
+            long[] holds = new long[3];
+            long[] casts = new long[3];
+            long[] exhausts = new long[3];
+            String seatName = prio.getName();
+            int untilTurn = targetTurn + forceSeq - 1;
+            long block0 = System.nanoTime();
+            long copyMsTotal = 0;
+            for (int r = 0; r < k; r++) {
+                long rollSeed = splitmix64(
+                        seed ^ (myFp * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L));
+                for (int arm = 0; arm < 3; arm++) {
+                    Game copy;
+                    long c0 = System.nanoTime();
+                    try {
+                        copy = new GameCopier(game).makeCopy();
+                    } catch (Throwable t) {
+                        outcome[arm][r] = -2;
+                        MyRandom.setRandom(restoreRng(rngState));
+                        continue;
+                    }
+                    copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
+                    Random rollRng = new Random(rollSeed);
+                    if (reshuffle) {
+                        for (Player p : copy.getPlayers()) {
+                            List<Card> lib = new ArrayList<>();
+                            for (Card c : p.getZone(ZoneType.Library)) {
+                                lib.add(c);
+                            }
+                            Collections.shuffle(lib, rollRng);
+                            p.getZone(ZoneType.Library).setCards(lib);
+                        }
+                    }
+                    copy.getPhaseHandler().devResumeAtPriority();
+                    copy.copyLastState();
+                    String wid = "g" + gameIdx + ".f" + myFp + "r" + r
+                            + (arm == 0 ? "n" : (arm == 1 ? "h" : "a"));
+                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                    if (arm == 1) {
+                        PlayerControllerAnvil.armSeq(copy, seatName,
+                                PlayerControllerAnvil.SeqMode.HOLD, untilTurn);
+                    } else if (arm == 2) {
+                        PlayerControllerAnvil.armSeq(copy, seatName,
+                                PlayerControllerAnvil.SeqMode.ACT, untilTurn);
+                    }
+                    MyRandom.setRandom(rollRng);
+                    int wi = -1;
+                    boolean crashed = false;
+                    ScheduledFuture<?> clock = watchdogs.schedule(
+                            () -> copy.setGameOver(GameEndReason.Draw),
+                            ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                    try {
+                        copy.getPhaseHandler().mainGameLoop();
+                        if (copy.getOutcome() != null && !copy.getOutcome().isDraw()) {
+                            String w = copy.getOutcome().getWinningLobbyPlayer().getName();
+                            for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                                if (copy.getRegisteredPlayers().get(j).getName().equals(w)) {
+                                    wi = j;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        crashed = true;
+                    } finally {
+                        clock.cancel(false);
+                        if (!copy.isGameOver()) {
+                            copy.setGameOver(GameEndReason.Draw);
+                        }
+                        MyRandom.setRandom(restoreRng(rngState));
+                        PlayerControllerAnvil.SeqDirective sdd =
+                                PlayerControllerAnvil.seqDirective(copy);
+                        if (sdd != null) {
+                            holds[arm] += sdd.holds;
+                            casts[arm] += sdd.casts;
+                            exhausts[arm] += sdd.exhausts;
+                        }
+                        PlayerControllerAnvil.clearSeq(copy);
+                        outcome[arm][r] = crashed ? -2 : wi;
+                        Obs.endWireGame(copy);
+                    }
+                }
+            }
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+            if (labels == null) {
+                return;
+            }
+            // Triple accounting: r contributes iff ALL THREE arms completed.
+            int triples = 0;
+            int[][] w = new int[3][np];
+            int[] draws = new int[3];
+            int[] crash = new int[3];
+            for (int r = 0; r < k; r++) {
+                for (int arm = 0; arm < 3; arm++) {
+                    if (outcome[arm][r] == -2) {
+                        crash[arm]++;
+                    }
+                }
+                if (outcome[0][r] >= -1 && outcome[1][r] >= -1 && outcome[2][r] >= -1) {
+                    triples++;
+                    for (int arm = 0; arm < 3; arm++) {
+                        if (outcome[arm][r] >= 0) {
+                            w[arm][outcome[arm][r]]++;
+                        } else {
+                            draws[arm]++;
+                        }
+                    }
+                }
+            }
+            StringBuilder sb = new StringBuilder(320);
+            sb.append("{\"i\":").append(gameIdx)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"fp\":").append(myFp)
+                    .append(",\"t\":").append(turn)
+                    .append(",\"tt\":").append(targetTurn)
+                    .append(",\"k\":").append(k)
+                    .append(",\"seq\":true")
+                    .append(",\"n\":").append(forceSeq)
+                    .append(",\"seat\":\"").append(jstr(seatName)).append('"')
+                    .append(",\"triples\":").append(triples);
+            String[] armName = {"nat", "hold", "act"};
+            for (int arm = 0; arm < 3; arm++) {
+                sb.append(",\"w_").append(armName[arm]).append("\":[");
+                for (int j = 0; j < np; j++) {
+                    sb.append(j > 0 ? "," : "").append(w[arm][j]);
+                }
+                sb.append("],\"draw_").append(armName[arm]).append("\":").append(draws[arm])
+                        .append(",\"crash_").append(armName[arm]).append("\":").append(crash[arm]);
+            }
+            sb.append(",\"holds\":").append(holds[1])
+                    .append(",\"acts\":").append(casts[2])
+                    .append(",\"exhausts\":").append(exhausts[2])
+                    .append(",\"nat_anom\":").append(holds[0] + casts[0] + exhausts[0])
+                    .append(",\"copy_ms\":").append(copyMsTotal)
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000)
                     .append('}');
             synchronized (labels) {
