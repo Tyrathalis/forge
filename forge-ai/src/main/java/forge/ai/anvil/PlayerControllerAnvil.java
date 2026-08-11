@@ -120,6 +120,59 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         forced.put(g, new Forced(f, playerName));
     }
 
+    // ------------------------------------------------------------------
+    // M7 D2 sequence probe (m7-plan routing pin, 2026-08-11): PERSISTENT
+    // directive over an N-turn horizon — the sequence-granularity sibling
+    // of the one-shot Forced above. HOLD = force-pass every bridged
+    // priority cast window while turn <= untilTurn; ACT = forbid_decline
+    // every window, mid-sequence exhaustion DEGRADES TO PASS (counted,
+    // never a skip — a sequence arm cannot drop out mid-game the way a
+    // one-shot branch can). Same Game-identity keying as Forced.
+
+    public enum SeqMode { HOLD, ACT }
+
+    public static final class SeqDirective {
+        public final SeqMode mode;
+        final String playerName;
+        final int untilTurn; // active while game turn <= untilTurn
+        public volatile int holds = 0;    // windows force-passed (HOLD)
+        public volatile int casts = 0;    // realized forced casts (ACT)
+        public volatile int exhausts = 0; // ACT windows degraded to pass
+
+        SeqDirective(SeqMode m, String p, int u) {
+            mode = m;
+            playerName = p;
+            untilTurn = u;
+        }
+    }
+
+    private static final java.util.Map<Game, SeqDirective> seq =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    public static void armSeq(Game g, String playerName, SeqMode m, int untilTurn) {
+        seq.put(g, new SeqDirective(m, playerName, untilTurn));
+    }
+
+    /** Null when unarmed; counters live on the returned object. */
+    public static SeqDirective seqDirective(Game g) {
+        return seq.get(g);
+    }
+
+    public static void clearSeq(Game g) {
+        seq.remove(g);
+    }
+
+    /** The seat's active sequence directive for the current window, or null
+     *  (unarmed / other seat / horizon expired). */
+    private SeqDirective activeSeq() {
+        SeqDirective sd = seq.get(getGame());
+        if (sd == null || !sd.playerName.equals(player.getName())
+                || getGame().getPhaseHandler().getTurn() > sd.untilTurn) {
+            return null;
+        }
+        return sd;
+    }
+
     /** PENDING if armed but never consumed; null-safe (PENDING when unarmed —
      *  callers only read games they armed). */
     public static ForcedResult forcedResult(Game g) {
@@ -166,6 +219,21 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             return null;
         }
 
+        // Sequence directive (persistent, N-turn horizon). One-shot Forced
+        // takes precedence if both are somehow armed (they never are).
+        SeqDirective sd = fd == null ? activeSeq() : null;
+        if (sd != null && sd.mode == SeqMode.HOLD) {
+            sd.holds++;
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "seq", "pick", "pass");
+            return null;
+        }
+        boolean seqAct = sd != null && sd.mode == SeqMode.ACT;
+        if (seqAct && options.isEmpty()) {
+            sd.exhausts++; // nothing to force this window; arm plays on
+            return null;
+        }
+
         for (int attempt = 0;; attempt++) {
             // Index 0 = pass; one round-trip per attempt.
             List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
@@ -181,7 +249,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
             // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
             CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
-                    Obs.lastDecForBridge(getGame()), attempt, forcedAct);
+                    Obs.lastDecForBridge(getGame()), attempt, forcedAct || seqAct);
             if (plan != null) {
                 OneShot r = oneShotCast(options, plan, obsSeq, attempt);
                 if (r.sas != null || r.vetoedOption > 0) {
@@ -199,15 +267,26 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         // the pair drops, loudly.
                         fd.result = r.sas != null ? ForcedResult.CAST
                                 : ForcedResult.SKIP_PASS_RESPONSE;
+                    } else if (seqAct) {
+                        if (r.sas != null) {
+                            sd.casts++;
+                        } else {
+                            sd.exhausts++; // server passed despite the mask
+                        }
                     }
                     return r.sas; // realized cast, model pass, or oor pass
                 }
-                if (forcedAct) {
-                    // Forced act re-asks on veto regardless of the global
-                    // §6b flag: the branch is DEFINED as the best realizable
-                    // cast under the mask. Exhaustion = skip, never pass.
+                if (forcedAct || seqAct) {
+                    // Forced/seq act re-asks on veto regardless of the global
+                    // §6b flag: the arm is DEFINED as the best realizable
+                    // cast under the mask. Exhaustion: one-shot = skip
+                    // (pair drops); sequence = degrade to pass, counted.
                     if (attempt + 1 >= REASK_CAP) {
-                        fd.result = ForcedResult.SKIP_EXHAUSTED;
+                        if (forcedAct) {
+                            fd.result = ForcedResult.SKIP_EXHAUSTED;
+                        } else {
+                            sd.exhausts++;
+                        }
                         return null;
                     }
                 } else if (!reaskOnVeto || attempt + 1 >= REASK_CAP) {
@@ -224,6 +303,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 if (options.isEmpty()) {
                     if (forcedAct) {
                         fd.result = ForcedResult.SKIP_EXHAUSTED;
+                    } else if (seqAct) {
+                        sd.exhausts++;
                     }
                     return null; // only pass remains; nothing left to ask
                 }
@@ -232,6 +313,9 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             if (forcedAct) {
                 // M0-shape bridge can't honor the mask; skip, drop the pair.
                 fd.result = ForcedResult.SKIP_NO_ONESHOT;
+            } else if (seqAct) {
+                sd.exhausts++; // M0-shape bridge can't honor the mask
+                return null;
             }
             return selectOnePick(options, labels, obsSeq);
         }
