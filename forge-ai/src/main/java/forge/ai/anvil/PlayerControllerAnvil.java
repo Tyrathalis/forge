@@ -184,6 +184,14 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     Obs.lastDecForBridge(getGame()), attempt, forcedAct);
             if (plan != null) {
                 OneShot r = oneShotCast(options, plan, obsSeq, attempt);
+                if (r.sas != null || r.vetoedOption > 0) {
+                    // Any cast ATTEMPT (realized or vetoed) ran canPlaySa on
+                    // option SAs (targets/X mutation) — the seat's cached
+                    // mask must not survive into the next window. A realized
+                    // cast would invalidate via the timestamp anyway; the
+                    // veto-then-pass case is the one that would not.
+                    AnvilOptions.invalidate(getGame(), player);
+                }
                 if (r.vetoedOption <= 0) {
                     if (forcedAct) {
                         // sas null under the mask = server passed anyway
@@ -240,6 +248,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             return null;
         }
         SpellAbility chosen = options.get(pick - 1);
+        // Non-pass pick: canPlaySa below mutates the chosen SA either way.
+        AnvilOptions.invalidate(getGame(), player);
         if (!chosen.isLandAbility() && getAi().canPlaySa(chosen) != AiPlayDecision.WillPlay) {
             // Targets/X could not be set up; window passes. Counted so the
             // veto rate is visible (it biases the pick toward AI-playable).
