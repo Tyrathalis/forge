@@ -70,6 +70,19 @@ public class AiBlockController {
 
     private boolean lifeInDanger = false;
 
+    // Block legality is expensive: it walks continuous/static abilities, and
+    // the assignment algorithm asks the same attacker/blocker question in
+    // several passes. Keep the cache local to this controller invocation.
+    // Full legality also depends on the current hypothetical assignments
+    // (lure, max blockers, blocker capacity), so every combat mutation clears
+    // it; game state itself is fixed while assignBlockers runs.
+    private Combat blockabilityCombat;
+    private final Map<Card, IdentityHashMap<Card, Boolean>> canBlockInCombat =
+            new IdentityHashMap<>();
+    private final Map<Card, IdentityHashMap<Card, Boolean>> canBlockPair =
+            new IdentityHashMap<>();
+    private final Map<Card, Boolean> canBlockerInCombat = new IdentityHashMap<>();
+
     // set to true when AI is predicting a blocking for another player so it doesn't use hidden information
     private boolean checkingOther = false;
 
@@ -78,13 +91,77 @@ public class AiBlockController {
         ai = aiPlayer;
     }
 
+    private void ensureBlockabilityCombat(final Combat combat) {
+        if (blockabilityCombat != combat) {
+            blockabilityCombat = combat;
+            invalidateBlockabilityCache();
+        }
+    }
+
+    private void invalidateBlockabilityCache() {
+        canBlockInCombat.clear();
+        canBlockPair.clear();
+        canBlockerInCombat.clear();
+    }
+
+    private boolean canBlockCached(final Card attacker, final Card blocker, final Combat combat) {
+        ensureBlockabilityCombat(combat);
+        IdentityHashMap<Card, Boolean> byBlocker = canBlockInCombat.computeIfAbsent(
+                attacker, ignored -> new IdentityHashMap<>());
+        Boolean cached = byBlocker.get(blocker);
+        if (cached != null) {
+            return cached;
+        }
+        boolean result = CombatUtil.canBlock(attacker, blocker, combat);
+        byBlocker.put(blocker, result);
+        return result;
+    }
+
+    private boolean canBlockCached(final Card attacker, final Card blocker) {
+        IdentityHashMap<Card, Boolean> byBlocker = canBlockPair.computeIfAbsent(
+                attacker, ignored -> new IdentityHashMap<>());
+        Boolean cached = byBlocker.get(blocker);
+        if (cached != null) {
+            return cached;
+        }
+        boolean result = CombatUtil.canBlock(attacker, blocker);
+        byBlocker.put(blocker, result);
+        return result;
+    }
+
+    private boolean canBlockCached(final Card blocker, final Combat combat) {
+        ensureBlockabilityCombat(combat);
+        Boolean cached = canBlockerInCombat.get(blocker);
+        if (cached != null) {
+            return cached;
+        }
+        boolean result = CombatUtil.canBlock(blocker, combat);
+        canBlockerInCombat.put(blocker, result);
+        return result;
+    }
+
+    private void addBlocker(final Combat combat, final Card attacker, final Card blocker) {
+        combat.addBlocker(attacker, blocker);
+        invalidateBlockabilityCache();
+    }
+
+    private void removeBlockAssignment(final Combat combat, final Card attacker, final Card blocker) {
+        combat.removeBlockAssignment(attacker, blocker);
+        invalidateBlockabilityCache();
+    }
+
+    private void removeFromCombat(final Combat combat, final Card blocker) {
+        combat.removeFromCombat(blocker);
+        invalidateBlockabilityCache();
+    }
+
     // finds the creatures able to block the attacker
-    private static List<Card> getPossibleBlockers(final Combat combat, final Card attacker, final List<Card> blockersLeft, final boolean solo) {
+    private List<Card> getPossibleBlockers(final Combat combat, final Card attacker, final List<Card> blockersLeft, final boolean solo) {
         final List<Card> blockers = new ArrayList<>();
 
         for (final Card blocker : blockersLeft) {
             // if the blocker can block a creature with lure it can't block a creature without
-            if (CombatUtil.canBlock(attacker, blocker, combat)) {
+            if (canBlockCached(attacker, blocker, combat)) {
                 boolean cantBlockAlone = blocker.hasKeyword("CARDNAME can't attack or block alone.") || blocker.hasKeyword("CARDNAME can't block alone.");
                 if (solo && cantBlockAlone) {
                     continue;
@@ -214,7 +291,7 @@ public class AiBlockController {
                     if (attacker.hasKeyword(Keyword.TRAMPLE)) {
                         boolean doNotBlock = false;
                         for (Card other : attackersLeft) {
-                            if (other.equals(attacker) || !CombatUtil.canBlock(other, blocker)
+                            if (other.equals(attacker) || !canBlockCached(other, blocker)
                                     || other.hasKeyword(Keyword.TRAMPLE)
                                     || ComputerUtilCombat.attackerHasThreateningAfflict(other, ai)
                                     || ComputerUtilCombat.canDestroyBlocker(ai, blocker, other, combat, false)
@@ -291,7 +368,7 @@ public class AiBlockController {
             }
             if (blocker != null) {
                 currentAttackers.remove(attacker);
-                combat.addBlocker(attacker, blocker);
+                addBlocker(combat, attacker, blocker);
             }
         }
         attackersLeft = new ArrayList<>(currentAttackers);
@@ -318,7 +395,7 @@ public class AiBlockController {
             }
             if (blocker != null) {
                 currentAttackers.remove(attacker);
-                combat.addBlocker(attacker, blocker);
+                addBlocker(combat, attacker, blocker);
             }
         }
         attackersLeft = new ArrayList<>(currentAttackers);
@@ -401,8 +478,8 @@ public class AiBlockController {
                             if (ComputerUtilCombat.totalFirstStrikeDamageOfBlockers(attacker, blockGang) >= damageNeeded) {
                                 currentAttackers.remove(attacker);
                                 for (final Card b : blockGang) {
-                                    if (CombatUtil.canBlock(attacker, blocker, combat)) {
-                                        combat.addBlocker(attacker, b);
+                                    if (canBlockCached(attacker, blocker, combat)) {
+                                        addBlocker(combat, attacker, b);
                                     }
                                 }
                             }
@@ -475,12 +552,12 @@ public class AiBlockController {
                         // or attacker is worth more
                         || (lifeInDanger && ComputerUtilCombat.lifeInDanger(ai, combat)))
                         // or life is in danger
-                        && CombatUtil.canBlock(attacker, blocker, combat)) {
+                        && canBlockCached(attacker, blocker, combat)) {
                     // this is needed for attackers that can't be blocked by more than 1
                     currentAttackers.remove(attacker);
-                    combat.addBlocker(attacker, blocker);
-                    if (CombatUtil.canBlock(attacker, leader, combat)) {
-                        combat.addBlocker(attacker, leader);
+                    addBlocker(combat, attacker, blocker);
+                    if (canBlockCached(attacker, leader, combat)) {
+                        addBlocker(combat, attacker, leader);
                     }
                     foundDoubleBlock = true;
                     break;
@@ -529,16 +606,16 @@ public class AiBlockController {
                             // or third blocker is a token and no more than two blockers will die, one of which is the third blocker (token)
                             || (lifeInDanger && ComputerUtilCombat.lifeInDanger(ai, combat)))
                             // or life is in danger
-                            && CombatUtil.canBlock(attacker, secondBlocker, combat)
-                            && CombatUtil.canBlock(attacker, thirdBlocker, combat)) {
+                            && canBlockCached(attacker, secondBlocker, combat)
+                            && canBlockCached(attacker, thirdBlocker, combat)) {
                         // this is needed for attackers that can't be blocked by more than 1
                         currentAttackers.remove(attacker);
-                        combat.addBlocker(attacker, thirdBlocker);
-                        if (CombatUtil.canBlock(attacker, secondBlocker, combat)) {
-                            combat.addBlocker(attacker, secondBlocker);
+                        addBlocker(combat, attacker, thirdBlocker);
+                        if (canBlockCached(attacker, secondBlocker, combat)) {
+                            addBlocker(combat, attacker, secondBlocker);
                         }
-                        if (CombatUtil.canBlock(attacker, leader, combat)) {
-                            combat.addBlocker(attacker, leader);
+                        if (canBlockCached(attacker, leader, combat)) {
+                            addBlocker(combat, attacker, leader);
                         }
                         break blockerLoop;
                     }
@@ -580,9 +657,9 @@ public class AiBlockController {
                 // only do it if neither blocking creature will die
                 if (absorbedDamage > attacker.getNetCombatDamage() && absorbedDamage2 > attacker.getNetCombatDamage()) {
                     currentAttackers.remove(attacker);
-                    combat.addBlocker(attacker, blocker);
-                    if (CombatUtil.canBlock(attacker, leader, combat)) {
-                        combat.addBlocker(attacker, leader);
+                    addBlocker(combat, attacker, blocker);
+                    if (canBlockCached(attacker, leader, combat)) {
+                        addBlocker(combat, attacker, leader);
                     }
                     break;
                 }
@@ -627,7 +704,7 @@ public class AiBlockController {
 
                 // Randomly trade creatures with lower power and [hopefully] worse abilities, if enabled in profile
                 if (lifeInDanger || wouldLikeToRandomlyTrade(attacker, blocker, combat)) {
-                    combat.addBlocker(attacker, blocker);
+                    addBlocker(combat, attacker, blocker);
                     currentAttackers.remove(attacker);
                     needsRefresh = true;
                 }
@@ -690,8 +767,8 @@ public class AiBlockController {
                                 && !other.hasKeyword(Keyword.TRAMPLE)
                                 && !StaticAbilityAssignCombatDamageAsUnblocked.assignCombatDamageAsUnblocked(other)
                                 && !ComputerUtilCombat.attackerHasThreateningAfflict(other, ai)
-                                && CombatUtil.canBlock(other, blocker, combat)) {
-                            combat.addBlocker(other, blocker);
+                                && canBlockCached(other, blocker, combat)) {
+                            addBlocker(combat, other, blocker);
                             attackersLeft.remove(other);
                             blockedButUnkilled.add(other);
                             attackers.remove(other);
@@ -702,7 +779,7 @@ public class AiBlockController {
                 }
             }
 
-            combat.addBlocker(attacker, blocker);
+            addBlocker(combat, attacker, blocker);
             attackersLeft.remove(attacker);
             blockedButUnkilled.add(attacker);
             blocked = true;
@@ -725,8 +802,8 @@ public class AiBlockController {
             }
             List<Card> usedBlockers = new ArrayList<>();
             for (Card blocker : possibleBlockers) {
-                if (CombatUtil.canBlock(attacker, blocker, combat)) {
-                    combat.addBlocker(attacker, blocker);
+                if (canBlockCached(attacker, blocker, combat)) {
+                    addBlocker(combat, attacker, blocker);
                     usedBlockers.add(blocker);
                     if (CombatUtil.canAttackerBeBlockedWithAmount(attacker, usedBlockers.size(), combat)) {
                         attackersLeft.remove(attacker);
@@ -736,7 +813,7 @@ public class AiBlockController {
                 }
             }
             for (Card blocker : usedBlockers) {
-                combat.removeBlockAssignment(attacker, blocker);
+                removeBlockAssignment(combat, attacker, blocker);
             }
         }
     }
@@ -771,8 +848,8 @@ public class AiBlockController {
                 if (blocker.hasKeyword(Keyword.BANDING) || blocker.hasKeyword(Keyword.BANDSWITH)) {
                     if (ComputerUtilCombat.getAttack(attacker) > ComputerUtilCombat.totalShieldDamage(attacker, combat.getBlockers(attacker))
                             && ComputerUtilCombat.shieldDamage(attacker, blocker) > 0
-                            && CombatUtil.canBlock(attacker, blocker, combat) && ComputerUtilCombat.lifeInDanger(ai, combat)) {
-                        combat.addBlocker(attacker, blocker);
+                            && canBlockCached(attacker, blocker, combat) && ComputerUtilCombat.lifeInDanger(ai, combat)) {
+                        addBlocker(combat, attacker, blocker);
                         needsMoreChumpBlockers = false;
                         break;
                     }
@@ -789,8 +866,8 @@ public class AiBlockController {
                     // enough and the new one would suck some of the damage
                     if (ComputerUtilCombat.getAttack(attacker) > ComputerUtilCombat.totalShieldDamage(attacker, combat.getBlockers(attacker))
                             && ComputerUtilCombat.shieldDamage(attacker, blocker) > 0
-                            && CombatUtil.canBlock(attacker, blocker, combat) && ComputerUtilCombat.lifeInDanger(ai, combat)) {
-                        combat.addBlocker(attacker, blocker);
+                            && canBlockCached(attacker, blocker, combat) && ComputerUtilCombat.lifeInDanger(ai, combat)) {
+                        addBlocker(combat, attacker, blocker);
                     }
                 }
             }
@@ -824,8 +901,8 @@ public class AiBlockController {
                     // enough and the new one would deal additional damage
                     if (damageNeeded > ComputerUtilCombat.totalDamageOfBlockers(attacker, combat.getBlockers(attacker))
                             && ComputerUtilCombat.dealsDamageAsBlocker(attacker, blocker) > 0
-                            && CombatUtil.canBlock(attacker, blocker, combat)) {
-                        combat.addBlocker(attacker, blocker);
+                            && canBlockCached(attacker, blocker, combat)) {
+                        addBlocker(combat, attacker, blocker);
                     }
                     blockers.remove(blocker); // Don't check them again next
                 }
@@ -854,9 +931,9 @@ public class AiBlockController {
                 if (damageNeeded > currentDamage
                         && damageNeeded <= currentDamage + additionalDamage
                         && ComputerUtilCard.evaluateCreature(blocker) + diff < ComputerUtilCard.evaluateCreature(attacker)
-                        && CombatUtil.canBlock(attacker, blocker, combat)
+                        && canBlockCached(attacker, blocker, combat)
                         && !ComputerUtilCombat.canDestroyBlockerBeforeFirstStrike(blocker, attacker, false)) {
-                    combat.addBlocker(attacker, blocker);
+                    addBlocker(combat, attacker, blocker);
                     blockersLeft.remove(blocker);
                 }
             }
@@ -916,8 +993,8 @@ public class AiBlockController {
                     if (def instanceof Card card && threatenedPWs.contains(def)) {
                         Card blockerDecided = null;
                         for (final Card blocker : chumpPWDefenders) {
-                            if (CombatUtil.canBlock(attacker, blocker, combat)) {
-                                combat.addBlocker(attacker, blocker);
+                            if (canBlockCached(attacker, blocker, combat)) {
+                                addBlocker(combat, attacker, blocker);
                                 pwsWithChumpBlocks.add(card);
                                 chosenChumpBlockers.add(blocker);
                                 blockerDecided = blocker;
@@ -946,7 +1023,7 @@ public class AiBlockController {
                         if (!isFullyBlocked && damageToPW >= pw.getCounters(CounterEnumType.LOYALTY)) {
                             for (Card chump : pwDefenders) {
                                 if (chosenChumpBlockers.contains(chump)) {
-                                    combat.removeFromCombat(chump);
+                                    removeFromCombat(combat, chump);
                                 }
                             }
                         }
@@ -970,10 +1047,10 @@ public class AiBlockController {
             for (final Card attacker : attackers) {
                 List<Card> blockers = getPossibleBlockers(combat, attacker, chumpBlockers, false);
                 for (final Card blocker : blockers) {
-                    if (CombatUtil.canBlock(attacker, blocker, combat) && blockersLeft.contains(blocker)
+                    if (canBlockCached(attacker, blocker, combat) && blockersLeft.contains(blocker)
                             && (CombatUtil.mustBlockAnAttacker(blocker, combat, null)
                                     || StaticAbilityMustBlock.blocksEachCombatIfAble(blocker))) {
-                        combat.addBlocker(attacker, blocker);
+                        addBlocker(combat, attacker, blocker);
                         if (!blocker.getMustBlockCards().isEmpty()) {
                             int mustBlockAmt = blocker.getMustBlockCards().size();
                             final CardCollectionView blockedSoFar = combat.getAttackersBlockedBy(blocker);
@@ -993,7 +1070,7 @@ public class AiBlockController {
     private void clearBlockers(final Combat combat, final List<Card> possibleBlockers) {
         for (final Card blocker : CardLists.filterControlledBy(combat.getAllBlockers(), ai)) {
             // don't touch other player's blockers
-            combat.removeFromCombat(blocker);
+            removeFromCombat(combat, blocker);
         }
 
         attackersLeft = new ArrayList<>(attackers); // keeps track of all currently unblocked attackers
@@ -1051,6 +1128,8 @@ public class AiBlockController {
             return;
         }
 
+        blockabilityCombat = combat;
+        invalidateBlockabilityCache();
         clearBlockers(combat, possibleBlockers);
 
         diff = (ai.getLife() * 2) - 5; // This is the minimal gain for an unnecessary trade
@@ -1071,7 +1150,7 @@ public class AiBlockController {
 
         // remove all blockers that can't block anyway
         for (final Card b : possibleBlockers) {
-            if (!CombatUtil.canBlock(b, combat)) {
+            if (!canBlockCached(b, combat)) {
                 blockersLeft.remove(b);
             }
         }
@@ -1173,7 +1252,7 @@ public class AiBlockController {
             if (!CombatUtil.canAttackerBeBlockedWithAmount(attacker, combat.getBlockers(attacker).size(), combat)) {
                 for (final Card blocker : CardLists.filterControlledBy(combat.getBlockers(attacker), ai)) {
                     // don't touch other player's blockers
-                    combat.removeFromCombat(blocker);
+                    removeFromCombat(combat, blocker);
                 }
             }
         }
@@ -1373,7 +1452,7 @@ public class AiBlockController {
             Cost tax = CombatUtil.getBlockCost(blocker.getGame(), blocker, combat.getAttackersBlockedBy(blocker).get(0));
             int taxCMC = tax != null ? tax.getCostMana().getMana().getCMC() : 0;
             if (myFreeMana < currentBlockTax + taxCMC) {
-                combat.removeFromCombat(blocker);
+                removeFromCombat(combat, blocker);
                 modified = true;
                 continue;
             }
