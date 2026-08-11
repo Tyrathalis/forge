@@ -94,18 +94,33 @@ public class AiBlockController {
     private void ensureBlockabilityCombat(final Combat combat) {
         if (blockabilityCombat != combat) {
             blockabilityCombat = combat;
-            invalidateBlockabilityCache();
+            // New combat context (fresh invocation / prediction): drop
+            // everything, including the pure pair cache — conservative.
+            canBlockInCombat.clear();
+            canBlockPair.clear();
+            canBlockerInCombat.clear();
         }
     }
 
     private void invalidateBlockabilityCache() {
+        // Combat mutations change capacity/lure context but CANNOT change
+        // pure pair legality (CombatUtil.canBlock(attacker, blocker) reads
+        // card state + statics only, and game state is fixed while
+        // assignBlockers runs) — canBlockPair survives mutations.
         canBlockInCombat.clear();
-        canBlockPair.clear();
         canBlockerInCombat.clear();
     }
 
     private boolean canBlockCached(final Card attacker, final Card blocker, final Combat combat) {
         ensureBlockabilityCombat(combat);
+        // Pure-pair short-circuit: the full check is a conjunction ending in
+        // canBlock(attacker, blocker); a recorded pair-false decides it
+        // without the combat-dependent walk (which pays O(attackers) static
+        // scans through the lure path on every miss).
+        IdentityHashMap<Card, Boolean> pairRow = canBlockPair.get(attacker);
+        if (pairRow != null && Boolean.FALSE.equals(pairRow.get(blocker))) {
+            return false;
+        }
         IdentityHashMap<Card, Boolean> byBlocker = canBlockInCombat.computeIfAbsent(
                 attacker, ignored -> new IdentityHashMap<>());
         Boolean cached = byBlocker.get(blocker);
@@ -114,6 +129,13 @@ public class AiBlockController {
         }
         boolean result = CombatUtil.canBlock(attacker, blocker, combat);
         byBlocker.put(blocker, result);
+        if (result) {
+            // Free knowledge: full-check true implies pure-pair true; the
+            // entry survives mutation invalidation and feeds the
+            // short-circuit + the 2-arg path.
+            canBlockPair.computeIfAbsent(attacker, ignored -> new IdentityHashMap<>())
+                    .put(blocker, Boolean.TRUE);
+        }
         return result;
     }
 
@@ -1128,8 +1150,12 @@ public class AiBlockController {
             return;
         }
 
+        // Full reset at invocation entry (pair entries must not leak across
+        // invocations — game state may have changed between them).
         blockabilityCombat = combat;
-        invalidateBlockabilityCache();
+        canBlockInCombat.clear();
+        canBlockPair.clear();
+        canBlockerInCombat.clear();
         clearBlockers(combat, possibleBlockers);
 
         diff = (ai.getLife() * 2) - 5; // This is the minimal gain for an unnecessary trade
