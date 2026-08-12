@@ -697,6 +697,13 @@ public class ComputerUtil {
 
         if (sa.isKeyword(Keyword.STATION)) {
             typeList.removeAll(CardLists.filter(typeList, c -> c.getNetPower() <= 0));
+            // The power filter can shrink the list below amount after the
+            // size guard above already passed (a board of 0-power creatures);
+            // indexing past the shrunk list threw IndexOutOfBounds. Declining
+            // to pay (null) cancels the ability instead.
+            if (typeList.size() < amount) {
+                return null;
+            }
         }
 
         CardLists.sortByPowerAsc(typeList);
