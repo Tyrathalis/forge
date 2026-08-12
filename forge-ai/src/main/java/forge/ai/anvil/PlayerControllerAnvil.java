@@ -138,6 +138,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         public volatile int holds = 0;    // windows force-passed (HOLD)
         public volatile int casts = 0;    // realized forced casts (ACT)
         public volatile int exhausts = 0; // ACT windows degraded to pass
+        // First realized cast of the completion, as the candidate-label
+        // SA string (Census.str — the model's sa_vocab basis). ADR-0054:
+        // the sequence-contrastive target rewards the EVALUATED cast, so
+        // the labels row must say which cast the act arm actually led with.
+        public volatile String firstCastSa = null;
 
         SeqDirective(SeqMode m, String p, int u) {
             mode = m;
@@ -270,6 +275,9 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     } else if (seqAct) {
                         if (r.sas != null) {
                             sd.casts++;
+                            if (sd.firstCastSa == null && !r.sas.isEmpty()) {
+                                sd.firstCastSa = Census.str(r.sas.get(0));
+                            }
                         } else {
                             sd.exhausts++; // server passed despite the mask
                         }

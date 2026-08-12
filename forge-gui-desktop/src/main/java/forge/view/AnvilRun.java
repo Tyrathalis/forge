@@ -1065,6 +1065,10 @@ public final class AnvilRun {
             long[] holds = new long[3];
             long[] casts = new long[3];
             long[] exhausts = new long[3];
+            // ADR-0054 labels-row extension: the act arm's first realized
+            // cast per completion (candidate-label SA string; null = the
+            // completion never cast — all windows exhausted).
+            String[] actFirst = new String[k];
             String seatName = prio.getName();
             int untilTurn = targetTurn + forceSeq - 1;
             long block0 = System.nanoTime();
@@ -1138,6 +1142,9 @@ public final class AnvilRun {
                             holds[arm] += sdd.holds;
                             casts[arm] += sdd.casts;
                             exhausts[arm] += sdd.exhausts;
+                            if (arm == 2) {
+                                actFirst[r] = sdd.firstCastSa;
+                            }
                         }
                         PlayerControllerAnvil.clearSeq(copy);
                         outcome[arm][r] = crashed ? -2 : wi;
@@ -1194,8 +1201,47 @@ public final class AnvilRun {
             sb.append(",\"holds\":").append(holds[1])
                     .append(",\"acts\":").append(casts[2])
                     .append(",\"exhausts\":").append(exhausts[2])
-                    .append(",\"nat_anom\":").append(holds[0] + casts[0] + exhausts[0])
-                    .append(",\"copy_ms\":").append(copyMsTotal)
+                    .append(",\"nat_anom\":").append(holds[0] + casts[0] + exhausts[0]);
+            // ADR-0054: act-arm first-cast distribution over counted triples
+            // (act_first counts by SA string; act_none = completions that
+            // never cast; act_first_modal/agree = the target's cast* and its
+            // agreement fraction among completions that did cast).
+            java.util.Map<String, Integer> firstCounts = new java.util.TreeMap<>();
+            int actNone = 0;
+            for (int r = 0; r < k; r++) {
+                if (outcome[0][r] < -1 || outcome[1][r] < -1 || outcome[2][r] < -1) {
+                    continue; // same triple filter as the win counts
+                }
+                if (actFirst[r] == null) {
+                    actNone++;
+                } else {
+                    firstCounts.merge(actFirst[r], 1, Integer::sum);
+                }
+            }
+            String modal = null;
+            int modalN = 0, castN = 0;
+            for (java.util.Map.Entry<String, Integer> e : firstCounts.entrySet()) {
+                castN += e.getValue();
+                if (e.getValue() > modalN) {
+                    modalN = e.getValue();
+                    modal = e.getKey();
+                }
+            }
+            sb.append(",\"act_first\":{");
+            boolean firstEntry = true;
+            for (java.util.Map.Entry<String, Integer> e : firstCounts.entrySet()) {
+                sb.append(firstEntry ? "" : ",").append('"').append(jstr(e.getKey()))
+                        .append("\":").append(e.getValue());
+                firstEntry = false;
+            }
+            sb.append("},\"act_none\":").append(actNone);
+            if (modal != null) {
+                sb.append(",\"act_first_modal\":\"").append(jstr(modal)).append('"')
+                        .append(",\"act_first_agree\":")
+                        .append(String.format(java.util.Locale.ROOT, "%.4f",
+                                modalN / (double) castN));
+            }
+            sb.append(",\"copy_ms\":").append(copyMsTotal)
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000)
                     .append('}');
             synchronized (labels) {
