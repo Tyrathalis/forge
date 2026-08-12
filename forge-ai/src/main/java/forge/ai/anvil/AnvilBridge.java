@@ -14,6 +14,18 @@ import java.util.List;
  * serializes them so M0 payloads carry realistic option lists.
  */
 public interface AnvilBridge {
+    /**
+     * True once the transport has lost request/response correspondence
+     * (decision deadline expired or a mismatched decision_seq arrived —
+     * bridge-protocol-v0's "mismatched sequence is a protocol bug" clause).
+     * A poisoned bridge refuses further decisions; the worker must stop
+     * starting games and exit so the harness recycles it. Local bridges
+     * cannot desync.
+     */
+    default boolean poisoned() {
+        return false;
+    }
+
     /** SELECT_ONE: pick over options (index into the list). */
     int selectOne(String tag, List<String> optionLabels);
 
