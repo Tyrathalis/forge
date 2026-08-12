@@ -383,6 +383,16 @@ public final class AnvilRun {
                             + g + "/" + nGames + " games");
                     break;
                 }
+                if (bridge.poisoned()) {
+                    // Protocol-v0 mismatch clause (issue #9): the stream has
+                    // lost request/response correspondence; the game that hit
+                    // it was recorded as crashed. No further games on this
+                    // stream — exit so the harness recycles the worker (the
+                    // relaunch replays the failed game on a fresh stream).
+                    System.err.println("[AnvilRun] bridge poisoned; draining after "
+                            + g + "/" + nGames + " games — harness will recycle");
+                    break;
+                }
                 int idx = rangeStart + g;
                 long seed = seedBase != null
                         ? splitmix64(seedBase + idx * 0x9E3779B97F4A7C15L) : legacyBaseSeed + idx;

@@ -40,7 +40,28 @@ import java.util.concurrent.TimeUnit;
  * answer is used locally (counted; the run stays alive and deterministic).
  */
 public final class GrpcBridge implements AnvilBridge {
-    private static final int DEADLINE_MS = 5000;
+    // Operational knob only — never part of a correctness argument (issue #9
+    // point 6). Instance-read so tests can shrink it before construction.
+    private final int deadlineMs = Integer.getInteger("anvil.bridge.deadline.ms", 5000);
+
+    /**
+     * The stream lost request/response correspondence: a decision deadline
+     * expired with the request still in flight, or a response arrived whose
+     * decision_seq is not the outstanding request's. Either way the shared
+     * queue now carries response debt and the NEXT waiter would consume a
+     * stale answer — the off-by-one desync of issue #9 (anvil), where a
+     * late response was silently applied to the following decision (and
+     * across game boundaries) as if it answered it. Per bridge-protocol-v0
+     * the game is discarded and the worker drains: this exception fails the
+     * current game loudly (crash_or_hang:BridgePoisonedException), and
+     * AnvilRun stops starting games on a poisoned bridge so the harness
+     * recycles the worker with a fresh stream.
+     */
+    public static final class BridgePoisonedException extends RuntimeException {
+        BridgePoisonedException(String msg) {
+            super(msg);
+        }
+    }
 
     private final ManagedChannel channel;
     private final StreamObserver<WorkerMsg> out;
@@ -52,6 +73,7 @@ public final class GrpcBridge implements AnvilBridge {
     private String gameId = "";
     private int transportFailures;
     private int serverFallbacks;
+    private String poisonReason;
 
     public GrpcBridge(String host, int port, String workerId, String forkCommit) {
         channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
@@ -91,18 +113,35 @@ public final class GrpcBridge implements AnvilBridge {
 
     private ServerMsg await() {
         try {
-            return in.poll(DEADLINE_MS, TimeUnit.MILLISECONDS);
+            return in.poll(deadlineMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
         }
     }
 
+    @Override
+    public boolean poisoned() {
+        return poisonReason != null;
+    }
+
+    private BridgePoisonedException poison(String reason) {
+        poisonReason = reason;
+        System.err.println("[GrpcBridge] POISONED: " + reason
+                + " — game discarded, worker will drain (protocol-v0 mismatch clause)");
+        return new BridgePoisonedException(reason);
+    }
+
     private DecisionResponse roundTrip(String tag, AnswerShape shape, List<String> optionLabels,
             Constraints constraints, DecisionResponse echo) {
+        if (poisonReason != null) {
+            // No decision may read the queue once correspondence is lost —
+            // the next message may be debt from an abandoned request.
+            throw new BridgePoisonedException(poisonReason);
+        }
         DecisionRequest.Builder req = DecisionRequest.newBuilder()
                 .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
-                .setShape(shape).setDeadlineMs(DEADLINE_MS).setEchoAnswer(echo);
+                .setShape(shape).setDeadlineMs(deadlineMs).setEchoAnswer(echo);
         if (constraints != null) {
             req.setConstraints(constraints);
         }
@@ -121,11 +160,21 @@ public final class GrpcBridge implements AnvilBridge {
         }
         out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
         ServerMsg msg = await();
-        if (msg == null || !msg.hasResponse()) {
+        if (msg == null) {
+            // Deadline expired with request `seq` still alive server-side.
+            // Answering locally and continuing (the pre-#9 behavior) leaves
+            // one unit of response debt on the stream: every later decision
+            // silently consumes its predecessor's answer. Fail the game.
             transportFailures++;
-            System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
-                    + " (total " + transportFailures + "); using local answer");
-            return echo;
+            throw poison("deadline on " + tag + " seq=" + seq
+                    + " (transport failure " + transportFailures + ")");
+        }
+        if (!msg.hasResponse()) {
+            throw poison("non-response message while awaiting " + tag + " seq=" + seq);
+        }
+        if (msg.getResponse().getDecisionSeq() != seq) {
+            throw poison("decision_seq mismatch on " + tag + ": expected " + seq
+                    + ", got " + msg.getResponse().getDecisionSeq());
         }
         // A fallback response means "answer locally, tagged" — reading the
         // oneof's default value instead looped mulligans forever (D8 smoke 1:
@@ -229,10 +278,13 @@ public final class GrpcBridge implements AnvilBridge {
         if (!oneShotCast) {
             return null;
         }
+        if (poisonReason != null) {
+            throw new BridgePoisonedException(poisonReason);
+        }
         long prevPrioritySeq = lastPrioritySeq;
         DecisionRequest.Builder req = DecisionRequest.newBuilder()
                 .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
-                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(deadlineMs);
         if (forbidDecline) {
             // M7 forced-branch act ask: server masks the pass logit.
             req.setForbidDecline(true);
@@ -254,11 +306,17 @@ public final class GrpcBridge implements AnvilBridge {
         }
         out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
         ServerMsg msg = await();
-        if (msg == null || !msg.hasResponse()) {
+        if (msg == null) {
             transportFailures++;
-            System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
-                    + " (total " + transportFailures + "); one-shot answers PASS");
-            return pass();
+            throw poison("deadline on " + tag + " seq=" + seq
+                    + " (transport failure " + transportFailures + ")");
+        }
+        if (!msg.hasResponse()) {
+            throw poison("non-response message while awaiting " + tag + " seq=" + seq);
+        }
+        if (msg.getResponse().getDecisionSeq() != seq) {
+            throw poison("decision_seq mismatch on " + tag + ": expected " + seq
+                    + ", got " + msg.getResponse().getDecisionSeq());
         }
         DecisionResponse resp = msg.getResponse();
         if (resp.getFallback() || !resp.hasConstruct() || !resp.getConstruct().hasCastPlan()) {
@@ -323,21 +381,30 @@ public final class GrpcBridge implements AnvilBridge {
         return new CombatMapAnswer(out);
     }
 
-    /** One CONSTRUCT round-trip; null = transport/deadline/fallback (counted). */
+    /** One CONSTRUCT round-trip; null = server fallback/shape miss (counted). */
     private forge.anvil.bridge.v0.Construct roundTripConstruct(String tag, String observation) {
+        if (poisonReason != null) {
+            throw new BridgePoisonedException(poisonReason);
+        }
         DecisionRequest.Builder req = DecisionRequest.newBuilder()
                 .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
-                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(DEADLINE_MS);
+                .setShape(AnswerShape.CONSTRUCT).setDeadlineMs(deadlineMs);
         if (observation != null) {
             req.setObservation(ByteString.copyFromUtf8(observation));
         }
         out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
         ServerMsg msg = await();
-        if (msg == null || !msg.hasResponse()) {
+        if (msg == null) {
             transportFailures++;
-            System.err.println("[GrpcBridge] deadline/failure on " + tag + " seq=" + seq
-                    + " (total " + transportFailures + "); combat answers empty map");
-            return null;
+            throw poison("deadline on " + tag + " seq=" + seq
+                    + " (transport failure " + transportFailures + ")");
+        }
+        if (!msg.hasResponse()) {
+            throw poison("non-response message while awaiting " + tag + " seq=" + seq);
+        }
+        if (msg.getResponse().getDecisionSeq() != seq) {
+            throw poison("decision_seq mismatch on " + tag + ": expected " + seq
+                    + ", got " + msg.getResponse().getDecisionSeq());
         }
         DecisionResponse resp = msg.getResponse();
         if (resp.getFallback() || !resp.hasConstruct()) {
