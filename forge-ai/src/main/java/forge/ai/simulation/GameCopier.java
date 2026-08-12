@@ -277,9 +277,6 @@ public class GameCopier {
             if (card.getSaddledByThisTurn() != null) {
                 otherCard.setSaddledByThisTurn(card.getSaddledByThisTurn());
             }
-            if (card.getEffectSource() != null) {
-                otherCard.setEffectSource(cardMap.get(card.getEffectSource()));
-            }
             if (card.isPaired()) {
                 otherCard.setPairedWith(cardMap.get(card.getPairedWith()));
             }
@@ -288,6 +285,20 @@ public class GameCopier {
                 otherCard.setCopiedPermanent(new CardCopyService(card.getCopiedPermanent()).copyCard(false));
             }
             // TODO: Verify that the above relationships are preserved bi-directionally or not.
+        }
+
+        // Effect-source links are zone-independent: command-zone Effect cards
+        // (Prepared spells, impulse-draw grants) resolve EffectSource* defines
+        // through them, and restoring the link only for battlefield cards left
+        // getDefinedPlayers() EMPTY in copies — the MayPlayPlayer .get(0)
+        // IndexOutOfBounds copy-crash class (StaticAbilityContinuous:900;
+        // 9/578 M4 drill positions, every Prepared-spell state). A source that
+        // was never copied (ceased to exist) stays null, as before.
+        for (Map.Entry<Card, Card> e : cardMap.entrySet()) {
+            Card src = e.getKey().getEffectSource();
+            if (src != null && cardMap.containsKey(src)) {
+                e.getValue().setEffectSource(cardMap.get(src));
+            }
         }
     }
 
