@@ -557,8 +557,29 @@ public final class AnvilRun {
         System.out.flush();
     }
 
+    // JSON string escape. Control chars matter: modal spell text carries
+    // literal newlines ("Choose one —\n• ..."), which split labels rows
+    // into unparseable fragments (caught live in the M8 D1 probe; the
+    // M7 act_first path had the same latent hole).
     private static String jstr(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        StringBuilder b = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' || c == '"') {
+                b.append('\\').append(c);
+            } else if (c == '\n') {
+                b.append("\\n");
+            } else if (c == '\r') {
+                b.append("\\r");
+            } else if (c == '\t') {
+                b.append("\\t");
+            } else if (c < 0x20) {
+                b.append(String.format("\\u%04x", (int) c));
+            } else {
+                b.append(c);
+            }
+        }
+        return b.toString();
     }
 
     private static Map<String, List<String>> parseParams(String[] args) {
