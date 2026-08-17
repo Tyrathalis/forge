@@ -129,7 +129,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     // never a skip — a sequence arm cannot drop out mid-game the way a
     // one-shot branch can). Same Game-identity keying as Forced.
 
-    public enum SeqMode { HOLD, ACT }
+    public enum SeqMode { HOLD, ACT, OBSERVE }
 
     public static final class SeqDirective {
         public final SeqMode mode;
@@ -143,6 +143,15 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         // the sequence-contrastive target rewards the EVALUATED cast, so
         // the labels row must say which cast the act arm actually led with.
         public volatile String firstCastSa = null;
+        // M8 D1 (m8-plan): OBSERVE mode never forces — it records the
+        // seat's natural timing. First realized SPELL cast (isSpell();
+        // lands and activated abilities — fetch cracks, equips — are mana
+        // development, not the spell-timing axis, and would pull
+        // completions into the in-window bin) + its absolute game turn,
+        // and the first land-play turn as the confound check. -1 = never.
+        public volatile String firstSpellSa = null;
+        public volatile int firstSpellTurn = -1;
+        public volatile int firstLandTurn = -1;
 
         SeqDirective(SeqMode m, String p, int u) {
             mode = m;
@@ -280,6 +289,22 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                             }
                         } else {
                             sd.exhausts++; // server passed despite the mask
+                        }
+                    } else if (sd != null && sd.mode == SeqMode.OBSERVE
+                            && r.sas != null) {
+                        // M8 D1: pure recording — the ask above ran exactly
+                        // as unarmed natural (forced flag false, no re-ask
+                        // semantics change), so counters stay untouched.
+                        int t = getGame().getPhaseHandler().getTurn();
+                        for (SpellAbility s : r.sas) {
+                            if (s.isLandAbility()) {
+                                if (sd.firstLandTurn < 0) {
+                                    sd.firstLandTurn = t;
+                                }
+                            } else if (s.isSpell() && sd.firstSpellSa == null) {
+                                sd.firstSpellSa = Census.str(s);
+                                sd.firstSpellTurn = t;
+                            }
                         }
                     }
                     return r.sas; // realized cast, model pass, or oor pass
