@@ -48,8 +48,14 @@ public final class PaymentEnumerator {
      */
     /** Defensive cap on the surfaced option list (incl. auto). Expected never hit (≤11 source classes measured); logged, never silent. */
     public static final int GOAL_MAX = 16;
-    /** DFS node budget — the only enumeration bound (spec §12 pin; tail probe: p90 1,625 nodes, 0.2% at 200k). */
-    public static final int NODE_BUDGET = 200000;
+    /** DFS node budget — the only enumeration bound. Re-pinned 200k→2M at the
+     *  paygoals census read (2026-08-19): the 1% nodecap gate fired at 1.25%
+     *  (141 late-game monster boards, atoms p50 16 / p90 36); on the goal
+     *  surface a nodecap is a degraded REPRESENTATIVE, never a censored
+     *  option list — every goal still surfaces a plan (capped windows still
+     *  carried 6–7 options) — but the gate is honored by measurement, not
+     *  reinterpretation. */
+    public static final int NODE_BUDGET = 2000000;
     /** Plan size cap: at most (shard count + PLAN_SLACK) activations. */
     public static final int PLAN_SLACK = 2;
 
