@@ -31,14 +31,23 @@ public final class PaymentTelemetry {
      *  logic-free. Off-mode emits the record unchanged. */
     public static void rec(Game g, Player p, ManaCost toPay, SpellAbility sa, String prompt, boolean effect) {
         if (enabled && !effect && toPay != null && !toPay.isZero()) {
-            PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, sa, toPay);
-            boolean conseq = PaymentEnumerator.consequential(r, p, sa, toPay, effect);
-            Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect,
-                    "classes", r.classes.size(), "conseq", conseq,
-                    "forced", conseq && r.classes.size() == 1,
-                    "trunc", r.truncated, "atoms", r.atomCount);
-        } else {
-            Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
+            try {
+                PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, sa, toPay);
+                boolean conseq = PaymentEnumerator.consequential(r, p, sa, toPay, effect);
+                Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect,
+                        "classes", r.classes.size(), "conseq", conseq,
+                        "forced", conseq && r.classes.size() == 1,
+                        "trunc", r.truncated, "atoms", r.atomCount);
+                return;
+            } catch (Exception e) {
+                // telemetry must never kill a game — the failure is itself
+                // telemetry (an enumeration gap the executor genre would
+                // have adjudicated); loud in the record, quiet in the game.
+                Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect,
+                        "enumerr", e.getClass().getSimpleName());
+                return;
+            }
         }
+        Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
     }
 }
