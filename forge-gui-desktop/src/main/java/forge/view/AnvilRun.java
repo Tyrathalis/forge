@@ -96,7 +96,7 @@ public final class AnvilRun {
         if (params == null || fixedPair == pairFile) {
             System.out.println("Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <n>]) [-f <format>] "
                     + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] [-reask] "
-                    + "[-census <out.jsonl>] [-obs <out.zst>] "
+                    + "[-census <out.jsonl>] [-obs <out.zst>] [-paytelemetry] "
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
@@ -121,6 +121,11 @@ public final class AnvilRun {
         // D6 run-2: re-ask-on-veto (d6-vtrace-loop §6b). Per-JVM, all seats.
         boolean reask = params.containsKey("reask");
         PlayerControllerAnvil.setReaskOnVeto(reask);
+        // M9 D3 §3c: payment-surface census telemetry-only mode (enumeration +
+        // flag telemetry on every in-scope payManaCost, no bridging —
+        // m9-payment-surface-spec.md §8). Trajectory-perturbing like -obs;
+        // runs pin the flag.
+        forge.ai.anvil.PaymentTelemetry.enabled = params.containsKey("paytelemetry");
 
         int rangeStart = 0;
         int nGames;

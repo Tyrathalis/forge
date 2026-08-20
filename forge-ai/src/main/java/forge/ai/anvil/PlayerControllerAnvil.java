@@ -41,6 +41,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     public static final String TAG_NUMBER = "mtg.number";
     public static final String TAG_ATTACK = "mtg.attack";   // M2 D5
     public static final String TAG_BLOCK = "mtg.block";     // M2 D5
+    public static final String TAG_PAY_CLASS = "mtg.pay_mana_class"; // M9 D3 §3c
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;
@@ -568,6 +569,120 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         Census.rec(getGame(), getPlayer(), "chooseNumber", "by", "bridge", "v", v);
         Obs.ret(getGame(), obsSeq, v);
         return v;
+    }
+
+    /**
+     * M9 D3 (§3c): conscious mana payment (m9-payment-surface-spec.md).
+     * In-scope windows (effect=false, nonzero mana) run legality-derived
+     * class enumeration; consequential windows (≥2 classes) bridge as
+     * SELECT_ONE over {auto} ∪ classes on tag mtg.pay_mana_class — auto is
+     * option 0, so a server that always answers 0 (or fallback/echo) is
+     * bit-identical to today. A class answer executes float-then-apply
+     * (PaymentEnumerator.executeDirected, the ADR-0065 primitive) and the
+     * heuristic path completes the payment from the float (pool-first).
+     * Failure semantics per spec §7: directed_salvage / directed_fail are
+     * census reason codes, NEVER vetoes — D5's mechanism read must not
+     * measure itself. Auto/heuristic payment goes through ComputerUtilMana
+     * directly (calling super would double-log the census record).
+     */
+    @Override
+    public boolean payManaCost(forge.card.mana.ManaCost toPay, forge.game.cost.CostPartMana costPartMana,
+            SpellAbility sa, String prompt, forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
+        if (!bridged(TAG_PAY_CLASS) || effect || toPay == null || toPay.isZero()) {
+            return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
+        }
+        final PaymentEnumerator.Result r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
+        final boolean conseq = PaymentEnumerator.consequential(r, getPlayer(), sa, toPay, effect);
+        final boolean forced = conseq && r.classes.size() == 1; // auto-unpayable, one class
+        if (!conseq) {
+            // non-consequential windows never bridge (the sparsity contract);
+            // the flag telemetry still lands on the census record.
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
+                    "sa", Census.str(sa), "effect", false,
+                    "classes", r.classes.size(), "conseq", false, "trunc", r.truncated);
+            long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
+                    "sa", Census.str(sa), "effect", false);
+            boolean paid = autoPay(toPay, sa, effect);
+            Obs.ret(getGame(), s, paid);
+            return paid;
+        }
+        final List<String> labels = paymentOptionLabels(r);
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels,
+                "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", false,
+                "fpool", floatingPool(), "classes", r.classes.size(),
+                "trunc", r.truncated, "forced", forced);
+        int pick = bridge.selectOne(TAG_PAY_CLASS, labels);
+        if (pick <= 0 || pick > r.classes.size()) {
+            boolean paid = autoPay(toPay, sa, effect);
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
+                    "options", labels.size(), "pick", "auto", "paid", paid,
+                    "classes", r.classes.size(), "conseq", true, "trunc", r.truncated,
+                    "forced", forced);
+            Obs.ret(getGame(), obsSeq, "auto:" + paid);
+            return paid;
+        }
+        final PaymentEnumerator.PaymentClass pc = r.classes.get(pick - 1);
+        final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(getPlayer(), pc);
+        boolean paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+        int residue = getPlayer().getManaPool().totalMana();
+        String exec = !paid ? "directed_fail"
+                : out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
+        Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
+                "options", labels.size(), "pick", pick, "exec", exec, "paid", paid,
+                "float_residue", residue,
+                "classes", r.classes.size(), "conseq", true, "trunc", r.truncated,
+                "forced", forced);
+        Obs.ret(getGame(), obsSeq, exec);
+        return paid;
+    }
+
+    /** Current floating pool by mana type (spec §6 window context: WUBRGC). */
+    private String floatingPool() {
+        StringBuilder sb = new StringBuilder(12);
+        for (byte t : forge.card.mana.ManaAtom.MANATYPES) {
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(getPlayer().getManaPool().getAmountOfColor(t));
+        }
+        return sb.toString();
+    }
+
+    /** The PlayerControllerAi payment body, called directly — super would
+     *  re-record the census window. */
+    private boolean autoPay(forge.card.mana.ManaCost toPay, SpellAbility sa, boolean effect) {
+        return forge.ai.ComputerUtilMana.payManaCost(
+                new forge.game.cost.Cost(toPay, effect), getPlayer(), sa, effect);
+    }
+
+    /** Wire option labels (spec §5): option 0 = auto; classes carry the
+     *  entity refs of the representative plan (the pointer-head substrate),
+     *  pool spend by type, and phyrexian life count. */
+    private static List<String> paymentOptionLabels(PaymentEnumerator.Result r) {
+        List<String> labels = Lists.newArrayListWithCapacity(r.classes.size() + 1);
+        labels.add("{\"auto\":true}");
+        for (PaymentEnumerator.PaymentClass pc : r.classes) {
+            StringBuilder sb = new StringBuilder(64);
+            sb.append("{\"ents\":[");
+            boolean first = true;
+            for (PaymentEnumerator.Atom a : pc.atoms) {
+                if (!first) {
+                    sb.append(',');
+                }
+                sb.append(a.host.getId());
+                first = false;
+            }
+            sb.append("],\"pool\":[");
+            for (int i = 0; i < pc.poolSpend.length; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(pc.poolSpend[i]);
+            }
+            sb.append("],\"phy\":").append(pc.phyrexianLife).append('}');
+            labels.add(sb.toString());
+        }
+        return labels;
     }
 
     /**

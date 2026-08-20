@@ -911,7 +911,7 @@ public class CensusPlayerController extends PlayerControllerAi {
 
     @Override
     public boolean payManaCost(ManaCost toPay, CostPartMana costPartMana, SpellAbility sa, String prompt, ManaConversionMatrix matrix, boolean effect) {
-        Census.rec(getGame(), getPlayer(), "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
+        PaymentTelemetry.rec(getGame(), getPlayer(), toPay, sa, prompt, effect);
         long __s = Obs.dec(getGame(), getPlayer(), "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
         boolean __r = super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         Obs.ret(getGame(), __s, __r);

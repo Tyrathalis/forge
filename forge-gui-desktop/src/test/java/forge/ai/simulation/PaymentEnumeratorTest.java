@@ -46,7 +46,10 @@ public class PaymentEnumeratorTest extends SimulationTest {
         PaymentEnumerator.Result r = enumerate(p, bear);
         AssertJUnit.assertEquals("two same-signature forests = one source class", 1, r.sourceClassCount);
         AssertJUnit.assertEquals("one payment class", 1, r.classes.size());
-        AssertJUnit.assertFalse("not consequential", r.consequential());
+        SpellAbility bearSa = bear.getFirstSpellAbility();
+        bearSa.setActivatingPlayer(p);
+        AssertJUnit.assertFalse("one class + auto-payable = not consequential",
+                PaymentEnumerator.consequential(r, p, bearSa, bearSa.getPayCosts().getTotalMana(), false));
         AssertJUnit.assertFalse(r.truncated);
     }
 
@@ -70,8 +73,8 @@ public class PaymentEnumeratorTest extends SimulationTest {
         castSa.setActivatingPlayer(p);
         PaymentEnumerator.Result rG = PaymentEnumerator.enumerate(p, castSa,
                 new forge.card.mana.ManaCost(new forge.card.mana.ManaCostParser("G")));
-        AssertJUnit.assertTrue("paying {G} via dork vs land = consequential", rG.consequential());
-        AssertJUnit.assertEquals(2, rG.classes.size());
+        AssertJUnit.assertEquals("paying {G} via dork vs land = two classes = consequential",
+                2, rG.classes.size());
     }
 
     /** The ADR-0065 chained board: I + I + Dimir Signet vs {1}{U}{B}.
@@ -133,7 +136,7 @@ public class PaymentEnumeratorTest extends SimulationTest {
         PaymentEnumerator.Result rG = PaymentEnumerator.enumerate(p, castSa,
                 new forge.card.mana.ManaCost(new forge.card.mana.ManaCostParser("G")));
         AssertJUnit.assertEquals("boosted vs plain forest = two source classes", 2, rG.sourceClassCount);
-        AssertJUnit.assertTrue("yield difference is consequential", rG.consequential());
+        AssertJUnit.assertEquals("yield difference is consequential", 2, rG.classes.size());
     }
 
     /** Phyrexian shards: pay-mana vs pay-life is a class distinction (a

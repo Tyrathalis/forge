@@ -100,11 +100,28 @@ public final class PaymentEnumerator {
         public int nodesVisited = 0;
         public int atomCount = 0;
         public int sourceClassCount = 0;
+    }
 
-        /** The consequential flag (m9-payment-surface-spec §4). */
-        public boolean consequential() {
-            return classes.size() >= 2;
+    /**
+     * The consequential flag (m9-payment-surface-spec §4, amended at the
+     * wiring session 2026-08-19): ≥2 classes = a real choice — OR exactly one
+     * class the auto-payer cannot construct (the FORCED-CHAIN window: the
+     * I+I+Signet motivating board has exactly one payment, and it is the one
+     * ComputerUtilMana can't build; under the draft ≥2-only rule the flag
+     * would never bridge exactly the windows the surface exists for). The
+     * auto-payability probe is auto-payer-derived but used only to WIDEN the
+     * surface — never to filter classes — so the interface-trap direction is
+     * safe. Day-zero bit-identity holds: the bridged forced window offers
+     * {auto, class}; the auto-biased init answers auto and fails exactly as
+     * today.
+     */
+    public static boolean consequential(final Result r, final Player p, final SpellAbility sa,
+            final ManaCost toPay, final boolean effect) {
+        if (r.classes.size() >= 2) {
+            return true;
         }
+        return r.classes.size() == 1
+                && !ComputerUtilMana.canPayManaCost(new forge.game.mana.ManaCostBeingPaid(toPay), sa, p, effect);
     }
 
     // ------------------------------------------------------------------
