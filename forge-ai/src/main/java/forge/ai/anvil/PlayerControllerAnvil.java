@@ -706,6 +706,15 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 }
                 sb.append('"').append(opt.goals.get(i).replace("\"", "")).append('"');
             }
+            // goal-kind codes (rung 3): the model-side featurizer keys the
+            // pay_kind embedding on gk[0] — codes pinned in GoalOption's doc
+            sb.append("],\"gk\":[");
+            for (int i = 0; i < opt.kinds.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(opt.kinds.get(i));
+            }
             sb.append("],\"ents\":[");
             boolean first = true;
             for (PaymentEnumerator.Atom a : pc.atoms) {

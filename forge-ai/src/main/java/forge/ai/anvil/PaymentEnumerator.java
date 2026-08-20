@@ -110,13 +110,20 @@ public final class PaymentEnumerator {
     }
 
     /** One surfaced wire option: the goals that induced it (outcome-deduped)
-     *  and the representative composition the executor runs. */
+     *  and the representative composition the executor runs. `kinds` are the
+     *  goal-kind codes the obs label ships as "gk" (rung 3: the pointer key
+     *  carries no label text, so the model reads goal semantics through this
+     *  small vocab — MUST match anvil.training.dataset.PAY_KINDS):
+     *  0=pay 1=spare_creature 2=spare_land 3=spare_artifact 4=spare_other
+     *  5=min_life. */
     public static final class GoalOption {
         public final List<String> goals;
+        public final List<Integer> kinds;
         public final PaymentClass plan;
 
-        GoalOption(List<String> goals, PaymentClass plan) {
+        GoalOption(List<String> goals, List<Integer> kinds, PaymentClass plan) {
             this.goals = goals;
+            this.kinds = kinds;
             this.plan = plan;
         }
     }
@@ -330,6 +337,7 @@ public final class PaymentEnumerator {
         // optionally S = min_life (phyrexian costs); fallback single "pay"
         // goal when neither exists (pool-only boards, forced-window safety).
         final String[] goalNames;
+        final List<Integer> goalKinds;  // parallel to goalNames (GoalOption doc)
         final String[] goalClassKeys;   // null entry = non-spare goal
         final int[] bestObj;
         final int[] bestSpread;
@@ -356,19 +364,24 @@ public final class PaymentEnumerator {
             }
             final List<String> names = new ArrayList<>();
             final List<String> keys = new ArrayList<>();
+            final List<Integer> kinds = new ArrayList<>();
             for (final List<Atom> cls : classes) {
                 final Atom rep = cls.get(0);
                 names.add("spare:" + rep.host.getName() + (cls.size() > 1 ? " x" + cls.size() : ""));
                 keys.add(rep.classKey);
+                kinds.add(rep.host.isCreature() ? 1 : rep.host.isLand() ? 2 : rep.host.isArtifact() ? 3 : 4);
             }
             if (hasPhyrexian) {
                 names.add("pay_mana_not_life");
                 keys.add(null);
+                kinds.add(5);
             }
             if (names.isEmpty()) {
                 names.add("pay"); // pool-only boards: one option so forced windows stay expressible
                 keys.add(null);
+                kinds.add(0);
             }
+            this.goalKinds = kinds;
             this.goalNames = names.toArray(new String[0]);
             this.goalClassKeys = keys.toArray(new String[0]);
             this.bestObj = new int[goalNames.length];
@@ -449,10 +462,13 @@ public final class PaymentEnumerator {
             final GoalOption existing = byPlan.get(st.bestKey[g]);
             if (existing != null) {
                 existing.goals.add(st.goalNames[g]);
+                existing.kinds.add(st.goalKinds.get(g));
             } else if (byPlan.size() < GOAL_MAX - 1) { // -1: auto occupies a wire slot
                 final List<String> gn = new ArrayList<>();
                 gn.add(st.goalNames[g]);
-                byPlan.put(st.bestKey[g], new GoalOption(gn, st.bestPlan[g]));
+                final List<Integer> gk = new ArrayList<>();
+                gk.add(st.goalKinds.get(g));
+                byPlan.put(st.bestKey[g], new GoalOption(gn, gk, st.bestPlan[g]));
             } else {
                 result.truncated = true;
                 result.goalCapHit = true;
