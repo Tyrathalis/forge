@@ -97,6 +97,9 @@ public final class PaymentEnumerator {
     public static final class Result {
         public final List<PaymentClass> classes = new ArrayList<>();
         public boolean truncated = false;
+        /** Truncation cause split (tail-probe telemetry, 2026-08-19): class cap vs node budget. */
+        public boolean kCapHit = false;
+        public boolean nodeCapHit = false;
         public int nodesVisited = 0;
         public int atomCount = 0;
         public int sourceClassCount = 0;
@@ -237,6 +240,8 @@ public final class PaymentEnumerator {
         final Player payer;
         final SpellAbility paidFor;
         final int planCap;
+        final int kCap;
+        final int nodeBudget;
         final List<List<Atom>> classes;      // atoms grouped by classKey, deterministic order
         final int[] remaining;               // atoms left per class
         final int[] poolRemaining;           // per MANATYPES index
@@ -250,12 +255,15 @@ public final class PaymentEnumerator {
         final Map<String, PaymentClass> found = new LinkedHashMap<>();
         final Result result;
 
-        DfsState(Player payer, SpellAbility paidFor, List<List<Atom>> classes, List<ManaCostShard> shards, int planCap, Result result) {
+        DfsState(Player payer, SpellAbility paidFor, List<List<Atom>> classes, List<ManaCostShard> shards, int planCap,
+                int kCap, int nodeBudget, Result result) {
             this.payer = payer;
             this.paidFor = paidFor;
             this.classes = classes;
             this.shards = shards;
             this.planCap = planCap;
+            this.kCap = kCap;
+            this.nodeBudget = nodeBudget;
             this.result = result;
             this.remaining = new int[classes.size()];
             for (int i = 0; i < classes.size(); i++) {
@@ -283,6 +291,17 @@ public final class PaymentEnumerator {
     }
 
     public static Result enumerate(final Player payer, final SpellAbility sa, final ManaCost toPay) {
+        return enumerate(payer, sa, toPay, K_MAX, NODE_BUDGET);
+    }
+
+    /**
+     * Cap-parameterized variant — the census tail probe (pre-D4 revisit
+     * evidence, 2026-08-19) raises the caps in telemetry-only mode to
+     * measure the true class-count tail. The wire path always uses the
+     * pinned (K_MAX, NODE_BUDGET); raised caps never reach bridging.
+     */
+    public static Result enumerate(final Player payer, final SpellAbility sa, final ManaCost toPay,
+            final int kCap, final int nodeBudget) {
         final Result result = new Result();
         if (toPay == null || toPay.isZero()) {
             return result;
@@ -308,7 +327,8 @@ public final class PaymentEnumerator {
             shards.add(ManaCostShard.GENERIC);
         }
 
-        final DfsState st = new DfsState(payer, sa, classes, shards, shards.size() + PLAN_SLACK, result);
+        final DfsState st = new DfsState(payer, sa, classes, shards, shards.size() + PLAN_SLACK,
+                kCap, nodeBudget, result);
         dfs(st, 0);
 
         result.classes.addAll(st.found.values());
@@ -316,12 +336,14 @@ public final class PaymentEnumerator {
     }
 
     private static void dfs(final DfsState st, final int shardIdx) {
-        if (st.found.size() >= K_MAX) {
+        if (st.found.size() >= st.kCap) {
             st.result.truncated = true;
+            st.result.kCapHit = true;
             return;
         }
-        if (++st.result.nodesVisited > NODE_BUDGET) {
+        if (++st.result.nodesVisited > st.nodeBudget) {
             st.result.truncated = true;
+            st.result.nodeCapHit = true;
             return;
         }
         if (shardIdx == st.shards.size()) {
