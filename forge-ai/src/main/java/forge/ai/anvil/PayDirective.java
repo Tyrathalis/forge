@@ -59,6 +59,8 @@ public final class PayDirective {
     public volatile String reason = null;
     /** auto | directed_ok | directed_salvage | directed_fail. */
     public volatile String exec = null;
+    /** Salvage failure point ("canplay:"/"costs:" + host#id@atomIdx); null unless salvage. */
+    public volatile String execWhy = null;
     public volatile int tFired = -1;
     /** Options the enumerator surfaced at the window; -1 = never reached. */
     public volatile int availOptions = -1;
@@ -202,9 +204,11 @@ public final class PayDirective {
         goals = new ArrayList<>(opt.goals);
         kinds = new ArrayList<>(opt.kinds);
         try {
-            final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, opt.plan);
+            final StringBuilder why = new StringBuilder();
+            final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, opt.plan, why);
             fired = true;
             exec = out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
+            execWhy = why.length() > 0 ? why.toString() : null;
         } catch (Exception e) {
             // partial float stays available to the heuristic completion;
             // recorded, never thrown (the payManaCost bridged-path rule)
