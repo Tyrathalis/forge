@@ -330,8 +330,14 @@ public final class PaymentEnumerator {
         }
         final ManaCostShard shard = st.shards.get(shardIdx);
 
-        // (a) pay from an open floating unit
-        for (final float_unit fu : st.floats) {
+        // (a) pay from an open floating unit. Index-based: the recursive
+        // call inside the body pushes/pops st.floats (option c), which
+        // invalidates a for-each iterator (the census CME, 2026-08-19 —
+        // caught by the telemetry guard, 144/14,974 windows). The list is
+        // size-restored on unwind, so a bounded index scan is stable.
+        final int nFloats = st.floats.size();
+        for (int fi = 0; fi < nFloats; fi++) {
+            final float_unit fu = st.floats.get(fi);
             if (fu.spent) {
                 continue;
             }
