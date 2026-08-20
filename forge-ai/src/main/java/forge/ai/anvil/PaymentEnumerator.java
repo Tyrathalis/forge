@@ -323,7 +323,14 @@ public final class PaymentEnumerator {
         final int planCap;
         final int nodeBudget;
         final List<List<Atom>> classes;      // atoms grouped by classKey, deterministic order
-        final int[] remaining;               // atoms left per class
+        /** Hosts committed to the plan-in-progress. A card with two mana
+         *  abilities (dual lands: two classes, one card) must serve at most
+         *  ONE atom per plan — availability is per HOST, not per class (the
+         *  2026-08-20 certify-smoke salvage finding: per-class counts let a
+         *  {W}{U} cost commit the same lowest-id dual twice — count-feasible,
+         *  executor-infeasible). Conservative for the rare no-tap repeatable
+         *  producer; the executor adjudicates those either way. */
+        final java.util.Set<Card> usedHosts = new java.util.HashSet<>();
         final int[] poolRemaining;           // per MANATYPES index
         final List<ManaCostShard> shards;    // work queue (activation costs get appended)
         final List<float_unit> floats = new ArrayList<>();
@@ -354,10 +361,6 @@ public final class PaymentEnumerator {
             this.planCap = planCap;
             this.nodeBudget = nodeBudget;
             this.result = result;
-            this.remaining = new int[classes.size()];
-            for (int i = 0; i < classes.size(); i++) {
-                remaining[i] = classes.get(i).size();
-            }
             this.poolRemaining = new int[ManaAtom.MANATYPES.length];
             for (int i = 0; i < ManaAtom.MANATYPES.length; i++) {
                 poolRemaining[i] = payer.getManaPool().getAmountOfColor(ManaAtom.MANATYPES[i]);
@@ -534,11 +537,17 @@ public final class PaymentEnumerator {
         // the U unit floats) — distinct masks only, to skip symmetric branches
         if (st.planAtoms.size() < st.planCap) {
             for (int k = 0; k < st.classes.size(); k++) {
-                if (st.remaining[k] <= 0) {
+                final List<Atom> cls = st.classes.get(k);
+                Atom a = null; // deterministic: lowest id whose HOST is uncommitted
+                for (final Atom cand : cls) {
+                    if (!st.usedHosts.contains(cand.host)) {
+                        a = cand;
+                        break;
+                    }
+                }
+                if (a == null) {
                     continue;
                 }
-                final List<Atom> cls = st.classes.get(k);
-                final Atom a = cls.get(cls.size() - st.remaining[k]); // deterministic: lowest unused id
                 if (shard.isSnow() && !a.host.isSnow()) {
                     continue;
                 }
@@ -558,7 +567,7 @@ public final class PaymentEnumerator {
                         continue;
                     }
                     final byte c = firstColor(payable);
-                    st.remaining[k]--;
+                    st.usedHosts.add(a.host);
                     st.planAtoms.add(a);
                     st.planCounts.merge(a.classKey, 1, Integer::sum);
                     final byte[] colors = new byte[a.yield];
@@ -587,7 +596,7 @@ public final class PaymentEnumerator {
                         st.planCounts.remove(a.classKey);
                     }
                     st.planAtoms.remove(st.planAtoms.size() - 1);
-                    st.remaining[k]++;
+                    st.usedHosts.remove(a.host);
                 }
             }
         }
@@ -741,12 +750,23 @@ public final class PaymentEnumerator {
      * whatever floated stays available to auto-payment.
      */
     public static ExecOutcome executeDirected(final Player p, final PaymentClass pc) {
+        return executeDirected(p, pc, null);
+    }
+
+    /** `why` (nullable): on SALVAGE, receives the failure point as
+     *  "canplay:" / "costs:" + host name#id @ atom index — the certify
+     *  harness's diagnosis channel (the 2026-08-20 salvage finding was
+     *  blind without it). */
+    public static ExecOutcome executeDirected(final Player p, final PaymentClass pc,
+            final StringBuilder why) {
         final List<Atom> ordered = new ArrayList<>(pc.atoms);
         ordered.sort(Comparator.comparingInt((Atom a) -> a.activationMana.getCMC())
                 .thenComparingInt(a -> a.host.getId()));
+        int idx = 0;
         for (final Atom a : ordered) {
             a.ma.setActivatingPlayer(p);
             if (!a.ma.canPlay()) {
+                salvageWhy(why, "canplay", a, idx);
                 return ExecOutcome.DIRECTED_SALVAGE;
             }
             final AbilityManaPart mp = a.ma.getManaPart();
@@ -765,10 +785,19 @@ public final class PaymentEnumerator {
             }
             final CostPayment pay = new CostPayment(a.ma.getPayCosts(), a.ma);
             if (!pay.payComputerCosts(new AiCostDecision(p, a.ma, false, true))) {
+                salvageWhy(why, "costs", a, idx);
                 return ExecOutcome.DIRECTED_SALVAGE;
             }
             p.getGame().getStack().addAndUnfreeze(a.ma);
+            idx++;
         }
         return ExecOutcome.DIRECTED_OK;
+    }
+
+    private static void salvageWhy(StringBuilder why, String check, Atom a, int idx) {
+        if (why != null) {
+            why.append(check).append(':').append(a.host.getName())
+                    .append('#').append(a.host.getId()).append('@').append(idx);
+        }
     }
 }

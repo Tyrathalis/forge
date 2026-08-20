@@ -224,6 +224,40 @@ public class PaymentEnumeratorTest extends SimulationTest {
         AssertJUnit.assertTrue("the min_life goal labels the mana payment", sawMinLifeGoal);
     }
 
+    /** The certify-smoke salvage diagnosis (2026-08-20, devlog): a dual
+     *  land hosts TWO mana abilities in TWO different source classes, and
+     *  the DFS tracked availability per class — so a {W}{U} cost on a
+     *  dual-heavy board committed the SAME physical card to both shards
+     *  (count-feasible, executor-infeasible: the second tap fails
+     *  canPlay). The §3 invariant is enumeration-feasibility =
+     *  executor-feasibility; every materialized plan must use distinct
+     *  hosts and execute directed_ok. */
+    @Test
+    public void testDualLandNotDoubleCommitted() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Hallowed Fountain", p);
+        addCard("Hallowed Fountain", p);
+        Card charm = addCardToZone("Azorius Charm", p, ZoneType.Hand); // {W}{U}
+        game.getAction().checkStateEffects(true);
+
+        PaymentEnumerator.Result r = enumerate(p, charm);
+        AssertJUnit.assertTrue("a two-dual plan exists", r.planCount >= 1);
+        AssertJUnit.assertTrue("at least one option surfaced", !r.options.isEmpty());
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            java.util.Set<Integer> hosts = new java.util.HashSet<>();
+            for (PaymentEnumerator.Atom a : opt.plan.atoms) {
+                AssertJUnit.assertTrue("plan commits host " + a.host.getName() + " ("
+                        + a.host.getId() + ") twice — the cross-class double-commit",
+                        hosts.add(a.host.getId()));
+            }
+        }
+        PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, r.options.get(0).plan);
+        AssertJUnit.assertEquals("directed execution is faithful on the dual board",
+                PaymentEnumerator.ExecOutcome.DIRECTED_OK, out);
+        AssertJUnit.assertEquals("plan floats exactly the cost", 2, p.getManaPool().totalMana());
+    }
+
     /** The §12 headline property: a wide board of distinct signatures vs a
      *  generic cost has MANY plans but few options — bounded by source
      *  classes, no truncation. */

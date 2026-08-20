@@ -400,8 +400,11 @@ public final class CensusRun {
             sb.append(']');
         }
         if (dir.fired) {
-            sb.append(",\"exec\":\"").append(dir.exec).append('"')
-                    .append(",\"t_fired\":").append(dir.tFired);
+            sb.append(",\"exec\":\"").append(dir.exec).append('"');
+            if (dir.execWhy != null) {
+                sb.append(",\"exec_why\":\"").append(esc(dir.execWhy)).append('"');
+            }
+            sb.append(",\"t_fired\":").append(dir.tFired);
         }
         sb.append(",\"t_end\":").append(tEnd)
                 .append(",\"ended\":").append(ended)
