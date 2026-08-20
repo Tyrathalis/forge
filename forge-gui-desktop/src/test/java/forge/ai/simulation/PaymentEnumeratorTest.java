@@ -13,9 +13,10 @@ import forge.game.spellability.SpellAbility;
 import forge.game.zone.ZoneType;
 
 /**
- * Anvil M9 D3 rung 2: unit tests for the legality-derived payment-class
- * enumeration + directed executor (m9-payment-surface-spec.md §10;
- * capability audit ADR-0065 = DirectedPaymentAuditTest).
+ * Anvil M9 D3 rung 2 (as amended pre-D4, spec §12): unit tests for the
+ * legality-derived GOAL enumeration + directed executor
+ * (m9-payment-surface-spec.md §10/§12; capability audit ADR-0065 =
+ * DirectedPaymentAuditTest).
  */
 public class PaymentEnumeratorTest extends SimulationTest {
 
@@ -33,30 +34,43 @@ public class PaymentEnumeratorTest extends SimulationTest {
                 castSa.getPayCosts().getTotalMana());
     }
 
-    /** Single basic vs {G}: one class, never consequential, never bridges. */
+    private static boolean usesChain(PaymentEnumerator.GoalOption opt) {
+        for (PaymentEnumerator.Atom a : opt.plan.atoms) {
+            if (!a.activationMana.isZero()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Single source class vs {1}{G}: one plan, one option, never
+     *  consequential, never bridges. */
     @Test
     public void testSingleSourceNotConsequential() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         addCard("Forest", p);
-        Card bear = addCardToZone("Grizzly Bears", p, ZoneType.Hand); // {1}{G} — unpayable, but enumeration is over classes for the G shard
+        Card bear = addCardToZone("Grizzly Bears", p, ZoneType.Hand); // {1}{G}
         addCard("Forest", p); // second forest, same class
         game.getAction().checkStateEffects(true);
 
         PaymentEnumerator.Result r = enumerate(p, bear);
         AssertJUnit.assertEquals("two same-signature forests = one source class", 1, r.sourceClassCount);
-        AssertJUnit.assertEquals("one payment class", 1, r.classes.size());
+        AssertJUnit.assertEquals("one plan", 1, r.planCount);
+        AssertJUnit.assertEquals("one outcome-distinct option", 1, r.options.size());
         SpellAbility bearSa = bear.getFirstSpellAbility();
         bearSa.setActivatingPlayer(p);
-        AssertJUnit.assertFalse("one class + auto-payable = not consequential",
-                PaymentEnumerator.consequential(r, p, bearSa, bearSa.getPayCosts().getTotalMana(), false));
+        boolean auto = PaymentEnumerator.autoPayable(p, bearSa, bearSa.getPayCosts().getTotalMana(), false);
+        AssertJUnit.assertTrue(auto);
+        AssertJUnit.assertFalse("one option + auto-payable = not consequential",
+                PaymentEnumerator.consequential(r, auto));
         AssertJUnit.assertFalse(r.truncated);
     }
 
-    /** Dork vs land for {G}: residual-relevance splits the classes — the
+    /** Dork vs land for {G}: residual-relevance splits the goals — the
      *  dork-as-blocker distinction the surface exists to expose. */
     @Test
-    public void testCreatureVsLandSplitsClasses() {
+    public void testCreatureVsLandSplitsOptions() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         addCard("Forest", p);
@@ -67,21 +81,31 @@ public class PaymentEnumeratorTest extends SimulationTest {
 
         PaymentEnumerator.Result r = enumerate(p, bear);
         AssertJUnit.assertEquals("creature and land are distinct source classes", 2, r.sourceClassCount);
-        // {1}{G} from {Forest, Elves}: both tapped in every full payment — one class.
+        // {1}{G} from {Forest, Elves}: both tapped in every full payment — one option.
         // The split shows on the G shard alone:
         SpellAbility castSa = bear.getFirstSpellAbility();
         castSa.setActivatingPlayer(p);
         PaymentEnumerator.Result rG = PaymentEnumerator.enumerate(p, castSa,
                 new forge.card.mana.ManaCost(new forge.card.mana.ManaCostParser("G")));
-        AssertJUnit.assertEquals("paying {G} via dork vs land = two classes = consequential",
-                2, rG.classes.size());
+        AssertJUnit.assertEquals("two plans for {G}", 2, rG.planCount);
+        AssertJUnit.assertEquals("spare(elves) and spare(forest) = two options", 2, rG.options.size());
+        boolean sparesElves = false;
+        for (PaymentEnumerator.GoalOption opt : rG.options) {
+            if (opt.goals.get(0).startsWith("spare:Llanowar")) {
+                sparesElves = true;
+                for (PaymentEnumerator.Atom a : opt.plan.atoms) {
+                    AssertJUnit.assertFalse("spare(elves) plan taps no creature", a.host.isCreature());
+                }
+            }
+        }
+        AssertJUnit.assertTrue("a spare-elves option surfaced", sparesElves);
     }
 
-    /** The ADR-0065 chained board: I + I + Dimir Signet vs {1}{U}{B}.
-     *  Enumeration must surface the chained class the auto-payer cannot
-     *  construct, and the directed executor must execute it. */
+    /** The ADR-0065 forced-chain board: I + I + Dimir Signet vs {1}{U}{B} —
+     *  exactly one plan (the chain), surfaced as one option, consequential
+     *  via the forced channel, and the executor runs it. */
     @Test
-    public void testChainedClassEnumeratedAndExecutes() {
+    public void testForcedChainSurfacesAndExecutes() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         addCard("Island", p);
@@ -91,26 +115,29 @@ public class PaymentEnumeratorTest extends SimulationTest {
         game.getAction().checkStateEffects(true);
 
         PaymentEnumerator.Result r = enumerate(p, thief);
-        AssertJUnit.assertTrue("chained class found", r.classes.size() >= 1);
-        PaymentEnumerator.PaymentClass chained = null;
-        for (PaymentEnumerator.PaymentClass pc : r.classes) {
-            for (PaymentEnumerator.Atom a : pc.atoms) {
-                if (!a.activationMana.isZero()) {
-                    chained = pc;
-                    break;
-                }
+        AssertJUnit.assertTrue("the chain plan is found", r.planCount >= 1);
+        PaymentEnumerator.GoalOption chained = null;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (usesChain(opt)) {
+                chained = opt;
+                break;
             }
         }
-        AssertJUnit.assertNotNull("a class uses the Signet (nonzero activation mana)", chained);
-        AssertJUnit.assertEquals("all three sources committed", 3, chained.atoms.size());
-
-        // Directed execution: float the plan, then cast from the float.
-        PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, chained);
-        AssertJUnit.assertEquals(PaymentEnumerator.ExecOutcome.DIRECTED_OK, out);
-        AssertJUnit.assertEquals("plan floats exactly the cost", 3, p.getManaPool().totalMana());
+        AssertJUnit.assertNotNull("an option uses the Signet (nonzero activation mana)", chained);
+        AssertJUnit.assertEquals("all three sources committed", 3, chained.plan.atoms.size());
 
         SpellAbility castSa = thief.getFirstSpellAbility();
         castSa.setActivatingPlayer(p);
+        boolean auto = PaymentEnumerator.autoPayable(p, castSa, castSa.getPayCosts().getTotalMana(), false);
+        AssertJUnit.assertFalse("the auto-payer cannot construct the chain", auto);
+        AssertJUnit.assertTrue("forced window is consequential",
+                PaymentEnumerator.consequential(r, auto));
+
+        // Directed execution: float the plan, then cast from the float.
+        PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, chained.plan);
+        AssertJUnit.assertEquals(PaymentEnumerator.ExecOutcome.DIRECTED_OK, out);
+        AssertJUnit.assertEquals("plan floats exactly the cost", 3, p.getManaPool().totalMana());
+
         AssertJUnit.assertTrue("cast completes from the float",
                 ComputerUtil.handlePlayingSpellAbility(p, castSa, null));
         playUntilStackClear(game);
@@ -118,10 +145,40 @@ public class PaymentEnumeratorTest extends SimulationTest {
         AssertJUnit.assertEquals(0, p.getManaPool().totalMana());
     }
 
-    /** Yield-differing taps are distinct classes by definition (the D2a
-     *  pin): an Overgrowth-enchanted forest is not a forest. */
+    /** The §12a pinned reachability check (test-verify-first, no explicit
+     *  chain goal in v1): on a board where the chain is NOT the only plan,
+     *  some spare-goal argmax must still reach the chained composition —
+     *  sparing islands routes through the Signet. */
     @Test
-    public void testBoostedYieldSplitsClasses() {
+    public void testChainReachableViaSpareGoal() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Island", p);
+        addCard("Island", p);
+        addCard("Island", p);
+        addCard("Dimir Signet", p);
+        Card curiosity = addCardToZone("Ledger Shredder", p, ZoneType.Hand); // {1}{U}
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility castSa = curiosity.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, castSa,
+                castSa.getPayCosts().getTotalMana());
+        AssertJUnit.assertTrue("islands-only AND chained plans exist", r.planCount >= 2);
+        boolean chainSurfaced = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (usesChain(opt)) {
+                chainSurfaced = true;
+            }
+        }
+        AssertJUnit.assertTrue("the chained composition is some spare-goal's argmax "
+                + "(else spec §12a adds an explicit chain goal)", chainSurfaced);
+    }
+
+    /** Yield-differing taps split goals (the D2a pin): an
+     *  Overgrowth-enchanted forest is not a forest. */
+    @Test
+    public void testBoostedYieldSplitsOptions() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         Card f1 = addCard("Forest", p);
@@ -136,13 +193,13 @@ public class PaymentEnumeratorTest extends SimulationTest {
         PaymentEnumerator.Result rG = PaymentEnumerator.enumerate(p, castSa,
                 new forge.card.mana.ManaCost(new forge.card.mana.ManaCostParser("G")));
         AssertJUnit.assertEquals("boosted vs plain forest = two source classes", 2, rG.sourceClassCount);
-        AssertJUnit.assertEquals("yield difference is consequential", 2, rG.classes.size());
+        AssertJUnit.assertEquals("yield difference is consequential", 2, rG.options.size());
     }
 
-    /** Phyrexian shards: pay-mana vs pay-life is a class distinction (a
-     *  named D1 auto-payer artifact family). */
+    /** Phyrexian shards: pay-mana vs pay-life split via the min_life goal
+     *  (a named D1 auto-payer artifact family). */
     @Test
-    public void testPhyrexianLifeVsManaSplitsClasses() {
+    public void testPhyrexianLifeVsManaSplitsOptions() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         addCard("Island", p);
@@ -150,22 +207,28 @@ public class PaymentEnumeratorTest extends SimulationTest {
         game.getAction().checkStateEffects(true);
 
         PaymentEnumerator.Result r = enumerate(p, probe);
-        AssertJUnit.assertEquals("island-pay and life-pay classes", 2, r.classes.size());
-        boolean sawLife = false, sawMana = false;
-        for (PaymentEnumerator.PaymentClass pc : r.classes) {
-            if (pc.phyrexianLife > 0) {
+        AssertJUnit.assertEquals("island-pay and life-pay options", 2, r.options.size());
+        boolean sawLife = false, sawMana = false, sawMinLifeGoal = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (opt.plan.phyrexianLife > 0) {
                 sawLife = true;
             } else {
                 sawMana = true;
             }
+            if (opt.goals.contains("pay_mana_not_life")) {
+                sawMinLifeGoal = true;
+                AssertJUnit.assertEquals("min_life pays with mana", 0, opt.plan.phyrexianLife);
+            }
         }
         AssertJUnit.assertTrue(sawLife && sawMana);
+        AssertJUnit.assertTrue("the min_life goal labels the mana payment", sawMinLifeGoal);
     }
 
-    /** K_MAX truncation is loud: a wide board of distinct signatures vs a
-     *  generic cost overflows 8 classes and flags it. */
+    /** The §12 headline property: a wide board of distinct signatures vs a
+     *  generic cost has MANY plans but few options — bounded by source
+     *  classes, no truncation. */
     @Test
-    public void testTruncationIsFlagged() {
+    public void testWideBoardBoundedOptions() {
         Game game = initAndCreateGame();
         Player p = setUp(game);
         // six distinct source classes
@@ -183,7 +246,10 @@ public class PaymentEnumeratorTest extends SimulationTest {
         castSa.setActivatingPlayer(p);
         PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, castSa,
                 new forge.card.mana.ManaCost(new forge.card.mana.ManaCostParser("2")));
-        AssertJUnit.assertEquals("capped at K_MAX", PaymentEnumerator.K_MAX, r.classes.size());
-        AssertJUnit.assertTrue("truncation flagged, never silent", r.truncated);
+        AssertJUnit.assertTrue("compositions explode (the old K_MAX=8 would truncate)",
+                r.planCount > 8);
+        AssertJUnit.assertTrue("options bounded by source classes",
+                r.options.size() <= r.sourceClassCount);
+        AssertJUnit.assertFalse("no truncation on the goal surface", r.truncated);
     }
 }

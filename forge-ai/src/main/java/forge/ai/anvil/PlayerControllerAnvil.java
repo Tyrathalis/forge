@@ -593,9 +593,24 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
         final PaymentEnumerator.Result r;
         final boolean conseq;
+        final boolean forced;
         try {
+            // cost-modified windows: out-of-scope v1 (spec §12b) — raw toPay
+            // diverges from what auto pays; goal enumeration would target
+            // the wrong cost. Auto + kv, never bridged.
+            if (PaymentEnumerator.costModified(sa)) {
+                Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
+                        "sa", Census.str(sa), "effect", false, "costmod", true);
+                long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
+                        "sa", Census.str(sa), "effect", false);
+                boolean paid = autoPay(toPay, sa, effect);
+                Obs.ret(getGame(), s, paid);
+                return paid;
+            }
             r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
-            conseq = PaymentEnumerator.consequential(r, getPlayer(), sa, toPay, effect);
+            final boolean auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            conseq = PaymentEnumerator.consequential(r, auto);
+            forced = r.planCount >= 1 && !auto; // spec §12c: ¬costmod already holds here
         } catch (Exception e) {
             // enumeration must never kill the game thread: fall back to
             // today's behavior (auto), loudly reason-coded — never a veto.
@@ -609,35 +624,38 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             Obs.ret(getGame(), s2, paid);
             return paid;
         }
-        final boolean forced = conseq && r.classes.size() == 1; // auto-unpayable, one class
         if (!conseq) {
             // non-consequential windows never bridge (the sparsity contract);
-            // the flag telemetry still lands on the census record.
-            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
-                    "sa", Census.str(sa), "effect", false,
-                    "classes", r.classes.size(), "conseq", false, "trunc", r.truncated);
+            // the flag telemetry still lands on the census record. Recorded
+            // AFTER autoPay so the §12b retrospective backstop (0 plans yet
+            // auto pays = static-detector leak) is one kv, not a join.
             long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
                     "sa", Census.str(sa), "effect", false);
             boolean paid = autoPay(toPay, sa, effect);
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
+                    "sa", Census.str(sa), "effect", false,
+                    "goals", r.options.size(), "plans", r.planCount, "conseq", false,
+                    "trunc", r.goalCapHit, "nodecap", r.nodeCapHit,
+                    "costmod_late", r.planCount == 0 && paid);
             Obs.ret(getGame(), s, paid);
             return paid;
         }
         final List<String> labels = paymentOptionLabels(r);
         long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels,
                 "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", false,
-                "fpool", floatingPool(), "classes", r.classes.size(),
-                "trunc", r.truncated, "forced", forced);
+                "fpool", floatingPool(), "goals", r.options.size(), "plans", r.planCount,
+                "trunc", r.goalCapHit, "forced", forced);
         int pick = bridge.selectOne(TAG_PAY_CLASS, labels);
-        if (pick <= 0 || pick > r.classes.size()) {
+        if (pick <= 0 || pick > r.options.size()) {
             boolean paid = autoPay(toPay, sa, effect);
             Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
                     "options", labels.size(), "pick", "auto", "paid", paid,
-                    "classes", r.classes.size(), "conseq", true, "trunc", r.truncated,
-                    "forced", forced);
+                    "goals", r.options.size(), "plans", r.planCount, "conseq", true,
+                    "trunc", r.goalCapHit, "forced", forced);
             Obs.ret(getGame(), obsSeq, "auto:" + paid);
             return paid;
         }
-        final PaymentEnumerator.PaymentClass pc = r.classes.get(pick - 1);
+        final PaymentEnumerator.PaymentClass pc = r.options.get(pick - 1).plan;
         final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(getPlayer(), pc);
         boolean paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
         int residue = getPlayer().getManaPool().totalMana();
@@ -646,8 +664,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
                 "options", labels.size(), "pick", pick, "exec", exec, "paid", paid,
                 "float_residue", residue,
-                "classes", r.classes.size(), "conseq", true, "trunc", r.truncated,
-                "forced", forced);
+                "goals", r.options.size(), "plans", r.planCount, "conseq", true,
+                "trunc", r.goalCapHit, "forced", forced);
         Obs.ret(getGame(), obsSeq, exec);
         return paid;
     }
@@ -671,15 +689,24 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 new forge.game.cost.Cost(toPay, effect), getPlayer(), sa, effect);
     }
 
-    /** Wire option labels (spec §5): option 0 = auto; classes carry the
-     *  entity refs of the representative plan (the pointer-head substrate),
-     *  pool spend by type, and phyrexian life count. */
+    /** Wire option labels (spec §5, goals per §12a): option 0 = auto; each
+     *  option carries its goal names plus the representative plan's entity
+     *  refs (the pointer-head substrate), pool spend by type, and phyrexian
+     *  life count. */
     private static List<String> paymentOptionLabels(PaymentEnumerator.Result r) {
-        List<String> labels = Lists.newArrayListWithCapacity(r.classes.size() + 1);
+        List<String> labels = Lists.newArrayListWithCapacity(r.options.size() + 1);
         labels.add("{\"auto\":true}");
-        for (PaymentEnumerator.PaymentClass pc : r.classes) {
-            StringBuilder sb = new StringBuilder(64);
-            sb.append("{\"ents\":[");
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            PaymentEnumerator.PaymentClass pc = opt.plan;
+            StringBuilder sb = new StringBuilder(96);
+            sb.append("{\"goals\":[");
+            for (int i = 0; i < opt.goals.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append('"').append(opt.goals.get(i).replace("\"", "")).append('"');
+            }
+            sb.append("],\"ents\":[");
             boolean first = true;
             for (PaymentEnumerator.Atom a : pc.atoms) {
                 if (!first) {

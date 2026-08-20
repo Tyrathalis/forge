@@ -37,10 +37,19 @@ import forge.game.zone.ZoneType;
  */
 public final class PaymentEnumerator {
 
-    /** Max distinct payment classes surfaced (+ implicit auto). Truncation is logged, never silent. */
-    public static final int K_MAX = 8;
-    /** DFS node budget — worst-case guard; hitting it flags truncation. */
-    public static final int NODE_BUDGET = 20000;
+    /**
+     * Pre-D4 revisit (spec §12, 2026-08-19): the decision object is a
+     * preservation GOAL, not a composition. The census truncation gate fired
+     * (0.3911 vs 0.05) and the tail probe measured cap-raising out
+     * (consequential p90 = 55 classes, tail past 64) with the explosion
+     * being assignment combinatorics over ≤11 source classes — so options
+     * now scale with source classes: spare(k) per class + min_life on
+     * phyrexian costs, per-goal argmax compositions, outcome-deduped.
+     */
+    /** Defensive cap on the surfaced option list (incl. auto). Expected never hit (≤11 source classes measured); logged, never silent. */
+    public static final int GOAL_MAX = 16;
+    /** DFS node budget — the only enumeration bound (spec §12 pin; tail probe: p90 1,625 nodes, 0.2% at 200k). */
+    public static final int NODE_BUDGET = 200000;
     /** Plan size cap: at most (shard count + PLAN_SLACK) activations. */
     public static final int PLAN_SLACK = 2;
 
@@ -94,11 +103,26 @@ public final class PaymentEnumerator {
         }
     }
 
+    /** One surfaced wire option: the goals that induced it (outcome-deduped)
+     *  and the representative composition the executor runs. */
+    public static final class GoalOption {
+        public final List<String> goals;
+        public final PaymentClass plan;
+
+        GoalOption(List<String> goals, PaymentClass plan) {
+            this.goals = goals;
+            this.plan = plan;
+        }
+    }
+
     public static final class Result {
-        public final List<PaymentClass> classes = new ArrayList<>();
+        /** Outcome-distinct goal options (spec §12a); the wire list is {auto} ∪ these. */
+        public final List<GoalOption> options = new ArrayList<>();
+        /** Distinct feasible compositions found (node-budget-bounded, uncensored). */
+        public int planCount = 0;
         public boolean truncated = false;
-        /** Truncation cause split (tail-probe telemetry, 2026-08-19): class cap vs node budget. */
-        public boolean kCapHit = false;
+        /** Truncation cause split: GOAL_MAX (expected ~never) vs node budget. */
+        public boolean goalCapHit = false;
         public boolean nodeCapHit = false;
         public int nodesVisited = 0;
         public int atomCount = 0;
@@ -106,25 +130,69 @@ public final class PaymentEnumerator {
     }
 
     /**
-     * The consequential flag (m9-payment-surface-spec §4, amended at the
-     * wiring session 2026-08-19): ≥2 classes = a real choice — OR exactly one
-     * class the auto-payer cannot construct (the FORCED-CHAIN window: the
-     * I+I+Signet motivating board has exactly one payment, and it is the one
-     * ComputerUtilMana can't build; under the draft ≥2-only rule the flag
-     * would never bridge exactly the windows the surface exists for). The
-     * auto-payability probe is auto-payer-derived but used only to WIDEN the
-     * surface — never to filter classes — so the interface-trap direction is
-     * safe. Day-zero bit-identity holds: the bridged forced window offers
-     * {auto, class}; the auto-biased init answers auto and fails exactly as
-     * today.
+     * The auto-payability probe (the §4-amendment forced channel input).
+     * Auto-payer-derived but used only to WIDEN the surface — never to
+     * filter options — so the interface-trap direction is safe.
      */
-    public static boolean consequential(final Result r, final Player p, final SpellAbility sa,
+    public static boolean autoPayable(final Player p, final SpellAbility sa,
             final ManaCost toPay, final boolean effect) {
-        if (r.classes.size() >= 2) {
+        return ComputerUtilMana.canPayManaCost(new forge.game.mana.ManaCostBeingPaid(toPay), sa, p, effect);
+    }
+
+    /**
+     * The consequential flag (spec §4 as amended, restated over goals at
+     * §12a): ≥2 outcome-distinct options = a real choice — OR at least one
+     * feasible plan the auto-payer cannot construct (the FORCED window; the
+     * I+I+Signet motivating board). Callers gate costmod windows out BEFORE
+     * this (spec §12b) — cost-modified traffic never reaches the flag.
+     * Day-zero bit-identity holds: auto is option 0 and the auto-biased
+     * init answers it.
+     */
+    public static boolean consequential(final Result r, final boolean autoPayable) {
+        return r.options.size() >= 2 || (r.planCount >= 1 && !autoPayable);
+    }
+
+    /**
+     * Cost-modified detection, static prong (spec §12b): the adjusted cost
+     * is not determined until payment (delve exile choices), so this flags
+     * MECHANISM PRESENCE — reduction-side keywords on the host, or any
+     * ReduceCost static in play. Over-flagging is the conservative
+     * direction (the window keeps day-zero auto behavior; surface loss is
+     * measured at the census read) — per-spell applicability would mean
+     * re-implementing CostAdjustment. The retrospective backstop (0 plans
+     * on the raw cost while auto pays) catches leaks loudly.
+     */
+    public static boolean costModified(final SpellAbility sa) {
+        final Card host = sa.getHostCard();
+        if (host == null) {
+            return false;
+        }
+        if (host.hasKeyword(forge.game.keyword.Keyword.DELVE)
+                || host.hasKeyword(forge.game.keyword.Keyword.CONVOKE)
+                || host.hasKeyword(forge.game.keyword.Keyword.IMPROVISE)
+                || host.hasKeyword(forge.game.keyword.Keyword.ASSIST)
+                || host.hasKeyword(forge.game.keyword.Keyword.OFFERING)
+                || host.hasKeyword(forge.game.keyword.Keyword.EMERGE)) {
             return true;
         }
-        return r.classes.size() == 1
-                && !ComputerUtilMana.canPayManaCost(new forge.game.mana.ManaCostBeingPaid(toPay), sa, p, effect);
+        final Player activator = sa.getActivatingPlayer();
+        if (activator == null) {
+            return false;
+        }
+        final java.util.List<Card> scan = new ArrayList<>();
+        scan.addAll(activator.getGame().getCardsIn(ZoneType.Battlefield));
+        scan.addAll(activator.getGame().getCardsIn(ZoneType.Command));
+        if (!scan.contains(host)) {
+            scan.add(host);
+        }
+        for (final Card c : scan) {
+            for (final forge.game.staticability.StaticAbility stAb : c.getStaticAbilities()) {
+                if (stAb.checkMode(forge.game.staticability.StaticAbilityMode.ReduceCost)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------
@@ -240,7 +308,6 @@ public final class PaymentEnumerator {
         final Player payer;
         final SpellAbility paidFor;
         final int planCap;
-        final int kCap;
         final int nodeBudget;
         final List<List<Atom>> classes;      // atoms grouped by classKey, deterministic order
         final int[] remaining;               // atoms left per class
@@ -252,17 +319,25 @@ public final class PaymentEnumerator {
         final Map<Atom, byte[]> planColors = new LinkedHashMap<>();
         final int[] poolSpend = new int[ManaAtom.MANATYPES.length];
         int phyrexianLife = 0;
-        final Map<String, PaymentClass> found = new LinkedHashMap<>();
+        final java.util.Set<String> planKeys = new java.util.HashSet<>();
+        // per-goal argmax (spec §12a): goals 0..S-1 = spare(source class k);
+        // optionally S = min_life (phyrexian costs); fallback single "pay"
+        // goal when neither exists (pool-only boards, forced-window safety).
+        final String[] goalNames;
+        final String[] goalClassKeys;   // null entry = non-spare goal
+        final int[] bestObj;
+        final int[] bestSpread;
+        final String[] bestKey;
+        final PaymentClass[] bestPlan;
         final Result result;
 
         DfsState(Player payer, SpellAbility paidFor, List<List<Atom>> classes, List<ManaCostShard> shards, int planCap,
-                int kCap, int nodeBudget, Result result) {
+                int nodeBudget, boolean hasPhyrexian, Result result) {
             this.payer = payer;
             this.paidFor = paidFor;
             this.classes = classes;
             this.shards = shards;
             this.planCap = planCap;
-            this.kCap = kCap;
             this.nodeBudget = nodeBudget;
             this.result = result;
             this.remaining = new int[classes.size()];
@@ -273,6 +348,27 @@ public final class PaymentEnumerator {
             for (int i = 0; i < ManaAtom.MANATYPES.length; i++) {
                 poolRemaining[i] = payer.getManaPool().getAmountOfColor(ManaAtom.MANATYPES[i]);
             }
+            final List<String> names = new ArrayList<>();
+            final List<String> keys = new ArrayList<>();
+            for (final List<Atom> cls : classes) {
+                final Atom rep = cls.get(0);
+                names.add("spare:" + rep.host.getName() + (cls.size() > 1 ? " x" + cls.size() : ""));
+                keys.add(rep.classKey);
+            }
+            if (hasPhyrexian) {
+                names.add("pay_mana_not_life");
+                keys.add(null);
+            }
+            if (names.isEmpty()) {
+                names.add("pay"); // pool-only boards: one option so forced windows stay expressible
+                keys.add(null);
+            }
+            this.goalNames = names.toArray(new String[0]);
+            this.goalClassKeys = keys.toArray(new String[0]);
+            this.bestObj = new int[goalNames.length];
+            this.bestSpread = new int[goalNames.length];
+            this.bestKey = new String[goalNames.length];
+            this.bestPlan = new PaymentClass[goalNames.length];
         }
     }
 
@@ -291,17 +387,14 @@ public final class PaymentEnumerator {
     }
 
     public static Result enumerate(final Player payer, final SpellAbility sa, final ManaCost toPay) {
-        return enumerate(payer, sa, toPay, K_MAX, NODE_BUDGET);
+        return enumerate(payer, sa, toPay, NODE_BUDGET);
     }
 
-    /**
-     * Cap-parameterized variant — the census tail probe (pre-D4 revisit
-     * evidence, 2026-08-19) raises the caps in telemetry-only mode to
-     * measure the true class-count tail. The wire path always uses the
-     * pinned (K_MAX, NODE_BUDGET); raised caps never reach bridging.
-     */
+    /** Node-budget-parameterized variant (tests; the tail probe's cap
+     *  parameterization retired with the §12 goal surface — there is no
+     *  class cap to raise anymore). */
     public static Result enumerate(final Player payer, final SpellAbility sa, final ManaCost toPay,
-            final int kCap, final int nodeBudget) {
+            final int nodeBudget) {
         final Result result = new Result();
         if (toPay == null || toPay.isZero()) {
             return result;
@@ -327,21 +420,46 @@ public final class PaymentEnumerator {
             shards.add(ManaCostShard.GENERIC);
         }
 
+        boolean hasPhyrexian = false;
+        for (final ManaCostShard shard : toPay) {
+            if (shard.isPhyrexian()) {
+                hasPhyrexian = true;
+                break;
+            }
+        }
+
         final DfsState st = new DfsState(payer, sa, classes, shards, shards.size() + PLAN_SLACK,
-                kCap, nodeBudget, result);
+                nodeBudget, hasPhyrexian, result);
         dfs(st, 0);
 
-        result.classes.addAll(st.found.values());
+        result.planCount = st.planKeys.size();
+        // outcome dedupe (spec §12a): goals whose argmax composition is
+        // identical collapse into one option, labeled with the joined goals.
+        final Map<String, GoalOption> byPlan = new LinkedHashMap<>();
+        for (int g = 0; g < st.goalNames.length; g++) {
+            if (st.bestPlan[g] == null) {
+                continue;
+            }
+            final GoalOption existing = byPlan.get(st.bestKey[g]);
+            if (existing != null) {
+                existing.goals.add(st.goalNames[g]);
+            } else if (byPlan.size() < GOAL_MAX - 1) { // -1: auto occupies a wire slot
+                final List<String> gn = new ArrayList<>();
+                gn.add(st.goalNames[g]);
+                byPlan.put(st.bestKey[g], new GoalOption(gn, st.bestPlan[g]));
+            } else {
+                result.truncated = true;
+                result.goalCapHit = true;
+            }
+        }
+        result.options.addAll(byPlan.values());
         return result;
     }
 
     private static void dfs(final DfsState st, final int shardIdx) {
-        if (st.found.size() >= st.kCap) {
-            st.result.truncated = true;
-            st.result.kCapHit = true;
-            return;
-        }
         if (++st.result.nodesVisited > st.nodeBudget) {
+            // per-goal bests found so far still surface — degraded and
+            // logged, never silently censored (spec §12a).
             st.result.truncated = true;
             st.result.nodeCapHit = true;
             return;
@@ -500,22 +618,53 @@ public final class PaymentEnumerator {
             return;
         }
         final String key = planKey(st);
-        if (st.found.containsKey(key)) {
+        if (!st.planKeys.add(key)) {
             return;
         }
-        // materialize the representative: default any open unit colors
-        final Map<Atom, byte[]> colors = new LinkedHashMap<>();
-        for (Map.Entry<Atom, byte[]> e : st.planColors.entrySet()) {
-            final byte[] cc = e.getValue().clone();
-            for (int i = 0; i < cc.length; i++) {
-                if (cc[i] == 0) {
-                    cc[i] = firstColor(e.getKey().unitMasks[i]);
-                }
-            }
-            colors.put(e.getKey(), cc);
+        // spread = max taps of any single class (spec §12a tie-break: the
+        // max-entropy residual — prefer paying broadly over exhausting one class)
+        int spread = 0;
+        for (final int n : st.planCounts.values()) {
+            spread = Math.max(spread, n);
         }
-        st.found.put(key, new PaymentClass(key, new TreeMap<>(st.planCounts),
-                new ArrayList<>(st.planAtoms), colors, st.poolSpend.clone(), st.phyrexianLife));
+        PaymentClass materialized = null;
+        for (int g = 0; g < st.goalNames.length; g++) {
+            final int obj;
+            if (st.goalClassKeys[g] != null) {
+                final Integer taps = st.planCounts.get(st.goalClassKeys[g]);
+                obj = taps == null ? 0 : taps;
+            } else if ("pay_mana_not_life".equals(st.goalNames[g])) {
+                obj = st.phyrexianLife;
+            } else {
+                obj = 0; // the fallback "pay" goal: any feasible plan
+            }
+            final boolean better = st.bestPlan[g] == null
+                    || obj < st.bestObj[g]
+                    || (obj == st.bestObj[g] && (spread < st.bestSpread[g]
+                        || (spread == st.bestSpread[g] && key.compareTo(st.bestKey[g]) < 0)));
+            if (!better) {
+                continue;
+            }
+            if (materialized == null) {
+                // materialize once per plan: default any open unit colors
+                final Map<Atom, byte[]> colors = new LinkedHashMap<>();
+                for (Map.Entry<Atom, byte[]> e : st.planColors.entrySet()) {
+                    final byte[] cc = e.getValue().clone();
+                    for (int i = 0; i < cc.length; i++) {
+                        if (cc[i] == 0) {
+                            cc[i] = firstColor(e.getKey().unitMasks[i]);
+                        }
+                    }
+                    colors.put(e.getKey(), cc);
+                }
+                materialized = new PaymentClass(key, new TreeMap<>(st.planCounts),
+                        new ArrayList<>(st.planAtoms), colors, st.poolSpend.clone(), st.phyrexianLife);
+            }
+            st.bestObj[g] = obj;
+            st.bestSpread[g] = spread;
+            st.bestKey[g] = key;
+            st.bestPlan[g] = materialized;
+        }
     }
 
     /** Greedy activation-order feasibility (spec §3): zero-cost first, then
