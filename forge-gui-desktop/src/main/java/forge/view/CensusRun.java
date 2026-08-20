@@ -44,7 +44,7 @@ public final class CensusRun {
 
         Map<String, List<String>> params = parseParams(args);
         if (params == null || !params.containsKey("d") || params.get("d").size() != 2) {
-            System.out.println("Syntax: forge census -d <deck1> <deck2> -f <format> -n <games> -s <baseSeed> -o <out.jsonl>");
+            System.out.println("Syntax: forge census -d <deck1> <deck2> -f <format> -n <games> -s <baseSeed> -o <out.jsonl> [-paytelemetry]");
             return;
         }
 
@@ -53,6 +53,10 @@ public final class CensusRun {
         int nGames = params.containsKey("n") ? Integer.parseInt(params.get("n").get(0)) : 10;
         long baseSeed = params.containsKey("s") ? Long.parseLong(params.get("s").get(0)) : 20260703L;
         String outPath = params.containsKey("o") ? params.get("o").get(0) : "census.jsonl";
+        // M9 D3 §3c: payment-surface telemetry-only mode (enumeration + flag
+        // kv on every in-scope payManaCost; no bridging — the spec §8
+        // pre-training read). Trajectory-perturbing like -obs; runs pin it.
+        forge.ai.anvil.PaymentTelemetry.enabled = params.containsKey("paytelemetry");
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));

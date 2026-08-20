@@ -591,8 +591,24 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (!bridged(TAG_PAY_CLASS) || effect || toPay == null || toPay.isZero()) {
             return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         }
-        final PaymentEnumerator.Result r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
-        final boolean conseq = PaymentEnumerator.consequential(r, getPlayer(), sa, toPay, effect);
+        final PaymentEnumerator.Result r;
+        final boolean conseq;
+        try {
+            r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
+            conseq = PaymentEnumerator.consequential(r, getPlayer(), sa, toPay, effect);
+        } catch (Exception e) {
+            // enumeration must never kill the game thread: fall back to
+            // today's behavior (auto), loudly reason-coded — never a veto.
+            // Mirrors the non-consequential path (super would double-record).
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
+                    "sa", Census.str(sa), "effect", false,
+                    "enumerr", e.getClass().getSimpleName());
+            long s2 = Obs.dec(getGame(), getPlayer(), "payManaCost",
+                    "sa", Census.str(sa), "effect", false);
+            boolean paid = autoPay(toPay, sa, effect);
+            Obs.ret(getGame(), s2, paid);
+            return paid;
+        }
         final boolean forced = conseq && r.classes.size() == 1; // auto-unpayable, one class
         if (!conseq) {
             // non-consequential windows never bridge (the sparsity contract);
