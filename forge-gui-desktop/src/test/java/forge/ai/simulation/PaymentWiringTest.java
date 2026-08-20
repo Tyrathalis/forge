@@ -106,18 +106,18 @@ public class PaymentWiringTest extends SimulationTest {
         PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, castSa,
                 castSa.getPayCosts().getTotalMana());
         AssertJUnit.assertTrue("forced-chain window is consequential",
-                PaymentEnumerator.consequential(r, p, castSa,
-                        castSa.getPayCosts().getTotalMana(), false));
+                PaymentEnumerator.consequential(r, PaymentEnumerator.autoPayable(
+                        p, castSa, castSa.getPayCosts().getTotalMana(), false)));
         int chainedIdx = -1;
-        for (int i = 0; i < r.classes.size(); i++) {
-            for (PaymentEnumerator.Atom a : r.classes.get(i).atoms) {
+        for (int i = 0; i < r.options.size(); i++) {
+            for (PaymentEnumerator.Atom a : r.options.get(i).plan.atoms) {
                 if (!a.activationMana.isZero()) {
                     chainedIdx = i;
                     break;
                 }
             }
         }
-        AssertJUnit.assertTrue("chained class surfaced", chainedIdx >= 0);
+        AssertJUnit.assertTrue("chained option surfaced", chainedIdx >= 0);
 
         StubBridge bridge = new StubBridge();
         bridge.answer = chainedIdx + 1; // option 0 = auto
@@ -126,8 +126,8 @@ public class PaymentWiringTest extends SimulationTest {
         AssertJUnit.assertTrue("directed chain pays the window", paid);
         AssertJUnit.assertEquals("bridged exactly once", 1, bridge.asks);
         AssertJUnit.assertEquals(PlayerControllerAnvil.TAG_PAY_CLASS, bridge.lastTag);
-        AssertJUnit.assertEquals("auto + classes on the wire",
-                r.classes.size() + 1, bridge.lastLabels.size());
+        AssertJUnit.assertEquals("auto + goal options on the wire",
+                r.options.size() + 1, bridge.lastLabels.size());
         AssertJUnit.assertEquals("{\"auto\":true}", bridge.lastLabels.get(0));
         AssertJUnit.assertTrue("signet committed", signet.isTapped());
         AssertJUnit.assertEquals("no float residue", 0, p.getManaPool().totalMana());
