@@ -189,7 +189,13 @@ public final class GrpcBridge implements AnvilBridge {
     @Override
     public int selectOne(String tag, List<String> optionLabels) {
         int n = optionLabels.size();
-        int local = n <= 1 ? 0 : MyRandom.getRandom().nextInt(n);
+        // M9 D3 (§3c): the payment-class window's local echo is AUTO (option
+        // 0), never random — a server that declines the tag (fallback:true,
+        // e.g. a model checkpoint without the payment head) must reproduce
+        // today's behavior exactly, not pick random payment classes. Other
+        // tags keep the M0 random-legal echo semantics.
+        int local = n <= 1 || forge.ai.anvil.PlayerControllerAnvil.TAG_PAY_CLASS.equals(tag)
+                ? 0 : MyRandom.getRandom().nextInt(n);
         DecisionResponse resp = roundTrip(tag, AnswerShape.SELECT_ONE, optionLabels, null,
                 DecisionResponse.newBuilder().setIndex(local).build());
         return resp.getIndex();
