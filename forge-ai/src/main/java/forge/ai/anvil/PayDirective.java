@@ -49,6 +49,10 @@ public final class PayDirective {
     final int ordinal;
     final int pick;
     final long reshuffleSeed;
+    /** Observe mode (payment_drill_score.py): the window is matched and its
+     *  obs frame emitted (PaymentTelemetry), but NOTHING is directed — auto
+     *  pays, exec = "observed". The scorer's replay primitive. */
+    final boolean observe;
 
     // ---- outcome (game thread writes, runner reads after game end) -----
     /** Target window was reached (t_fired/reshuffle happened). */
@@ -74,13 +78,14 @@ public final class PayDirective {
     private boolean decided = false;
 
     private PayDirective(String playerName, int turn, String saSubstring, int ordinal, int pick,
-            long reshuffleSeed) {
+            long reshuffleSeed, boolean observe) {
         this.playerName = playerName;
         this.turn = turn;
         this.saSubstring = saSubstring;
         this.ordinal = ordinal;
         this.pick = pick;
         this.reshuffleSeed = reshuffleSeed;
+        this.observe = observe;
     }
 
     private static final java.util.Map<Game, PayDirective> armed =
@@ -93,7 +98,15 @@ public final class PayDirective {
 
     public static PayDirective armPayDirective(Game g, String playerName, int turn,
             String saSubstring, int ordinal, int pick, long reshuffleSeed) {
-        PayDirective d = new PayDirective(playerName, turn, saSubstring, ordinal, pick, reshuffleSeed);
+        PayDirective d = new PayDirective(playerName, turn, saSubstring, ordinal, pick, reshuffleSeed, false);
+        armed.put(g, d);
+        return d;
+    }
+
+    /** Observe-mode arm: match the window, emit its obs frame, direct nothing. */
+    public static PayDirective armObserveDirective(Game g, String playerName, int turn,
+            String saSubstring, int ordinal) {
+        PayDirective d = new PayDirective(playerName, turn, saSubstring, ordinal, 0, 0L, true);
         armed.put(g, d);
         return d;
     }
@@ -192,6 +205,11 @@ public final class PayDirective {
         }
         decided = true;
         availOptions = r.options.size();
+        if (observe) {
+            fired = true;
+            exec = "observed";
+            return;
+        }
         if (pick == 0) {
             fired = true;
             exec = "auto";

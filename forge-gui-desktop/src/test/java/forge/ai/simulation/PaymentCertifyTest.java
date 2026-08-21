@@ -114,6 +114,44 @@ public class PaymentCertifyTest extends SimulationTest {
         PayDirective.clear(game);
     }
 
+    /** Observe mode (payment_drill_score.py): the directive matches the
+     *  window and resolves exec="observed" WITHOUT directing anything —
+     *  no float, no taps, the heuristic pays exactly as unarmed play.
+     *  (Obs-frame content is verified end-to-end by the Python scorer
+     *  smoke; without Obs.open the emission is a no-op.) */
+    @Test
+    public void testObserveDirectiveMatchesWithoutDirecting() {
+        Game game = chainBoard();
+        Player p = game.getPlayers().get(1);
+        Card signet = find(game, p, "Dimir Signet", ZoneType.Battlefield);
+        Card looter = find(game, p, "Merfolk Looter", ZoneType.Hand);
+
+        SpellAbility castSa = looter.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        ManaCost toPay = castSa.getPayCosts().getTotalMana();
+
+        int turn = game.getPhaseHandler().getTurn();
+        PayDirective d = PayDirective.armObserveDirective(game, p.getName(), turn,
+                "Merfolk Looter", 0);
+        boolean was = PaymentTelemetry.enabled;
+        PaymentTelemetry.enabled = true;
+        try {
+            PaymentTelemetry.rec(game, p, toPay, castSa, null, false);
+        } finally {
+            PaymentTelemetry.enabled = was;
+        }
+
+        AssertJUnit.assertTrue("observe directive fired", d.fired);
+        AssertJUnit.assertEquals("observed", d.exec);
+        AssertJUnit.assertTrue("options surfaced for the frame", d.availOptions >= 1);
+        AssertJUnit.assertFalse("nothing directed: signet untouched", signet.isTapped());
+        AssertJUnit.assertEquals("no float", 0, p.getManaPool().totalMana());
+
+        AssertJUnit.assertTrue("heuristic pays exactly as unarmed play",
+                heuristicPay(p, castSa, toPay));
+        PayDirective.clear(game);
+    }
+
     /** Arm 0 / unarmed = identical heuristic behavior: no directive record
      *  when unarmed, no game mutation from the directive, payment succeeds
      *  through the normal path. */
