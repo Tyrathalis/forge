@@ -5,7 +5,10 @@ import forge.card.MagicColor;
 import forge.game.Game;
 import forge.game.GameEntity;
 import forge.game.card.Card;
+import forge.game.card.CardView;
 import forge.game.card.CounterType;
+import forge.game.player.PlayerView;
+import forge.util.collect.FCollectionView;
 import forge.game.combat.Combat;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
@@ -278,6 +281,9 @@ final class ObsSnapshot {
                 sb.append(",\"attp\":").append(players.indexOf(ge));
             }
         }
+        if (z != ZoneType.Hand && z != ZoneType.Library) {
+            choiceState(sb, c, players);
+        }
         String atkRef = atk.get(c.getId());
         if (atkRef != null) {
             sb.append(",\"atk\":").append(atkRef);
@@ -334,6 +340,75 @@ final class ObsSnapshot {
             return c.mayPlayerLook(c.getController()) ? "c" : "none";
         }
         return null;
+    }
+
+    /**
+     * Declared-choice state ("as enters / as cast, choose ..." results — obs
+     * schema v2, boundary-bundle rider 2026-08-21). Read from the VIEW, not
+     * the Card: secret choices (setSecretChosenType) reach the view only on
+     * reveal, so the view is exactly the table-public knowledge and no
+     * per-field visibility gating is needed. Emitted only when any choice
+     * exists; caller gates to public zones. Residual (recorded in the
+     * boundary ADR): direction/even-odd/mode choices are not emitted.
+     */
+    private static void choiceState(StringBuilder sb, Card c, List<Player> players) {
+        CardView v = c.getView();
+        if (v == null) {
+            return;
+        }
+        StringBuilder ch = new StringBuilder();
+        List<String> cols = v.getChosenColors();
+        if (cols != null && !cols.isEmpty()) {
+            ch.append(",\"col\":[");
+            for (int i = 0; i < cols.size(); i++) {
+                ch.append(i > 0 ? "," : "").append(Obs.q(cols.get(i)));
+            }
+            ch.append(']');
+        }
+        String t = v.getChosenType();
+        if (t != null && !t.isEmpty()) {
+            ch.append(",\"typ\":").append(Obs.q(t));
+        }
+        String t2 = v.getChosenType2();
+        if (t2 != null && !t2.isEmpty()) {
+            ch.append(",\"typ2\":").append(Obs.q(t2));
+        }
+        String num = v.getChosenNumber();
+        if (num != null && !num.isEmpty()) {
+            try {
+                ch.append(",\"num\":").append(Integer.parseInt(num));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        PlayerView pl = v.getChosenPlayer();
+        if (pl != null) {
+            for (int i = 0; i < players.size(); i++) {
+                if (players.get(i).getView() == pl) {
+                    ch.append(",\"pl\":").append(i);
+                    break;
+                }
+            }
+        }
+        FCollectionView<CardView> cards = v.getChosenCards();
+        if (cards != null && !cards.isEmpty()) {
+            ch.append(",\"ent\":[");
+            int i = 0;
+            for (CardView cv : cards) {
+                ch.append(i++ > 0 ? "," : "").append(cv.getId());
+            }
+            ch.append(']');
+        }
+        List<String> named = v.getNamedCard();
+        if (named != null && !named.isEmpty()) {
+            ch.append(",\"nam\":[");
+            for (int i = 0; i < named.size(); i++) {
+                ch.append(i > 0 ? "," : "").append(Obs.q(named.get(i)));
+            }
+            ch.append(']');
+        }
+        if (ch.length() > 0) {
+            sb.append(",\"cho\":{").append(ch, 1, ch.length()).append('}');
+        }
     }
 
     private static void counters(StringBuilder sb, Multiset<CounterType> counters) {

@@ -61,7 +61,11 @@ import java.util.Map;
  * runner's endGame/close are never starved by a wedge.
  */
 public final class Obs {
-    public static final int SCHEMA_VERSION = 1;
+    // v2 (boundary bundle 2026-08-21): entity choice-state kv ("cho",
+    // ObsSnapshot.choiceState) + blesses the additive payment-window kv the
+    // pay_mana_class bridge emits (goal-shaped labels, m9-payment-surface
+    // spec §6). Readers gate on this — never mix sv eras in one store join.
+    public static final int SCHEMA_VERSION = 2;
     private static final int ZSTD_LEVEL = 3;
     /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
     private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
@@ -165,6 +169,14 @@ public final class Obs {
     private static Session lastStartedSession;
 
     private Obs() {
+    }
+
+    /** State snapshot JSON (the dec records' "obs" object) for tests/tooling;
+     *  no store needs to be open. */
+    public static String stateJson(Game g) {
+        StringBuilder sb = new StringBuilder(4096);
+        ObsSnapshot.write(sb, g);
+        return sb.toString();
     }
 
     public static synchronized boolean isOpen() {
