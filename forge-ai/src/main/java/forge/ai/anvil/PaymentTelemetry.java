@@ -54,13 +54,28 @@ public final class PaymentTelemetry {
                 }
                 PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, sa, toPay);
                 boolean auto = PaymentEnumerator.autoPayable(p, sa, toPay, effect);
+                boolean forced = r.planCount >= 1 && !auto;
                 if (d != null) {
                     d.resolve(p, r);
+                    if (d.observe && d.fired) {
+                        // observe mode (payment_drill_score.py): one obs dec
+                        // record at the matched window, with the EXACT labels
+                        // and kv the serve-time bridged path emits
+                        // (PlayerControllerAnvil.payManaCost) — scorer/serve
+                        // parity by construction. Auto pays; nothing directed.
+                        long os = Obs.decBridged(g, p, "payManaCost",
+                                PlayerControllerAnvil.paymentOptionLabels(r),
+                                "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", false,
+                                "fpool", PlayerControllerAnvil.floatingPool(p),
+                                "goals", r.options.size(), "plans", r.planCount,
+                                "trunc", r.goalCapHit, "forced", forced);
+                        Obs.ret(g, os, "auto:observe");
+                    }
                 }
                 Census.rec(g, p, "payManaCost", dir(d, "sa", Census.str(sa), "prompt", prompt, "effect", effect,
                         "goals", r.options.size(), "plans", r.planCount,
                         "conseq", PaymentEnumerator.consequential(r, auto),
-                        "forced", r.planCount >= 1 && !auto,
+                        "forced", forced,
                         "trunc", r.goalCapHit, "nodecap", r.nodeCapHit,
                         "atoms", r.atomCount, "srcclasses", r.sourceClassCount,
                         "nodes", r.nodesVisited));

@@ -175,8 +175,12 @@ public final class CensusRun {
         final long seed;
         final String deck1, deck2, p, sa;
         final int t, ord, arms, k, horizon;
+        /** "observe" jobs (payment_drill_score.py): single arm-0 game, the
+         *  matched window's obs frame emitted, nothing directed. */
+        final boolean observe;
 
         CertJob(Map<String, String> m) {
+            observe = "observe".equals(m.get("mode"));
             job = Integer.parseInt(m.get("job"));
             seed = Long.parseLong(m.get("seed"));
             deck1 = m.get("deck1");
@@ -216,6 +220,16 @@ public final class CensusRun {
     private static void runCertify(Map<String, List<String>> params, GameType type) {
         String jobsPath = params.get("certify").get(0);
         String outPath = params.containsKey("certout") ? params.get("certout").get(0) : "certify.jsonl";
+        // observe mode: schema-v1 obs store for the matched windows
+        // (payment_drill_score.py featurizes these offline; game idx = job id)
+        if (params.containsKey("obsout")) {
+            try {
+                forge.ai.anvil.Obs.open(params.get("obsout").get(0));
+            } catch (java.io.IOException e) {
+                System.err.println("FATAL: cannot open obs store " + params.get("obsout").get(0) + ": " + e);
+                return;
+            }
+        }
         // Provenance parity: drill candidates are mined from -paytelemetry
         // census runs and telemetry enumeration is trajectory-perturbing
         // (the PaymentTelemetry replay note) — certify replays must run
@@ -257,7 +271,8 @@ public final class CensusRun {
                         return;
                     }
                 }
-                for (int arm = 0; arm <= job.arms; arm++) {
+                int maxArm = job.observe ? 0 : job.arms;  // observe: arm 0 only
+                for (int arm = 0; arm <= maxArm; arm++) {
                     for (int roll = 0; roll < Math.max(1, job.k); roll++) {
                         boolean fired = certifyGame(job, arm, roll, rules, type, decks, watchdogs, out);
                         if (roll == 0 && !fired) {
@@ -272,6 +287,7 @@ public final class CensusRun {
             e.printStackTrace();
         } finally {
             watchdogs.shutdownNow();
+            forge.ai.anvil.Obs.close();
         }
         System.out.println("certify done");
         System.out.flush();
@@ -298,7 +314,14 @@ public final class CensusRun {
         }
         Match mc = new Match(rules, pp, "Census");
         Game game = mc.createGame();
-        PayDirective dir = PayDirective.armPayDirective(game, job.p, job.t, job.sa, job.ord, arm, rollSeed);
+        if (job.observe && forge.ai.anvil.Obs.isOpen()) {
+            // one obs frame per observe job; store game idx = job id (the
+            // Python-side join key back to the drill row)
+            forge.ai.anvil.Obs.startGame(job.job, job.seed, game, type.name());
+        }
+        PayDirective dir = job.observe
+                ? PayDirective.armObserveDirective(game, job.p, job.t, job.sa, job.ord)
+                : PayDirective.armPayDirective(game, job.p, job.t, job.sa, job.ord, arm, rollSeed);
         HorizonStop stop = new HorizonStop(game, job.t + job.horizon);
         game.subscribeToEvents(stop);
 
@@ -317,6 +340,14 @@ public final class CensusRun {
             drawClock.cancel(false);
         }
 
+        if (job.observe && forge.ai.anvil.Obs.isOpen()) {
+            int turns = 0;
+            try {
+                turns = game.getPhaseHandler().getTurn();
+            } catch (Exception ignored) {
+            }
+            forge.ai.anvil.Obs.endGame(dir.fired ? "observed" : "miss", -1, turns, 0L, clockFired.get());
+        }
         String row = certRow(job, arm, roll, dir, game, pp,
                 !crashed && !stop.stopped && !clockFired.get() && game.getOutcome() != null);
         out.println(row);

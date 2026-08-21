@@ -672,12 +672,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
     /** Current floating pool by mana type (spec §6 window context: WUBRGC). */
     private String floatingPool() {
+        return floatingPool(getPlayer());
+    }
+
+    /** Static variant for the certify observe path (PaymentTelemetry). */
+    static String floatingPool(forge.game.player.Player p) {
         StringBuilder sb = new StringBuilder(12);
         for (byte t : forge.card.mana.ManaAtom.MANATYPES) {
             if (sb.length() > 0) {
                 sb.append(',');
             }
-            sb.append(getPlayer().getManaPool().getAmountOfColor(t));
+            sb.append(p.getManaPool().getAmountOfColor(t));
         }
         return sb.toString();
     }
@@ -692,8 +697,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     /** Wire option labels (spec §5, goals per §12a): option 0 = auto; each
      *  option carries its goal names plus the representative plan's entity
      *  refs (the pointer-head substrate), pool spend by type, and phyrexian
-     *  life count. */
-    private static List<String> paymentOptionLabels(PaymentEnumerator.Result r) {
+     *  life count. Package-visible: the certify observe mode
+     *  (PaymentTelemetry) emits the SAME labels the serve path presents —
+     *  scorer/serve parity by construction. */
+    static List<String> paymentOptionLabels(PaymentEnumerator.Result r) {
         List<String> labels = Lists.newArrayListWithCapacity(r.options.size() + 1);
         labels.add("{\"auto\":true}");
         for (PaymentEnumerator.GoalOption opt : r.options) {
