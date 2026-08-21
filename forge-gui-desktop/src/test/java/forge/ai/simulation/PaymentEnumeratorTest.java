@@ -258,6 +258,78 @@ public class PaymentEnumeratorTest extends SimulationTest {
         AssertJUnit.assertEquals("plan floats exactly the cost", 2, p.getManaPool().totalMana());
     }
 
+    /** The certify2 salvage family (2026-08-21, run-20260820-paygoals3):
+     *  ALL 32 directed_salvage rows were "costs:Arena of Glory#N@1" — the
+     *  enumerator admits Arena's second ability ({R}, {T}, Exert: add
+     *  {R}{R}) into plans the executor then fails at payComputerCosts on
+     *  the {R} activation cost. Enumeration-feasibility must equal
+     *  executor-feasibility (the §3 invariant, ADR-0066 rule): either the
+     *  atom is inadmissible or the directed execution must pay it. */
+    @Test
+    public void testExertCostedManaAbilityChainExecutes() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Mountain", p);
+        addCard("Arena of Glory", p);
+        Card zealot = addCardToZone("Ash Zealot", p, ZoneType.Hand); // {R}{R}
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility castSa = zealot.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, castSa,
+                castSa.getPayCosts().getTotalMana());
+        PaymentEnumerator.GoalOption chained = null;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (usesChain(opt)) {
+                chained = opt;
+                break;
+            }
+        }
+        AssertJUnit.assertNotNull("a plan uses Arena's costed ability", chained);
+        StringBuilder why = new StringBuilder();
+        PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, chained.plan, why);
+        AssertJUnit.assertEquals("exert-costed chain executes (salvage why: " + why + ")",
+                PaymentEnumerator.ExecOutcome.DIRECTED_OK, out);
+        AssertJUnit.assertEquals("chain floats exactly the cost", 2, p.getManaPool().totalMana());
+    }
+
+    /** The certify2/3 salvage mechanism isolated (2026-08-21): a chain
+     *  plan whose activation cost is COLOR-starved at execution time. On
+     *  Plains + Arena vs {1}{W}, the old count-based chainOrderFeasible
+     *  admitted [Plains→W, Arena-costed→{1}] with the appended {R}
+     *  activation shard paid by Arena's OWN second unit — mana that does
+     *  not exist yet when the executor pays Arena's cost (pool holds only
+     *  the Plains W; the heuristic's only red source is Arena itself,
+     *  whose tap then fails). Deterministic salvage
+     *  "costs:Arena of Glory#N@i" — the census signature. The §3
+     *  invariant: every surfaced option must execute DIRECTED_OK. */
+    @Test
+    public void testColorStarvedChainNotAdmitted() {
+        int nOptions = -1;
+        for (int i = 0; i < Math.max(1, nOptions); i++) {
+            Game game = initAndCreateGame();
+            Player p = setUp(game);
+            addCard("Plains", p);
+            addCard("Arena of Glory", p);
+            Card sky = addCardToZone("Kor Skyfisher", p, ZoneType.Hand); // {1}{W}
+            game.getAction().checkStateEffects(true);
+
+            PaymentEnumerator.Result r = enumerate(p, sky);
+            AssertJUnit.assertTrue("at least the tap-both plan exists", !r.options.isEmpty());
+            if (nOptions < 0) {
+                nOptions = r.options.size(); // deterministic across fresh games (same add order = same ids)
+            } else {
+                AssertJUnit.assertEquals("enumeration deterministic across fresh games",
+                        nOptions, r.options.size());
+            }
+            StringBuilder why = new StringBuilder();
+            PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, r.options.get(i).plan, why);
+            AssertJUnit.assertEquals("option " + i + " " + r.options.get(i).goals
+                    + " salvaged (" + why + ") — enumeration-feasibility must equal executor-feasibility",
+                    PaymentEnumerator.ExecOutcome.DIRECTED_OK, out);
+        }
+    }
+
     /** The §12 headline property: a wide board of distinct signatures vs a
      *  generic cost has MANY plans but few options — bounded by source
      *  classes, no truncation. */
