@@ -211,6 +211,14 @@ public final class AnvilRun {
             System.err.println("FATAL: -forkobs requires -obs (replay fidelity rule)");
             System.exit(2);
         }
+        if (params.containsKey("forkns")) {
+            long ns = Long.parseLong(params.get("forkns").get(0));
+            if (ns < 0 || ns >= (Long.MAX_VALUE - FORK_G_BASE) / FORK_NS_STRIDE) {
+                System.err.println("FATAL: -forkns out of range: " + ns);
+                System.exit(2);
+            }
+            forkGBase = FORK_G_BASE + ns * FORK_NS_STRIDE;
+        }
 
         // M7 forced-branch paired rollouts (m7-plan D2): per fork point, two
         // branches (act/hold) x k completions with PAIRED rollout seeds — the
@@ -614,12 +622,19 @@ public final class AnvilRun {
 
     private static final int ROLLOUT_TIMEOUT_S = 120;
     // Fork-store synthetic game ids live in their own namespace above any
-    // reachable mainline index: base + (gameIdx*100 + fp)*100 + r. Without
-    // the base, a drilled source game with gameIdx=0 encodes forks 0..k-1,
-    // colliding with mainline store indices (the run13 iteration-0 crash).
-    // Store-format change — era-scoped: stores written before this constant
-    // existed keep the un-based ids; never mix eras in one MultiStore join.
+    // reachable mainline index: base + ns*STRIDE + (gameIdx*100 + fp)*100 + r.
+    // Without the base, a drilled source game with gameIdx=0 encodes forks
+    // 0..k-1, colliding with mainline store indices (the run13 iteration-0
+    // crash). Without ns (-forkns, assigned per source store by the planner
+    // and recorded in the drill manifest), two generation runs drilling the
+    // same source g from DIFFERENT stores collide with each other (the run17
+    // iteration-2 MultiStore crash). The id stays a pure join key — nothing
+    // decodes it; provenance travels in the fork header's pg/fp/r + manifest.
+    // Store-format change — era-scoped: stores written before -forkns existed
+    // use ns=0 ids; never mix eras in one MultiStore join.
     private static final long FORK_G_BASE = 1_000_000_000_000L;
+    private static final long FORK_NS_STRIDE = 1_000_000_000L;
+    private static long forkGBase = FORK_G_BASE;
 
     private static final class RolloutMonitor {
         final Game game;
@@ -778,8 +793,13 @@ public final class AnvilRun {
                     // Per-completion identity + seed: synthetic unique game id
                     // for the store/mu joins; the completion's own seed so
                     // server-side sampled noise decorrelates across the K.
-                    Obs.startForkGame(copy, wid,
-                            FORK_G_BASE + ((long) gameIdx * 100 + myFp) * 100 + r,
+                    long off = ((long) gameIdx * 100 + myFp) * 100 + r;
+                    if (off >= FORK_NS_STRIDE) {
+                        // would bleed into the next -forkns namespace slice
+                        throw new IllegalStateException(
+                                "fork id offset " + off + " >= FORK_NS_STRIDE (gameIdx " + gameIdx + ")");
+                    }
+                    Obs.startForkGame(copy, wid, forkGBase + off,
                             rollSeed, fmt, game, gameIdx, myFp, r, targetTurn);
                     bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
                 } else {
