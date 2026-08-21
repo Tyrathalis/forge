@@ -404,6 +404,9 @@ public final class CensusRun {
             if (dir.execWhy != null) {
                 sb.append(",\"exec_why\":\"").append(esc(dir.execWhy)).append('"');
             }
+            if (dir.planDesc != null) {
+                sb.append(",\"plan\":\"").append(esc(dir.planDesc)).append('"');
+            }
             sb.append(",\"t_fired\":").append(dir.tFired);
         }
         sb.append(",\"t_end\":").append(tEnd)

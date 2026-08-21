@@ -61,6 +61,14 @@ public final class PaymentEnumerator {
 
     private PaymentEnumerator() { }
 
+    /** Directed-execution activation order — the ONE definition shared by
+     *  executeDirected and chainOrderFeasible (2026-08-21 salvage fix):
+     *  the feasibility check replays exactly this order, so the two must
+     *  never diverge. */
+    static final Comparator<Atom> EXEC_ORDER =
+            Comparator.comparingInt((Atom a) -> a.activationMana.getCMC())
+                    .thenComparingInt(a -> a.host.getId());
+
     // ------------------------------------------------------------------
     // Data model
 
@@ -340,6 +348,10 @@ public final class PaymentEnumerator {
         final int[] poolSpend = new int[ManaAtom.MANATYPES.length];
         int phyrexianLife = 0;
         final java.util.Set<String> planKeys = new java.util.HashSet<>();
+        /** Snapshot of the original cost's shards (the work queue mutates
+         *  as activation costs append) — the feasibility check's main-cost
+         *  requirement. */
+        final List<ManaCostShard> mainShards;
         // per-goal argmax (spec §12a): goals 0..S-1 = spare(source class k);
         // optionally S = min_life (phyrexian costs); fallback single "pay"
         // goal when neither exists (pool-only boards, forced-window safety).
@@ -358,6 +370,7 @@ public final class PaymentEnumerator {
             this.paidFor = paidFor;
             this.classes = classes;
             this.shards = shards;
+            this.mainShards = new ArrayList<>(shards);
             this.planCap = planCap;
             this.nodeBudget = nodeBudget;
             this.result = result;
@@ -698,31 +711,121 @@ public final class PaymentEnumerator {
         }
     }
 
-    /** Greedy activation-order feasibility (spec §3): zero-cost first, then
-     *  net-positive, require running float covers each activation cost.
-     *  Count-based v0 approximation (colored-exactness adjudicated by the executor). */
+    /** Feasibility-check backtracking budget (per completed plan). On
+     *  exhaustion the plan is ADMITTED (pre-tightening behavior: the
+     *  executor adjudicates) — a budget miss must degrade loud-at-census,
+     *  never silently censor. Expected never hit at measured plan sizes. */
+    static final int FEAS_NODE_BUDGET = 20000;
+
+    /** Activation-order feasibility (spec §3; tightened 2026-08-21 — the
+     *  certify2/3 "costs:Arena of Glory" salvage family, all 32+8 rows).
+     *  The old check was count-based and color-blind: a Plains float
+     *  "covered" a {R} activation cost, and an atom's OWN units could pay
+     *  its own activation shard (mana that does not exist until after the
+     *  cost is paid). This version replays the EXECUTOR's exact activation
+     *  order (EXEC_ORDER) and requires each chained atom's activation cost
+     *  to be color-coverable by mana that exists strictly before it
+     *  executes — the initial pool plus earlier atoms' full yields,
+     *  treated as fungible (executeDirected completes pool-first; DFS
+     *  shard earmarks do not survive the pool) — with the main cost
+     *  coverable by what remains. Exact small backtracking with symmetric
+     *  -unit pruning. */
     private static boolean chainOrderFeasible(final DfsState st) {
-        int avail = 0;
-        for (int s : st.poolSpend) {
-            avail += s;
+        final List<Atom> ordered = new ArrayList<>(st.planAtoms);
+        ordered.sort(EXEC_ORDER);
+
+        // Requirement list, group order = execution order, main cost last.
+        // limit = exec index the paying unit must strictly precede.
+        final List<ManaCostShard> req = new ArrayList<>();
+        final List<Integer> limits = new ArrayList<>();
+        boolean anyChained = false;
+        for (int i = 0; i < ordered.size(); i++) {
+            final ManaCost act = ordered.get(i).activationMana;
+            if (act.isZero()) {
+                continue;
+            }
+            anyChained = true;
+            for (final ManaCostShard sh : act) {
+                req.add(sh);
+                limits.add(i);
+            }
+            for (int g = 0; g < act.getGenericCost(); g++) {
+                req.add(ManaCostShard.GENERIC);
+                limits.add(i);
+            }
         }
-        final List<Atom> pending = new ArrayList<>(st.planAtoms);
-        pending.sort(Comparator.comparingInt((Atom a) -> a.activationMana.getCMC())
-                .thenComparingInt(a -> -a.yield));
-        boolean progress = true;
-        while (!pending.isEmpty() && progress) {
-            progress = false;
-            for (int i = 0; i < pending.size(); i++) {
-                final Atom a = pending.get(i);
-                if (a.activationMana.getCMC() <= avail) {
-                    avail += a.yield - a.activationMana.getCMC();
-                    pending.remove(i);
-                    progress = true;
+        if (!anyChained) {
+            return true; // no activation costs — nothing temporal to violate
+        }
+        for (final ManaCostShard sh : st.mainShards) {
+            req.add(sh);
+            limits.add(Integer.MAX_VALUE);
+        }
+
+        // Unit inventory: {availAfter exec idx (-1 = initial pool), color mask, snow, spent}
+        final List<int[]> units = new ArrayList<>();
+        for (int t = 0; t < ManaAtom.MANATYPES.length; t++) {
+            final int have = st.poolRemaining[t] + st.poolSpend[t]; // = pool at window entry
+            for (int n = 0; n < have; n++) {
+                units.add(new int[] { -1, ManaAtom.MANATYPES[t] & 0xFF, 0, 0 });
+            }
+        }
+        for (int i = 0; i < ordered.size(); i++) {
+            final Atom a = ordered.get(i);
+            // Materialized colors, not masks: the executor expresses each
+            // unit at its plan color (assigned by the DFS, else the
+            // completePlan firstColor default) — at execution time a combo
+            // unit has ONE color, so solving feasibility over masks
+            // overcounts (the job-202 residual: a Shivan Reef U|R unit
+            // committed to U cannot pay Arena's {R} activation cost).
+            final byte[] assigned = st.planColors.get(a);
+            for (int j = 0; j < a.unitMasks.length; j++) {
+                final byte c = assigned != null && assigned[j] != 0
+                        ? assigned[j] : firstColor(a.unitMasks[j]);
+                units.add(new int[] { i, c & 0xFF, a.host.isSnow() ? 1 : 0, 0 });
+            }
+        }
+        return satisfy(req, limits, units, 0, st.phyrexianLife, new int[] { FEAS_NODE_BUDGET });
+    }
+
+    private static boolean satisfy(final List<ManaCostShard> req, final List<Integer> limits,
+            final List<int[]> units, final int idx, final int lifeBudget, final int[] budget) {
+        if (idx == req.size()) {
+            return true;
+        }
+        if (--budget[0] < 0) {
+            return true; // budget exhausted: admit, executor adjudicates (never silently censor)
+        }
+        final ManaCostShard sh = req.get(idx);
+        final int lim = limits.get(idx);
+        final java.util.Set<Integer> tried = new java.util.HashSet<>();
+        for (final int[] u : units) {
+            if (u[3] == 1 || u[0] >= lim) {
+                continue;
+            }
+            if (sh.isSnow() && u[2] == 0) {
+                continue;
+            }
+            boolean colorOk = false;
+            for (final byte c : ManaAtom.MANATYPES) {
+                if ((u[1] & c) != 0 && sh.canBePaidWithManaOfColor(c)) {
+                    colorOk = true;
                     break;
                 }
             }
+            if (!colorOk || !tried.add((u[0] << 16) | (u[1] << 8) | u[2])) {
+                continue; // symmetric units: one try per (availAfter, mask, snow)
+            }
+            u[3] = 1;
+            if (satisfy(req, limits, units, idx + 1, lifeBudget, budget)) {
+                return true;
+            }
+            u[3] = 0;
         }
-        return pending.isEmpty();
+        if (sh.isPhyrexian() && lifeBudget > 0) {
+            return satisfy(req, limits, units, idx + 1, lifeBudget - 1, budget);
+        }
+        return false;
     }
 
     private static String planKey(final DfsState st) {
@@ -760,8 +863,7 @@ public final class PaymentEnumerator {
     public static ExecOutcome executeDirected(final Player p, final PaymentClass pc,
             final StringBuilder why) {
         final List<Atom> ordered = new ArrayList<>(pc.atoms);
-        ordered.sort(Comparator.comparingInt((Atom a) -> a.activationMana.getCMC())
-                .thenComparingInt(a -> a.host.getId()));
+        ordered.sort(EXEC_ORDER);
         int idx = 0;
         for (final Atom a : ordered) {
             a.ma.setActivatingPlayer(p);
@@ -792,6 +894,36 @@ public final class PaymentEnumerator {
             idx++;
         }
         return ExecOutcome.DIRECTED_OK;
+    }
+
+    /** Executor-order plan dump for the salvage diagnosis channel
+     *  (ADR-0066/0067 genre: a salvage row without the plan is blind).
+     *  host#id[activation]->unit colors per atom, then pool spend. */
+    public static String describePlan(final PaymentClass pc) {
+        final List<Atom> ordered = new ArrayList<>(pc.atoms);
+        ordered.sort(EXEC_ORDER);
+        final StringBuilder sb = new StringBuilder();
+        for (final Atom a : ordered) {
+            if (sb.length() > 0) {
+                sb.append(';');
+            }
+            sb.append(a.host.getName()).append('#').append(a.host.getId());
+            if (!a.activationMana.isZero()) {
+                sb.append('[').append(a.activationMana).append(']');
+            }
+            sb.append("->");
+            final byte[] cc = pc.unitColors.get(a);
+            for (int i = 0; i < a.unitMasks.length; i++) {
+                final byte c = cc != null && cc[i] != 0 ? cc[i] : a.unitMasks[i];
+                final String s = MagicColor.toShortString(c);
+                sb.append(s != null && s.length() == 1 ? s : "m" + (c & 0xFF));
+            }
+        }
+        sb.append("|pool:");
+        for (final int s : pc.poolSpend) {
+            sb.append(s).append(',');
+        }
+        return sb.toString();
     }
 
     private static void salvageWhy(StringBuilder why, String check, Atom a, int idx) {
