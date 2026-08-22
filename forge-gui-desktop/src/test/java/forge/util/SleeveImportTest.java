@@ -74,6 +74,40 @@ public class SleeveImportTest {
     }
 
     @Test(timeOut = TIMEOUT)
+    public void aLinkToAnOversizeImageDownscalesJustLikeAPickedFile() throws Exception {
+        // Reported from play: a picked file of this size was downscaled happily while the same
+        // image behind a link was refused as "too large". The two paths must agree.
+        final File dir = Files.createTempDirectory("sleeve-import-parity").toFile();
+        final File source = writeImage(dir, "big.jpg", 3024, 4032);
+        Assert.assertTrue(source.length() > CustomSleeves.MAX_BYTES,
+                "the source must exceed the sleeve cap for this test to mean anything");
+
+        final SleeveStore.Result viaLink = SleeveImport.fromUrl(dir, source.toURI().toString());
+        Assert.assertNull(viaLink.error, "a link to an oversize image was refused: " + viaLink.error);
+
+        final File other = Files.createTempDirectory("sleeve-import-parity2").toFile();
+        final SleeveStore.Result viaFile = SleeveImport.fromFile(other, source);
+        Assert.assertNull(viaFile.error, viaFile.error);
+        Assert.assertEquals(viaLink.key, viaFile.key, "the same image took two different shapes");
+        delete(other);
+        delete(dir);
+    }
+
+    @Test(timeOut = TIMEOUT)
+    public void refusesASourceThatWouldDecodeIntoAHugeRaster() throws Exception {
+        // A decompression bomb is a small file that declares an enormous canvas. The header check
+        // has to refuse it before anything allocates that raster.
+        final File dir = Files.createTempDirectory("sleeve-import-bomb").toFile();
+        final File bomb = new File(dir, "bomb.png");
+        Files.write(bomb.toPath(), bombPng(30000, 30000));
+        Assert.assertTrue(bomb.length() < CustomSleeves.MAX_SOURCE_BYTES, "a bomb is a small file");
+        final SleeveStore.Result result = SleeveImport.fromFile(dir, bomb);
+        Assert.assertNotNull(result.error, "a 900 megapixel source was accepted");
+        Assert.assertTrue(result.error.contains("megapixel"), result.error);
+        delete(dir);
+    }
+
+    @Test(timeOut = TIMEOUT)
     public void refusesWhatCannotBecomeASleeve() throws Exception {
         final File dir = Files.createTempDirectory("sleeve-import-bad").toFile();
 
@@ -96,6 +130,18 @@ public class SleeveImportTest {
         Assert.assertNull(result.error, result.error);
         Assert.assertTrue(CustomSleeves.probe(SleeveStore.read(dir, result.key)).accepted());
         delete(dir);
+    }
+
+    /** A PNG header declaring an enormous canvas, with no image data behind it. */
+    private static byte[] bombPng(final int w, final int h) {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(new byte[] {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}, 0, 8);
+        final byte[] ihdr = {0, 0, 0, 13, 'I', 'H', 'D', 'R',
+                (byte) (w >> 24), (byte) (w >> 16), (byte) (w >> 8), (byte) w,
+                (byte) (h >> 24), (byte) (h >> 16), (byte) (h >> 8), (byte) h,
+                8, 2, 0, 0, 0, 0, 0, 0, 0};
+        out.write(ihdr, 0, ihdr.length);
+        return out.toByteArray();
     }
 
     private static void delete(final File dir) {

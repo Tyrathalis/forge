@@ -13,7 +13,9 @@ import java.util.Iterator;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 
 /**
@@ -47,9 +49,10 @@ public final class SleeveImport {
         if (file == null || !file.isFile()) {
             return SleeveStore.rejected("that file could not be read");
         }
-        if (file.length() > CustomSleeves.MAX_BYTES * 64L) {
+        if (file.length() > CustomSleeves.MAX_SOURCE_BYTES) {
             // No point decoding something that large just to discover it is a poster
-            return SleeveStore.rejected("that file is far too large to be a sleeve");
+            return SleeveStore.rejected("that file is larger than "
+                    + (CustomSleeves.MAX_SOURCE_BYTES / (1024 * 1024)) + " MB");
         }
         try {
             return store(dir, Files.readAllBytes(file.toPath()));
@@ -59,7 +62,10 @@ public final class SleeveImport {
     }
 
     public static SleeveStore.Result fromUrl(final File dir, final String url) {
-        final SleeveStore.Download download = SleeveStore.download(url);
+        // The source budget, not the sleeve budget: a link to a 4 MB photo is downscaled just as
+        // a picked 4 MB photo is. These two paths used to disagree, and a link was refused for
+        // being exactly the size a file was accepted at.
+        final SleeveStore.Download download = SleeveStore.download(url, CustomSleeves.MAX_SOURCE_BYTES);
         if (download.error != null) {
             return SleeveStore.rejected(download.error);
         }
@@ -84,6 +90,16 @@ public final class SleeveImport {
     private static Prepared prepare(final byte[] raw) {
         if (CustomSleeves.probe(raw).accepted()) {
             return new Prepared(raw, null); // already within every bound; keep the original bytes
+        }
+        final long pixels = sourcePixels(raw);
+        if (pixels < 0) {
+            return new Prepared(null, "that does not look like an image we can read");
+        }
+        if (pixels > CustomSleeves.MAX_SOURCE_PIXELS) {
+            // Checked from the header: a bomb is a small file that becomes a huge raster, so this
+            // has to happen before the decode, not after it
+            return new Prepared(null, "that image is " + (pixels / 1_000_000) + " megapixels; the limit is "
+                    + (CustomSleeves.MAX_SOURCE_PIXELS / 1_000_000));
         }
         final BufferedImage decoded = decode(raw);
         if (decoded == null) {
@@ -112,6 +128,28 @@ public final class SleeveImport {
         }
         return new Prepared(null, "that image could not be compressed under "
                 + (CustomSleeves.MAX_BYTES / 1024) + " KB");
+    }
+
+    /** Width x height straight from the header, without decoding, or -1 if nothing can read it. */
+    private static long sourcePixels(final byte[] raw) {
+        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(raw))) {
+            if (in == null) {
+                return -1;
+            }
+            final Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                return -1;
+            }
+            final ImageReader reader = readers.next();
+            try {
+                reader.setInput(in);
+                return (long) reader.getWidth(0) * reader.getHeight(0);
+            } finally {
+                reader.dispose();
+            }
+        } catch (final IOException | RuntimeException e) {
+            return -1;
+        }
     }
 
     private static BufferedImage decode(final byte[] raw) {

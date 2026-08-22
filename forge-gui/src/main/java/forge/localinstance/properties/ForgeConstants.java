@@ -314,6 +314,8 @@ public final class ForgeConstants {
     public static final String CACHE_SKINS_DIR               = CACHE_DIR + "skins" + PATH_SEPARATOR;
     public static final String CACHE_TOKEN_PICS_DIR          = PICS_DIR + "tokens" + PATH_SEPARATOR;
     public static final String CACHE_SLEEVE_PICS_DIR         = PICS_DIR + "sleeves" + PATH_SEPARATOR;
+    // Sleeves borrowed from other players: under the cache, cleared at startup, never the library.
+    public static final String CACHE_SLEEVES_SESSION_DIR      = PICS_DIR + "sleeves-session" + PATH_SEPARATOR;
     public static final String CACHE_ICON_PICS_DIR           = PICS_DIR + "icons" + PATH_SEPARATOR;
     public static final String CACHE_SYMBOLS_DIR             = PICS_DIR + "symbols" + PATH_SEPARATOR;
     public static final String CACHE_BOOSTER_PICS_DIR        = PICS_DIR + "boosters" + PATH_SEPARATOR;

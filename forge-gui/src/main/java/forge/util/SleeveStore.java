@@ -37,7 +37,7 @@ public final class SleeveStore {
     private static final int MAX_REDIRECTS = 3;
     private static final int READ_CHUNK = 8192;
     /** Bounds the read loop itself, so a stream that never advances still terminates. */
-    private static final int MAX_READ_ITERATIONS = 4 * (CustomSleeves.MAX_BYTES / READ_CHUNK) + 64;
+    private static final int MAX_READ_ITERATIONS = 4 * (CustomSleeves.MAX_SOURCE_BYTES / READ_CHUNK) + 64;
 
     /** A save attempt: a key, or the reason the image was refused. Never both. */
     public static final class Result {
@@ -114,8 +114,13 @@ public final class SleeveStore {
         return null;
     }
 
+    /**
+     * Our own sleeve first, then one borrowed from another player this session. Callers that must
+     * not see borrowed sleeves - the library listing above - use the directory-taking form.
+     */
     public static File fileFor(final String key) {
-        return fileFor(directory(), key);
+        final File own = fileFor(directory(), key);
+        return own != null ? own : fileFor(SleeveExchange.sessionDirectory(), key);
     }
 
     /**
@@ -201,6 +206,15 @@ public final class SleeveStore {
      * <p>Never call this with an address supplied by another player. See the class note.
      */
     public static Download download(final String url) {
+        return download(url, CustomSleeves.MAX_BYTES);
+    }
+
+    /**
+     * As {@link #download(String)}, but for an import, where the source may be far larger than the
+     * sleeve it will become. Callers pass {@link CustomSleeves#MAX_SOURCE_BYTES}; the strict
+     * default above stays the floor for anything that is not a deliberate import.
+     */
+    public static Download download(final String url, final int maxBytes) {
         if (url == null || url.trim().isEmpty()) {
             return new Download(null, "no address given");
         }
@@ -242,11 +256,11 @@ public final class SleeveStore {
                         return new Download(null, "the server returned " + status);
                     }
                 }
-                if (conn.getContentLengthLong() > CustomSleeves.MAX_BYTES) {
-                    return new Download(null, "that image is larger than " + CustomSleeves.MAX_BYTES + " bytes");
+                if (conn.getContentLengthLong() > maxBytes) {
+                    return new Download(null, tooLarge(maxBytes));
                 }
                 try (InputStream in = conn.getInputStream()) {
-                    return readBounded(in);
+                    return readBounded(in, maxBytes);
                 }
             } catch (final IOException e) {
                 return new Download(null, "could not fetch that address: " + e.getMessage());
@@ -255,7 +269,11 @@ public final class SleeveStore {
         return new Download(null, "too many redirects");
     }
 
-    private static Download readBounded(final InputStream in) throws IOException {
+    private static String tooLarge(final int maxBytes) {
+        return "that image is larger than " + (maxBytes / 1024) + " KB";
+    }
+
+    private static Download readBounded(final InputStream in, final int maxBytes) throws IOException {
         final ByteArrayOutputStream out = new ByteArrayOutputStream();
         final byte[] buffer = new byte[READ_CHUNK];
         for (int iteration = 0; iteration < MAX_READ_ITERATIONS; iteration++) {
@@ -263,8 +281,8 @@ public final class SleeveStore {
             if (read < 0) {
                 return new Download(out.toByteArray(), null);
             }
-            if (out.size() + read > CustomSleeves.MAX_BYTES) {
-                return new Download(null, "that image is larger than " + CustomSleeves.MAX_BYTES + " bytes");
+            if (out.size() + read > maxBytes) {
+                return new Download(null, tooLarge(maxBytes));
             }
             out.write(buffer, 0, read);
         }

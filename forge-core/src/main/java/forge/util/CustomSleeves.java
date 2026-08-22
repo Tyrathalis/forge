@@ -37,6 +37,21 @@ public final class CustomSleeves {
     /** A JPEG walk is a loop over attacker-shaped input; it gets a hard bound, not a hope. */
     private static final int MAX_JPEG_SEGMENTS = 1024;
 
+    /**
+     * What an import may take <i>in</i>, as opposed to what a sleeve may be. A source is chosen by
+     * the local user - a photo, a scan, a download they asked for - and is downscaled and
+     * re-encoded until it fits {@link #MAX_BYTES}; refusing it up front for being big would refuse
+     * every phone photo. Both import paths use this, so picking a file and pasting its address
+     * behave the same way.
+     */
+    public static final int MAX_SOURCE_BYTES = 16 * 1024 * 1024;
+    /**
+     * Pixels a source may declare, checked from the header before any raster is allocated. A
+     * 30000x30000 PNG is a small download and a 3.6 GB decode; 50 MP clears a 48 MP phone camera
+     * with room to spare.
+     */
+    public static final long MAX_SOURCE_PIXELS = 50_000_000L;
+
     private static final byte[] PNG_MAGIC = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
     private static final int HASH_LENGTH = 64;
 
