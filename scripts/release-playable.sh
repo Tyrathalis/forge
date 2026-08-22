@@ -22,7 +22,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 JAR=forge-gui-mobile-dev/target/forge-gui-mobile-dev-*-jar-with-dependencies.jar
-JAR=$(ls $JAR 2>/dev/null | head -1) || { echo "Build the jar first (mvn -pl forge-gui-mobile-dev -am package)"; exit 1; }
+# Newest by mtime: an alphabetical glob picks a STALE jar when target/ holds
+# builds from two version eras (2.0.14 sorts before 2.0.15 — bit us 2026-08-21).
+JAR=$(ls -t $JAR 2>/dev/null | head -1) || { echo "Build the jar first (mvn -pl forge-gui-mobile-dev -am package)"; exit 1; }
 [ -f "$JAR" ] || { echo "Build the jar first (mvn -pl forge-gui-mobile-dev -am package)"; exit 1; }
 
 COMMIT=$(git rev-parse HEAD)

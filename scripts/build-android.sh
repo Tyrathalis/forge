@@ -56,7 +56,9 @@ JAVA_HOME=$JDK17 ANDROID_HOME=$SDK nice -n 19 "$MVN" -P android-debug \
     -Dmaven.test.skip=true -q
 
 cd forge-gui-android
-APK=$(ls target/forge-android-*.apk | grep -v signed | grep -v aligned | head -1)
+# Newest by mtime: an alphabetical glob picks a STALE apk when target/ holds
+# builds from two version eras (2.0.14 sorts before 2.0.15 — bit us 2026-08-21).
+APK=$(ls -t target/forge-android-*.apk | grep -v signed | grep -v aligned | head -1)
 VERSION=$(cat target/classes/assets/version.txt)
 echo "== Signing $APK (version $VERSION) =="
 rm -f "${APK%.apk}"-*signed*.apk
