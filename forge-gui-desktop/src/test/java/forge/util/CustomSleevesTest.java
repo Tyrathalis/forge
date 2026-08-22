@@ -140,6 +140,43 @@ public class CustomSleevesTest {
         Assert.assertFalse(CustomSleeves.probe(backwards).accepted(), "backward segment accepted");
     }
 
+    //--- the source gate: what an import may take in, as opposed to what a sleeve may be
+
+    @Test(timeOut = TIMEOUT)
+    public void acceptsAsASourceWhatItRefusesAsASleeve() {
+        // The distinction the file and link paths got wrong: a phone photo is not a legal sleeve
+        // and must still be a legal import, because importing is what turns it into one.
+        final byte[] photo = pad(jpeg(3024, 4032), 3_000_000);
+        Assert.assertFalse(CustomSleeves.probe(photo).accepted(), "a 3024x4032 photo is not a sleeve");
+        final CustomSleeves.Probe source = CustomSleeves.probeSource(photo);
+        Assert.assertTrue(source.accepted(), "a 3024x4032 photo must be an acceptable source: " + source.rejection);
+        Assert.assertEquals(source.width, 3024);
+        Assert.assertEquals(source.height, 4032);
+    }
+
+    @Test(timeOut = TIMEOUT)
+    public void theSourceGateKeepsTheSameFormatAllowlist() {
+        Assert.assertFalse(CustomSleeves.probeSource("GIF89a-----------------".getBytes()).accepted(), "GIF");
+        Assert.assertFalse(CustomSleeves.probeSource("BM------------------".getBytes()).accepted(), "BMP");
+        Assert.assertFalse(CustomSleeves.probeSource(new byte[0]).accepted(), "empty");
+    }
+
+    @Test(timeOut = TIMEOUT)
+    public void refusesSourcesThatWouldDecodeIntoAHugeRaster() {
+        // A bomb is a small file declaring an enormous canvas, so the byte budget cannot catch it
+        final byte[] bomb = png(30000, 30000);
+        Assert.assertTrue(bomb.length < CustomSleeves.MAX_SOURCE_BYTES, "a bomb is a small file");
+        final CustomSleeves.Probe probe = CustomSleeves.probeSource(bomb);
+        Assert.assertFalse(probe.accepted(), "a 900 megapixel source was accepted");
+        Assert.assertTrue(probe.rejection.contains("megapixel"), probe.rejection);
+    }
+
+    @Test(timeOut = TIMEOUT)
+    public void refusesSourcesOverTheSourceByteBudget() {
+        Assert.assertFalse(CustomSleeves.probeSource(
+                pad(png(360, 500), CustomSleeves.MAX_SOURCE_BYTES + 1)).accepted());
+    }
+
     //--- identity: the key travels the wire and becomes a filename, so it must not become a path
 
     @Test(timeOut = TIMEOUT)
