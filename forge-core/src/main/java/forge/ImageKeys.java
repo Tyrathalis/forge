@@ -47,7 +47,7 @@ public final class ImageKeys {
 
     private static String CACHE_CARD_PICS_DIR, CACHE_TOKEN_PICS_DIR, CACHE_ICON_PICS_DIR, CACHE_BOOSTER_PICS_DIR,
         CACHE_FATPACK_PICS_DIR, CACHE_BOOSTERBOX_PICS_DIR, CACHE_PRECON_PICS_DIR, CACHE_TOURNAMENTPACK_PICS_DIR;
-    private static String CUSTOM_SLEEVE_PICS_DIR;
+    private static String CUSTOM_SLEEVE_PICS_DIR, CUSTOM_SLEEVE_SESSION_DIR;
     public static String ADVENTURE_CARD_PICS_DIR;
     private static Map<String, String> CACHE_CARD_PICS_SUBDIR;
 
@@ -68,7 +68,7 @@ public final class ImageKeys {
         isLibGDXPort = value;
     }
     public static void initializeDirs(String cards, Map<String, String> cardsSub, String tokens, String icons, String boosters,
-            String fatPacks, String boosterBoxes, String precons, String tournamentPacks, String customSleeves) {
+            String fatPacks, String boosterBoxes, String precons, String tournamentPacks, String customSleeves, String customSleevesSession) {
         CACHE_CARD_PICS_DIR = cards;
         CACHE_CARD_PICS_SUBDIR = cardsSub;
         CACHE_TOKEN_PICS_DIR = tokens;
@@ -79,6 +79,7 @@ public final class ImageKeys {
         CACHE_PRECON_PICS_DIR = precons;
         CACHE_TOURNAMENTPACK_PICS_DIR = tournamentPacks;
         CUSTOM_SLEEVE_PICS_DIR = customSleeves;
+        CUSTOM_SLEEVE_SESSION_DIR = customSleevesSession;
     }
 
     // image file extensions for various formats in order of likelihood
@@ -146,13 +147,19 @@ public final class ImageKeys {
             dir = ADVENTURE_CARD_PICS_DIR;
         } else if (key.startsWith(ImageKeys.CUSTOM_SLEEVE_PREFIX)) {
             // A custom-sleeve key can arrive from another player, so it never becomes a path
-            // directly: CustomSleeves.stem admits 64 hex characters and nothing else.
+            // directly: CustomSleeves.stem admits 64 hex characters and nothing else. Our own
+            // sleeves first, then one borrowed from another player this session. Answered here
+            // rather than falling through to the shared cache below: a borrowed sleeve is
+            // deliberately short-lived, and memoising its path would outlive it.
             final String stem = CustomSleeves.stem(key);
-            if (stem == null || CUSTOM_SLEEVE_PICS_DIR == null) {
+            if (stem == null) {
                 return null;
             }
-            filename = stem;
-            dir = CUSTOM_SLEEVE_PICS_DIR;
+            File sleeve = CUSTOM_SLEEVE_PICS_DIR == null ? null : findFile(CUSTOM_SLEEVE_PICS_DIR, stem);
+            if (sleeve == null && CUSTOM_SLEEVE_SESSION_DIR != null) {
+                sleeve = findFile(CUSTOM_SLEEVE_SESSION_DIR, stem);
+            }
+            return sleeve;
         }else {
             filename = key;
             dir = CACHE_CARD_PICS_DIR;

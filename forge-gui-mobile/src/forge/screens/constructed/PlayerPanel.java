@@ -608,13 +608,18 @@ public class PlayerPanel extends FContainer {
         public void handleEvent(FEvent e) {
             final String builtIn = Forge.getLocalizer().getMessage("lblBuiltInSleeve");
             final String cardArt = Forge.getLocalizer().getMessage("lblUseCardArtSleeve");
+            final String custom = Forge.getLocalizer().getMessage("lblCustomSleeves");
             GuiChoose.oneOrNone(Forge.getLocalizer().getMessage("lblSelectSleeveForPlayer", getPlayerName()),
-                    Arrays.asList(builtIn, cardArt), choice -> {
+                    Arrays.asList(builtIn, cardArt, custom), choice -> {
                 if (choice == null) {
                     return;
                 }
                 if (choice.equals(cardArt)) {
                     selectCardArtSleeve();
+                    return;
+                }
+                if (choice.equals(custom)) {
+                    CustomSleeveSelector.show(getPlayerName(), sleeveArtKey, PlayerPanel.this::applyCustomSleeve);
                     return;
                 }
                 SleeveSelector.show(getPlayerName(), sleeveIndex, screen.getUsedSleeves(), result -> {
@@ -648,6 +653,20 @@ public class PlayerPanel extends FContainer {
                         print -> applyCardArtSleeve(print == null ? card : print));
             }
         });
+    }
+
+    /** Applies a chosen custom sleeve. Its bytes are already local; only the key has to travel. */
+    private void applyCustomSleeve(final String key) {
+        if (key == null || key.isEmpty()) {
+            return;
+        }
+        setSleeveArtKey(key);
+        sleeveArtOffset = SleeveArt.DEFAULT_OFFSET;
+        sleeveLabel.setIcon(new CardSleeveImage(key, sleeveArtOffset));
+        persistSleeveToDeck(key, sleeveArtOffset);
+        if (allowNetworking) {
+            screen.firePlayerChangeListener(index);
+        }
     }
 
     private void applyCardArtSleeve(final PaperCard card) {

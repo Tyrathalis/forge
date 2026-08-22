@@ -105,16 +105,56 @@ public final class CustomSleeves {
         if (bytes.length > MAX_BYTES) {
             return reject("image is " + bytes.length + " bytes; the limit is " + MAX_BYTES);
         }
+        final Probe shape = shapeOf(bytes);
+        if (!shape.accepted()) {
+            return shape;
+        }
+        return dimensions(shape.format, shape.width, shape.height);
+    }
+
+    /**
+     * Inspect bytes offered as an import <i>source</i>: same format allowlist and same
+     * header-first discipline as {@link #probe}, but judged against the source budgets, since a
+     * source is downscaled into a sleeve rather than used as one. Both clients gate imports on
+     * this, so picking a file and pasting a link accept exactly the same set of images.
+     */
+    public static Probe probeSource(final byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return reject("no image data");
+        }
+        if (bytes.length > MAX_SOURCE_BYTES) {
+            return reject("that image is larger than " + (MAX_SOURCE_BYTES / (1024 * 1024)) + " MB");
+        }
+        final Probe shape = shapeOf(bytes);
+        if (!shape.accepted()) {
+            return shape; // unreadable or unrecognised; the reason already says which
+        }
+        final long pixels = (long) shape.width * shape.height;
+        if (shape.width < MIN_DIMENSION || shape.height < MIN_DIMENSION) {
+            return reject("that image is smaller than " + MIN_DIMENSION + "x" + MIN_DIMENSION);
+        }
+        if (pixels > MAX_SOURCE_PIXELS) {
+            return reject("that image is " + (pixels / 1_000_000) + " megapixels; the limit is "
+                    + (MAX_SOURCE_PIXELS / 1_000_000));
+        }
+        return new Probe(shape.format, shape.width, shape.height, null);
+    }
+
+    /**
+     * Format and dimensions with no size judgement at all - the shared half of {@link #probe} and
+     * {@link #probeSource}, which differ only in the budgets they hold the answer to.
+     */
+    private static Probe shapeOf(final byte[] bytes) {
         if (startsWith(bytes, PNG_MAGIC)) {
-            return probePng(bytes);
+            return shapePng(bytes);
         }
         if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
-            return probeJpeg(bytes);
+            return shapeJpeg(bytes);
         }
         return reject("unrecognised image format; only PNG and JPEG are accepted");
     }
 
-    private static Probe probePng(final byte[] b) {
+    private static Probe shapePng(final byte[] b) {
         // signature(8) + chunk length(4) + "IHDR"(4) + width(4) + height(4)
         if (b.length < 24) {
             return reject("truncated PNG header");
@@ -122,10 +162,10 @@ public final class CustomSleeves {
         if (b[12] != 'I' || b[13] != 'H' || b[14] != 'D' || b[15] != 'R') {
             return reject("malformed PNG: first chunk is not IHDR");
         }
-        return dimensions(Format.PNG, readInt(b, 16), readInt(b, 20));
+        return shape(Format.PNG, readInt(b, 16), readInt(b, 20));
     }
 
-    private static Probe probeJpeg(final byte[] b) {
+    private static Probe shapeJpeg(final byte[] b) {
         int pos = 2; // past SOI
         for (int segment = 0; segment < MAX_JPEG_SEGMENTS; segment++) {
             if (pos >= b.length || (b[pos] & 0xFF) != 0xFF) {
@@ -160,7 +200,7 @@ public final class CustomSleeves {
                 }
                 final int height = ((b[pos + 3] & 0xFF) << 8) | (b[pos + 4] & 0xFF);
                 final int width = ((b[pos + 5] & 0xFF) << 8) | (b[pos + 6] & 0xFF);
-                return dimensions(Format.JPEG, width, height);
+                return shape(Format.JPEG, width, height);
             }
             pos += length;
         }
@@ -173,6 +213,14 @@ public final class CustomSleeves {
                 && marker != 0xC4  // DHT
                 && marker != 0xC8  // JPG
                 && marker != 0xCC; // DAC
+    }
+
+    /** A parsed header: format and dimensions, no budget applied yet. */
+    private static Probe shape(final Format format, final int width, final int height) {
+        if (width <= 0 || height <= 0) {
+            return reject("malformed image header: " + width + "x" + height);
+        }
+        return new Probe(format, width, height, null);
     }
 
     private static Probe dimensions(final Format format, final int width, final int height) {

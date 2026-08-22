@@ -6,6 +6,7 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import forge.Graphics;
 import forge.assets.FImage;
 import forge.assets.FSkin;
+import forge.util.CustomSleeves;
 
 /**
  * A deck sleeve rendered from a card's art (cover-cropped). It reports the built-in sleeve aspect
@@ -18,13 +19,16 @@ public class CardSleeveImage implements FImage {
     private static final Color BORDER = new Color(38 / 255f, 37 / 255f, 38 / 255f, 1f);
     private static final float BORDER_FRACTION = 0.04f;
 
-    private final CardAvatarImage art;
+    private final FImage art;
 
     public CardSleeveImage(final String imageKey) {
         this(imageKey, 500);
     }
     public CardSleeveImage(final String imageKey, final int cropOffset) {
-        this.art = new CardAvatarImage(imageKey, cropOffset);
+        // A custom sleeve is already a whole picture; card art has to be cut out of a card frame
+        this.art = CustomSleeves.isCustomSleeveKey(imageKey)
+                ? new CustomSleeveArt(imageKey, cropOffset)
+                : new CardAvatarImage(imageKey, cropOffset);
     }
 
     @Override

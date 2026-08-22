@@ -13,9 +13,7 @@ import java.util.Iterator;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
-import javax.imageio.ImageReader;
 import javax.imageio.ImageWriter;
-import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 
 /**
@@ -88,26 +86,19 @@ public final class SleeveImport {
     }
 
     private static Prepared prepare(final byte[] raw) {
+        // One gate for both clients and both import paths: format, byte budget and the pixel
+        // budget, all read from the header before a raster is allocated. A decompression bomb is
+        // a small file declaring an enormous canvas, so this must precede the decode.
+        final CustomSleeves.Probe source = CustomSleeves.probeSource(raw);
+        if (!source.accepted()) {
+            return new Prepared(null, source.rejection);
+        }
         if (CustomSleeves.probe(raw).accepted()) {
             return new Prepared(raw, null); // already within every bound; keep the original bytes
-        }
-        final long pixels = sourcePixels(raw);
-        if (pixels < 0) {
-            return new Prepared(null, "that does not look like an image we can read");
-        }
-        if (pixels > CustomSleeves.MAX_SOURCE_PIXELS) {
-            // Checked from the header: a bomb is a small file that becomes a huge raster, so this
-            // has to happen before the decode, not after it
-            return new Prepared(null, "that image is " + (pixels / 1_000_000) + " megapixels; the limit is "
-                    + (CustomSleeves.MAX_SOURCE_PIXELS / 1_000_000));
         }
         final BufferedImage decoded = decode(raw);
         if (decoded == null) {
             return new Prepared(null, "that does not look like an image we can read");
-        }
-        if (decoded.getWidth() < CustomSleeves.MIN_DIMENSION || decoded.getHeight() < CustomSleeves.MIN_DIMENSION) {
-            return new Prepared(null, "that image is smaller than "
-                    + CustomSleeves.MIN_DIMENSION + "x" + CustomSleeves.MIN_DIMENSION);
         }
         BufferedImage image = fitWithin(decoded, CustomSleeves.MAX_DIMENSION);
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -128,28 +119,6 @@ public final class SleeveImport {
         }
         return new Prepared(null, "that image could not be compressed under "
                 + (CustomSleeves.MAX_BYTES / 1024) + " KB");
-    }
-
-    /** Width x height straight from the header, without decoding, or -1 if nothing can read it. */
-    private static long sourcePixels(final byte[] raw) {
-        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(raw))) {
-            if (in == null) {
-                return -1;
-            }
-            final Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
-            if (!readers.hasNext()) {
-                return -1;
-            }
-            final ImageReader reader = readers.next();
-            try {
-                reader.setInput(in);
-                return (long) reader.getWidth(0) * reader.getHeight(0);
-            } finally {
-                reader.dispose();
-            }
-        } catch (final IOException | RuntimeException e) {
-            return -1;
-        }
     }
 
     private static BufferedImage decode(final byte[] raw) {
