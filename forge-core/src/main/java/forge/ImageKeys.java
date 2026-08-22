@@ -3,6 +3,7 @@ package forge;
 import forge.card.CardEdition;
 import forge.item.PaperCard;
 import forge.util.FileUtil;
+import forge.util.CustomSleeves;
 import forge.util.TextUtil;
 import forge.util.ThreadUtil;
 import org.apache.commons.lang3.StringUtils;
@@ -20,6 +21,7 @@ public final class ImageKeys {
     public static final String PRECON_PREFIX         = "p:";
     public static final String TOURNAMENTPACK_PREFIX = "o:";
     public static final String ADVENTURECARD_PREFIX = "a:";
+    public static final String CUSTOM_SLEEVE_PREFIX  = "s:";
 
     public static final String HIDDEN_CARD           = "hidden";
     public static final String MORPH_IMAGE           = "morph";
@@ -45,6 +47,7 @@ public final class ImageKeys {
 
     private static String CACHE_CARD_PICS_DIR, CACHE_TOKEN_PICS_DIR, CACHE_ICON_PICS_DIR, CACHE_BOOSTER_PICS_DIR,
         CACHE_FATPACK_PICS_DIR, CACHE_BOOSTERBOX_PICS_DIR, CACHE_PRECON_PICS_DIR, CACHE_TOURNAMENTPACK_PICS_DIR;
+    private static String CUSTOM_SLEEVE_PICS_DIR;
     public static String ADVENTURE_CARD_PICS_DIR;
     private static Map<String, String> CACHE_CARD_PICS_SUBDIR;
 
@@ -65,7 +68,7 @@ public final class ImageKeys {
         isLibGDXPort = value;
     }
     public static void initializeDirs(String cards, Map<String, String> cardsSub, String tokens, String icons, String boosters,
-            String fatPacks, String boosterBoxes, String precons, String tournamentPacks) {
+            String fatPacks, String boosterBoxes, String precons, String tournamentPacks, String customSleeves) {
         CACHE_CARD_PICS_DIR = cards;
         CACHE_CARD_PICS_SUBDIR = cardsSub;
         CACHE_TOKEN_PICS_DIR = tokens;
@@ -75,6 +78,7 @@ public final class ImageKeys {
         CACHE_BOOSTERBOX_PICS_DIR = boosterBoxes;
         CACHE_PRECON_PICS_DIR = precons;
         CACHE_TOURNAMENTPACK_PICS_DIR = tournamentPacks;
+        CUSTOM_SLEEVE_PICS_DIR = customSleeves;
     }
 
     // image file extensions for various formats in order of likelihood
@@ -140,6 +144,15 @@ public final class ImageKeys {
         } else if (key.startsWith(ImageKeys.ADVENTURECARD_PREFIX)) {
             filename = key.substring(ImageKeys.ADVENTURECARD_PREFIX.length());
             dir = ADVENTURE_CARD_PICS_DIR;
+        } else if (key.startsWith(ImageKeys.CUSTOM_SLEEVE_PREFIX)) {
+            // A custom-sleeve key can arrive from another player, so it never becomes a path
+            // directly: CustomSleeves.stem admits 64 hex characters and nothing else.
+            final String stem = CustomSleeves.stem(key);
+            if (stem == null || CUSTOM_SLEEVE_PICS_DIR == null) {
+                return null;
+            }
+            filename = stem;
+            dir = CUSTOM_SLEEVE_PICS_DIR;
         }else {
             filename = key;
             dir = CACHE_CARD_PICS_DIR;

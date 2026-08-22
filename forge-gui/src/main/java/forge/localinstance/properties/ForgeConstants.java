@@ -258,6 +258,10 @@ public final class ForgeConstants {
     public static final String NETWORK_LOGS_DIR           = USER_DIR + "networklogs" + PATH_SEPARATOR;
     public static final String ACHIEVEMENTS_DIR           = USER_DIR + "achievements" + PATH_SEPARATOR;
     public static final String USER_CUSTOM_DIR            = USER_DIR + "custom" + PATH_SEPARATOR;
+    // Custom deck sleeves live under the user dir, deliberately NOT under res/: the delta
+    // updater's orphan pass deletes anything in res/ the manifest does not list, so a sleeve
+    // stored there would vanish on the next update.
+    public static final String USER_SLEEVES_DIR           = USER_DIR + "sleeves" + PATH_SEPARATOR;
     public static final String USER_CUSTOM_EDITIONS_DIR   = USER_CUSTOM_DIR + "editions" + PATH_SEPARATOR;
     public static final String USER_CUSTOM_CARDS_DIR      = USER_CUSTOM_DIR + "cards" + PATH_SEPARATOR;
     public static final String USER_CUSTOM_TOKENS_DIR     = USER_CUSTOM_DIR + "tokens" + PATH_SEPARATOR;
