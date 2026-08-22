@@ -175,6 +175,12 @@
         <resources>
             <resource>
                 <directory>${project.basedir}</directory>
+                <!-- target/ is under basedir, so without this every build re-copies the previous
+                     build's copies one level deeper: target/classes/target/classes/... The jar
+                     grew one nesting level per build and reached 46 MB of duplicates. -->
+                <excludes>
+                    <exclude>target/**</exclude>
+                </excludes>
                 <includes>
                     <include>**/title_bg_lq.png</include>
                     <include>**/title_bg_lq_portrait.png</include>
