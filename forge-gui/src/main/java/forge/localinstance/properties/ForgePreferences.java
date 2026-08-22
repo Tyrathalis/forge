@@ -71,6 +71,7 @@ public class ForgePreferences extends AbstractPreferences<ForgePreferences.FPref
         UI_AVATARS ("0,1"),
         UI_SLEEVES ("0,1"),
         UI_SLEEVE_ART_LIBRARY (""),
+        UI_ACCEPT_PEER_SLEEVES ("true"),
         UI_SHOW_CARD_OVERLAYS ("true"),
         UI_OVERLAY_CARD_NAME ("true"),
         UI_OVERLAY_CARD_POWER ("true"),

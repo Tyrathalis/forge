@@ -9,6 +9,7 @@ import forge.game.event.GameEvent;
 import forge.game.event.GameEventAddLog;
 import forge.game.player.Player;
 import forge.gamemodes.match.HostedMatch;
+import forge.deck.Deck;
 import forge.gamemodes.match.LobbySlot;
 import forge.gamemodes.match.LobbySlotType;
 import forge.gamemodes.match.input.InputSynchronized;
@@ -30,6 +31,9 @@ import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.model.FModel;
 import forge.player.PlayerControllerHuman;
 import forge.util.BuildInfo;
+import forge.util.CustomSleeves;
+import forge.util.SleeveExchange;
+import forge.util.SleeveStore;
 import forge.util.IterableUtil;
 import forge.util.LogSafe;
 import forge.util.Localizer;
@@ -536,8 +540,52 @@ public final class FServerManager implements IHasForgeLog {
     public void updateLobbyState() {
         localLobby.getData().setMaximumCommanderBracket(
                 FModel.getPreferences().getPrefInt(FPref.DECKGEN_MAXIMUM_COMMANDER_BRACKET));
+        // Before the state that names the sleeves, the bytes they name - so a peer that has just
+        // sat down, or one whose neighbour changed sleeve, can draw what the update describes.
+        pushSleeves();
         final LobbyUpdateEvent event = new LobbyUpdateEvent(localLobby.getData());
         broadcastTo(event, IterableUtil.filter(clients.values(), RemoteClient::hasValidSlot));
+    }
+
+    /** Pass an accepted sleeve on to every other seated peer, once each. */
+    private void relaySleeve(final SleeveBlobEvent blob, final RemoteClient from) {
+        for (final RemoteClient other : clients.values()) {
+            if (other != from && other.hasValidSlot() && other.markSleeveSent(blob.getKey())) {
+                other.send(blob);
+            }
+        }
+    }
+
+    /**
+     * Hand every seated peer the bytes for any custom sleeve now in the lobby that it has not been
+     * sent. This is what covers the host's own sleeve - the host is not a client and so never
+     * relays through the branch above - and what gives a late joiner the sleeves already in play.
+     */
+    private void pushSleeves() {
+        if (localLobby == null || clients.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < localLobby.getNumberOfSlots(); i++) {
+            final LobbySlot slot = localLobby.getSlot(i);
+            final Deck deck = slot == null ? null : slot.getDeck();
+            final String key = deck == null ? null : deck.getSleeveArtKey();
+            if (!CustomSleeves.isCustomSleeveKey(key)) {
+                continue;
+            }
+            byte[] bytes = null;
+            for (final RemoteClient client : clients.values()) {
+                if (!client.hasValidSlot() || !client.markSleeveSent(key)) {
+                    continue;
+                }
+                if (bytes == null) {
+                    bytes = SleeveStore.read(key); // read once, only if somebody actually needs it
+                    if (bytes == null) {
+                        break; // we do not hold this sleeve; its owner will send it themselves
+                    }
+                }
+                client.send(new SleeveBlobEvent(key, bytes));
+            }
+        }
     }
 
     public void updateSlot(final int index, final UpdateLobbyPlayerEvent event) {
@@ -1222,6 +1270,29 @@ public final class FServerManager implements IHasForgeLog {
                 if (event.getReady() != null) {
                     broadcastReadyState(client.getUsername(), event.getReady());
                 }
+                return;
+            } else if (msg instanceof SleeveBlobEvent blob) {
+                // The only peer-controlled bytes in the protocol. A seat that owns nothing may not
+                // offer one; everything else is decided by SleeveExchange, which refuses anything a
+                // local import would refuse and anything whose content does not hash to its name.
+                if (!client.hasValidSlot()) {
+                    netLog.warn("Ignoring sleeve from unregistered peer at {}",
+                            ctx.channel().remoteAddress());
+                    return;
+                }
+                if (!client.allowSleeveBlob()) {
+                    netLog.warn("Rate limiting sleeve from slot {} ({}) at {}",
+                            client.getIndex(), client.getUsername(), ctx.channel().remoteAddress());
+                    return;
+                }
+                final String refused = SleeveExchange.accept(blob.getKey(), blob.getBytes());
+                if (refused != null) {
+                    netLog.warn("Refused sleeve {} from slot {}: {}",
+                            blob.getKey(), client.getIndex(), refused);
+                    return;
+                }
+                client.markSleeveSent(blob.getKey()); // never hand it back to the seat that sent it
+                relaySleeve(blob, client);
                 return;
             } else if (msg instanceof DraftPickEvent pickEvent) {
                 if (localLobby != null) {

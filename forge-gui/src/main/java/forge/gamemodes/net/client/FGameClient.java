@@ -8,6 +8,12 @@ import forge.gamemodes.net.NetworkLogConfig;
 import forge.util.IHasForgeLog;
 import forge.gamemodes.net.ReplyPool;
 import forge.gamemodes.net.event.*;
+import forge.deck.Deck;
+import forge.localinstance.properties.ForgePreferences.FPref;
+import forge.model.FModel;
+import forge.util.CustomSleeves;
+import forge.util.SleeveExchange;
+import forge.util.SleeveStore;
 import forge.gui.interfaces.IDraftEventHandler;
 import forge.gui.interfaces.IGuiGame;
 import forge.interfaces.ILobbyListener;
@@ -37,6 +43,8 @@ public class FGameClient implements IToServer, IHasForgeLog {
     private final List<ILobbyListener> lobbyListeners = Lists.newArrayList();
     private IDraftEventHandler draftHandler;
     private final ReplyPool replies = new ReplyPool();
+    /** Sleeves already handed to the host this session, so each travels once. */
+    private final java.util.Set<String> sleevesSent = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean disconnectSimulated;
     private Channel channel;
 
@@ -92,6 +100,7 @@ public class FGameClient implements IToServer, IHasForgeLog {
                             new CompatibleObjectDecoder(9766*1024, ClassResolvers.cacheDisabled(null)),
                             new IdleStateHandler(0, HEARTBEAT_INTERVAL_SECONDS, 0, TimeUnit.SECONDS),
                             new MessageHandler(),
+                            new SleeveHandler(),
                             new LobbyUpdateHandler(),
                             new GameClientHandler(FGameClient.this));
                 }
@@ -125,6 +134,7 @@ public class FGameClient implements IToServer, IHasForgeLog {
         if (disconnectSimulated) {
             return;
         }
+        shareSleeveFor(event);
         netLog.info("Client sent {}", event);
         final CompatibleObjectEncoder encoder = channel.pipeline().get(CompatibleObjectEncoder.class);
         if (encoder == null) {
@@ -192,6 +202,44 @@ public class FGameClient implements IToServer, IHasForgeLog {
         for (final PlayerView p : myPlayers) {
             NetGameController controller = new NetGameController(this);
             clientGui.setOriginalGameController(p, controller);
+        }
+    }
+
+    /**
+     * A custom sleeve is bytes we hold locally; only its key travels in the lobby update. Send the
+     * bytes just before the update that names them, once per sleeve per session, so a peer can draw
+     * what the update describes. Nothing here fetches anything: the recipient is handed content.
+     */
+    private void shareSleeveFor(final NetEvent event) {
+        if (!(event instanceof UpdateLobbyPlayerEvent update)) {
+            return;
+        }
+        final Deck deck = update.getDeck();
+        final String key = deck == null ? null : deck.getSleeveArtKey();
+        if (!CustomSleeves.isCustomSleeveKey(key) || sleevesSent.contains(key)) {
+            return;
+        }
+        final byte[] bytes = SleeveStore.read(key);
+        if (bytes == null) {
+            return; // not ours to share; mark nothing, so a later pick of the same sleeve retries
+        }
+        sleevesSent.add(key);
+        send(new SleeveBlobEvent(key, bytes)); // not a lobby update, so this does not recurse
+    }
+
+    private class SleeveHandler extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+            if (msg instanceof SleeveBlobEvent blob) {
+                if (FModel.getPreferences().getPrefBoolean(FPref.UI_ACCEPT_PEER_SLEEVES)) {
+                    final String refused = SleeveExchange.accept(blob.getKey(), blob.getBytes());
+                    if (refused != null) {
+                        netLog.warn("Refused sleeve {}: {}", blob.getKey(), refused);
+                    }
+                }
+                return; // consumed either way; nothing downstream speaks sleeve
+            }
+            super.channelRead(ctx, msg);
         }
     }
 

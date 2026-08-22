@@ -23,6 +23,10 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
     /** Token-bucket allowance for chat, sized for a person typing. */
     private static final int CHAT_BURST = 10;
     private static final long CHAT_REFILL_MILLIS = 1000;
+    // A sleeve is a quarter-megabyte, not a chat line: a seat legitimately sends one when it
+    // picks one, so the burst covers a few changes of mind and the refill makes flooding pointless.
+    private static final int SLEEVE_BURST = 6;
+    private static final long SLEEVE_REFILL_MILLIS = 15_000;
 
     private volatile Channel channel;
     private String username;
@@ -34,6 +38,10 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
     private volatile String reconnectToken;
     private double chatTokens = CHAT_BURST;
     private long chatLastRefill = System.currentTimeMillis();
+    private double sleeveTokens = SLEEVE_BURST;
+    private long sleeveLastRefill = System.currentTimeMillis();
+    /** Sleeves this peer has already been handed, so a re-broadcast costs nothing. */
+    private final java.util.Set<String> sleevesSent = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private int index = UNASSIGNED_SLOT;
     private boolean libgdx;
     private volatile ReplyPool replies = new ReplyPool();
@@ -94,6 +102,26 @@ public final class RemoteClient implements IToClient, IHasForgeLog {
         }
         chatTokens -= 1;
         return true;
+    }
+
+    /** Consume one sleeve allowance; false when the peer is over its rate. */
+    public synchronized boolean allowSleeveBlob() {
+        final long now = System.currentTimeMillis();
+        final long elapsed = now - sleeveLastRefill;
+        if (elapsed > 0) {
+            sleeveTokens = Math.min(SLEEVE_BURST, sleeveTokens + (double) elapsed / SLEEVE_REFILL_MILLIS);
+            sleeveLastRefill = now;
+        }
+        if (sleeveTokens < 1) {
+            return false;
+        }
+        sleeveTokens -= 1;
+        return true;
+    }
+
+    /** True the first time this sleeve is marked for this peer, so each is sent to it once. */
+    public boolean markSleeveSent(final String key) {
+        return key != null && sleevesSent.add(key);
     }
 
     public String getReconnectToken() {

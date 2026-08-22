@@ -66,6 +66,32 @@ public class AbuseLimitsTest {
                 "Allowance must come back — a rate limit that never refills is a mute");
     }
 
+    @Test(timeOut = 30_000)
+    public void testSleeveBlobsAreRateLimitedAndTrackedPerPeer() throws Exception {
+        final RemoteClient client = new RemoteClient(null);
+
+        // Bounded for the same reason as the chat drain above: with the limiter removed this
+        // must fail, not spin.
+        int drained = 0;
+        while (drained < DRAIN_CEILING && client.allowSleeveBlob()) {
+            drained++;
+        }
+        Assert.assertTrue(drained > 0, "A seat legitimately sends a sleeve when it picks one");
+        Assert.assertTrue(drained < DRAIN_CEILING,
+                "Bucket never emptied after " + DRAIN_CEILING + " sleeves; not rate limiting");
+
+        // Deliberately not a refill wait: a sleeve token takes 15s to come back, and a test that
+        // sleeps that long to prove arithmetic is a test people start skipping.
+
+        // The other half of the bound: each sleeve is handed to a peer once, so a re-broadcast
+        // costs nothing and cannot be used to make the host repeat itself.
+        final String key = "s:" + "ab".repeat(32);
+        Assert.assertTrue(client.markSleeveSent(key), "first offer to this peer is new");
+        Assert.assertFalse(client.markSleeveSent(key), "the same sleeve was queued twice");
+        Assert.assertFalse(client.markSleeveSent(null), "a null key must never be marked sent");
+        Assert.assertTrue(client.markSleeveSent("s:" + "cd".repeat(32)), "a different sleeve is new");
+    }
+
     /**
      * Both halves of the login deadline against one server: the squatter is
      * dropped, and the peer that logs in promptly is not. The second is the
