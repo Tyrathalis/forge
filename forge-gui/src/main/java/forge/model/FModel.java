@@ -56,6 +56,7 @@ import forge.localinstance.properties.ForgeNetPreferences;
 import forge.localinstance.properties.ForgePreferences;
 import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.player.GamePlayerUtil;
+import forge.util.SleeveExchange;
 import forge.util.*;
 import forge.util.storage.IStorage;
 import forge.util.storage.StorageBase;
@@ -151,6 +152,10 @@ public final class FModel {
             ForgeConstants.CACHE_BOOSTERBOX_PICS_DIR, ForgeConstants.CACHE_PRECON_PICS_DIR,
             ForgeConstants.CACHE_TOURNAMENTPACK_PICS_DIR, ForgeConstants.USER_SLEEVES_DIR,
             ForgeConstants.CACHE_SLEEVES_SESSION_DIR);
+
+        // Sleeves borrowed from other players last exactly one sitting; a crash must not leave
+        // one behind to be decoded again at the next launch.
+        SleeveExchange.clearSession();
 
         // Instantiate preferences: quest and regular
         // Preferences are initialized first so that the splash screen can be translated.
