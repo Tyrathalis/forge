@@ -230,8 +230,8 @@ public class WorldStage extends GameStage implements SaveFileContent {
 
     public void loadPOI(PointOfInterest poi) {
         try {
-            TileMapScene.instance().load(poi);
             stop();
+            TileMapScene.instance().load(poi);
             TileMapScene.instance().setFromWorldMap(true);
             Forge.switchScene(TileMapScene.instance());
         } catch (Exception e) {
@@ -266,7 +266,7 @@ public class WorldStage extends GameStage implements SaveFileContent {
         }
 
         World world = WorldSave.getCurrentSave().getWorld();
-        int currentBiome = World.highestBiome(world.getBiome((int) player.getX() / world.getTileSize(), (int) player.getY() / world.getTileSize()));
+        int currentBiome = World.highestBiome(world.getBiome((int) ((player.getX() + player.getWidth() / 2f) / world.getTileSize()), (int) (player.getY() / world.getTileSize())));
         List<BiomeData> biomeData = WorldSave.getCurrentSave().getWorld().getData().GetBiomes();
         float sprintingMod = currentModifications.containsKey(PlayerModification.Sprint) ? 2 : 1;
         if (biomeData.size() <= currentBiome) {// "if isOnRoad
@@ -504,9 +504,9 @@ public class WorldStage extends GameStage implements SaveFileContent {
         for (AdventureQuestData adq: Current.player().getQuests())
         {
             if (adq.isTracked) {
-                PointOfInterest nearestValidPOI = adq.getClosestValidPOI(player.pos());
+                PointOfInterest nearestValidPOI = adq.getClosestValidPOI(player.getCenter());
                 if (nearestValidPOI != null) {
-                    navDirection = new Vector2(nearestValidPOI.getPosition()).sub(player.pos());
+                    navDirection = new Vector2(nearestValidPOI.getCenter()).sub(player.getCenter());
                     break;
                 }
 
@@ -527,7 +527,7 @@ public class WorldStage extends GameStage implements SaveFileContent {
                     {
                         EnemySprite sprite = active.getValue();
                         if (sprite.equals(target)){
-                            navDirection = new Vector2(adq.getTargetEnemySprite().pos()).sub(player.pos());
+                            navDirection = new Vector2(adq.getTargetEnemySprite().getCenter()).sub(player.getCenter());
                         }
                     }
                 }
