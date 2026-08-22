@@ -61,6 +61,11 @@ public final class SleeveStore {
         }
     }
 
+    /** A refusal in the same shape as a save attempt, for callers that fail before storing. */
+    public static Result rejected(final String reason) {
+        return new Result(null, reason);
+    }
+
     public static File directory() {
         return new File(ForgeConstants.USER_SLEEVES_DIR);
     }

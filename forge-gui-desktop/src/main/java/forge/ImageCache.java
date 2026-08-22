@@ -51,7 +51,9 @@ import forge.gui.GuiBase;
 import forge.item.IPaperCard;
 import forge.item.InventoryItem;
 import forge.localinstance.properties.ForgeConstants;
+import forge.util.CustomSleeves;
 import forge.util.SleeveArt;
+import forge.util.SleeveStore;
 import forge.localinstance.properties.ForgePreferences;
 import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.localinstance.skin.FSkinProp;
@@ -327,13 +329,25 @@ public class ImageCache {
         }
     }
 
+    /**
+     * Where a sleeve key's source image lives. Card-art keys resolve into the fetch cache; custom
+     * sleeves are the user's own files and resolve into the sleeve store, which is also why they
+     * never reach fetchSleeveArt - it only speaks card keys, so nothing is ever fetched for them.
+     */
+    private static File sleeveSourceFile(final String key) {
+        if (CustomSleeves.isCustomSleeveKey(key)) {
+            return SleeveStore.fileFor(key);
+        }
+        return new File(ForgeConstants.CACHE_SLEEVE_PICS_DIR, SleeveArt.cacheFileName(key));
+    }
+
     /** The cropped card-art sleeve image for a key at the given offset if it is cached, else null (no fetch). */
     public static BufferedImage getSleeveArtCropped(final String key, final int offset) {
         if (key == null || key.isEmpty()) {
             return null;
         }
-        final File f = new File(ForgeConstants.CACHE_SLEEVE_PICS_DIR, SleeveArt.cacheFileName(key));
-        if (!f.exists()) {
+        final File f = sleeveSourceFile(key);
+        if (f == null || !f.exists()) {
             return null;
         }
         try {
@@ -349,8 +363,8 @@ public class ImageCache {
         if (key == null || key.isEmpty()) {
             return null;
         }
-        final File f = new File(ForgeConstants.CACHE_SLEEVE_PICS_DIR, SleeveArt.cacheFileName(key));
-        if (!f.exists()) {
+        final File f = sleeveSourceFile(key);
+        if (f == null || !f.exists()) {
             return null;
         }
         try {

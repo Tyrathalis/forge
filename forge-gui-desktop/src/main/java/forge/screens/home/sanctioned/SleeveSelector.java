@@ -2,9 +2,15 @@ package forge.screens.home.sanctioned;
 
 import java.awt.Dimension;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+
+import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -24,6 +30,9 @@ import forge.toolbox.FScrollPane;
 import forge.toolbox.FSkin;
 import forge.util.Localizer;
 import forge.util.SleeveArt;
+import forge.util.SleeveImport;
+import forge.util.SleeveStore;
+import forge.toolbox.FOptionPane;
 import forge.view.FDialog;
 
 /**
@@ -36,6 +45,7 @@ import forge.view.FDialog;
 public class SleeveSelector extends FDialog {
     private final Map<Integer, FSkin.SkinImage> sleeveMap = FSkin.getSleeves();
     private final JPanel pnlCardArt = new JPanel(new WrapLayout(WrapLayout.LEFT, 6, 6));
+    private final JPanel pnlCustom = new JPanel(new WrapLayout(WrapLayout.LEFT, 6, 6));
     private final int currentIndex;
     private final String currentArtKey;
 
@@ -61,6 +71,16 @@ public class SleeveSelector extends FDialog {
         }
         pnlCardArt.add(makeAddTile());
         content.add(pnlCardArt, "growx");
+
+        content.add(sectionHeader(localizer.getMessage("lblCustomSleeves")), "growx, gaptop 10");
+        pnlCustom.setOpaque(false);
+        final Map<String, Integer> savedOffsets = SleeveArt.parseLibrary(
+                FModel.getPreferences().getPref(FPref.UI_SLEEVE_ART_LIBRARY));
+        for (final String key : SleeveStore.keys()) {
+            pnlCustom.add(makeCustomLabel(key, savedOffsets.getOrDefault(key, SleeveArt.DEFAULT_OFFSET)));
+        }
+        pnlCustom.add(makeCustomAddTile());
+        content.add(pnlCustom, "growx");
 
         content.add(sectionHeader(localizer.getMessage("lblDefaultSleeves")), "growx, gaptop 10");
         final JPanel pnlBuiltIn = new JPanel(new WrapLayout(WrapLayout.LEFT, 6, 6));
@@ -166,6 +186,89 @@ public class SleeveSelector extends FDialog {
         resultArtKey = key;
         resultOffset = chosen.offset;
         setVisible(false);
+    }
+
+    private FLabel makeCustomLabel(final String key, final int offset) {
+        final FLabel lbl = new FLabel.Builder().iconScaleFactor(0.95).iconAlignX(SwingConstants.CENTER)
+                .iconInBackground(true).hoverable(true).selectable(true).selected(key.equals(currentArtKey)).build();
+        sizeTile(lbl);
+        lbl.setToolTipText(Localizer.getInstance().getMessage("lblCustomSleeveTip"));
+        final BufferedImage art = ImageCache.getSleeveArtCropped(key, offset);
+        if (art != null) {
+            lbl.setIcon(new FSkin.UnskinnedIcon(art));
+        }
+        lbl.setCommand((UiCommand) () -> {
+            resultArtKey = key;
+            resultOffset = offset;
+            setVisible(false);
+        });
+        lbl.setRightClickCommand((UiCommand) () -> removeCustom(key, lbl));
+        return lbl;
+    }
+
+    private FLabel makeCustomAddTile() {
+        final Localizer localizer = Localizer.getInstance();
+        final FLabel lbl = new FLabel.Builder().text("+").fontSize(48).fontAlign(SwingConstants.CENTER)
+                .hoverable(true).build();
+        sizeTile(lbl);
+        lbl.setToolTipText(localizer.getMessage("lblAddCustomSleeve"));
+        lbl.setBorder(new FSkin.LineSkinBorder(FSkin.getColor(FSkin.Colors.CLR_BORDERS), 2));
+        lbl.setCommand((UiCommand) this::addCustom);
+        return lbl;
+    }
+
+    /** Pick an image - from disk or from a link the user types - and take it into the store. */
+    private void addCustom() {
+        final Localizer localizer = Localizer.getInstance();
+        final List<String> options = Arrays.asList(
+                localizer.getMessage("lblSleeveFromFile"),
+                localizer.getMessage("lblSleeveFromLink"),
+                localizer.getMessage("lblCancel"));
+        final int choice = FOptionPane.showOptionDialog(localizer.getMessage("lblAddCustomSleeve"),
+                localizer.getMessage("lblCustomSleeves"), null, options, 0);
+
+        final SleeveStore.Result result;
+        if (choice == 0) {
+            final JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle(localizer.getMessage("lblAddCustomSleeve"));
+            chooser.setFileFilter(new FileNameExtensionFilter(
+                    localizer.getMessage("lblImageFiles"), "png", "jpg", "jpeg"));
+            if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            final File chosen = chooser.getSelectedFile();
+            result = SleeveImport.fromFile(chosen);
+        } else if (choice == 1) {
+            final String url = FOptionPane.showInputDialog(localizer.getMessage("lblSleeveImageUrl"),
+                    localizer.getMessage("lblAddCustomSleeve"));
+            if (url == null || url.trim().isEmpty()) {
+                return;
+            }
+            result = SleeveImport.fromUrl(url);
+        } else {
+            return;
+        }
+
+        if (result.error != null) {
+            FOptionPane.showErrorDialog(result.error, localizer.getMessage("lblSleeveImportFailed"));
+            return;
+        }
+        resultArtKey = result.key;
+        resultOffset = SleeveArt.DEFAULT_OFFSET;
+        setVisible(false);
+    }
+
+    private void removeCustom(final String key, final FLabel lbl) {
+        SleeveStore.delete(key);
+        final LinkedHashMap<String, Integer> library = SleeveArt.parseLibrary(
+                FModel.getPreferences().getPref(FPref.UI_SLEEVE_ART_LIBRARY));
+        if (library.remove(key) != null) {
+            FModel.getPreferences().setPref(FPref.UI_SLEEVE_ART_LIBRARY, SleeveArt.formatLibrary(library));
+            FModel.getPreferences().save();
+        }
+        pnlCustom.remove(lbl);
+        pnlCustom.revalidate();
+        pnlCustom.repaint();
     }
 
     private void removeCardArt(final String key, final FLabel lbl) {
