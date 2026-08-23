@@ -123,7 +123,7 @@ public class ChronicleDeckScreen extends FScreen {
                 new FDeckEditor.GameTypeDeckEditorConfig(GameType.Constructed, controller)
                         .setPlayerInventorySupplier(ChronicleDeckScreen::collectionPool)
                         .setCatalogConfig(ItemManagerConfig.QUEST_EDITOR_POOL);
-        Forge.openScreen(new FDeckEditor(config, deck));
+        Forge.openScreen(new ChronicleDeckEditor(config, deck));
     }
 
     /** The collection, as the editor's catalog. Rebuilt per open so a fresh pull shows up. */

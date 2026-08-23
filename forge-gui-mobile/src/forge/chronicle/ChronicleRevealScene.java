@@ -806,8 +806,10 @@ public class ChronicleRevealScene extends FDisplayObject {
         for (int i = 0; i < TEAR_SEGMENTS; i++) {
             float u0 = i / (float) TEAR_SEGMENTS;
             float uMid = (i + 0.5f) / TEAR_SEGMENTS;
-            //1 at the gripped end, 0 at the far end — the tear starts where you pull
-            float grip = dir > 0 ? uMid : 1 - uMid;
+            //1 at the gripped edge, 0 at the far one. You grab the near edge and pull
+            //across, so the tear front travels WITH your hand: swipe right and the
+            //left edge lets go first, the split chasing the finger rightwards.
+            float grip = dir > 0 ? 1 - uMid : uMid;
             float lagStart = (1 - grip) * TEAR_PEEL_LAG;
             float peel = tearProgress <= lagStart ? 0
                     : Math.min(1, (tearProgress - lagStart) / (1 - lagStart));
