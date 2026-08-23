@@ -88,6 +88,24 @@ public class ChronicleKitchenTest extends AITest {
                 "somebody must be around on day 0, or every save looks broken");
     }
 
+    @Test
+    public void theBundledRosterCarriesTheModeWhenResDoesNot() {
+        //res/ arrives by asset delta and can lag the code that needs it; the copy
+        //riding in the jar is what makes the kitchen table exist regardless
+        ChronicleRoster bundled = ChronicleRoster.parse(ChronicleData.readBundledRoster());
+        assertFalse(bundled.isEmpty(), "the bundled rivals.txt must be on the classpath and parse");
+        assertFalse(bundled.activeOn(0).isEmpty(), "the bundled roster needs somebody at day 0");
+    }
+
+    @Test
+    public void theBundledRosterMatchesTheResCopyExactly() {
+        //two copies of one curated file drift silently unless something checks
+        List<String> res = forge.util.FileUtil.readFile(
+                forge.localinstance.properties.ForgeConstants.CHRONICLE_DATA_DIR + ChronicleData.RIVALS_FILE);
+        assertEquals(ChronicleData.readBundledRoster(), res,
+                "res/chronicle/rivals.txt and the bundled copy have diverged");
+    }
+
     // --- the rival's growing collection ------------------------------------
 
     @Test

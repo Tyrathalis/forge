@@ -1,0 +1,27 @@
+# Chronicle rival collectors — the kitchen table (D6, ADR-0071).
+#
+# Rivals are the mode's effort→reward channel: beating one pays a purse, once
+# per played day each. A rival's COLLECTION is never stored — it derives from
+# (run seed, rival id, pack index) and grows one prefix at a time, so their
+# cards are as unrerollable as your own and cost the save nothing.
+#
+# packsPerDay is the size of this kid's allowance, and it is the whole of the
+# difficulty model. There is no power knob: a rival can only ever own what has
+# been RELEASED by the day they bought each pack, so everyone at the table gets
+# stronger as the timeline advances, and the kid with the bigger allowance
+# stays ahead of the kid without one.
+#
+# joinDay is a played day, not a date. Spaced so the table fills out over the
+# first few weeks rather than all at once — you should meet the sharks after
+# you have something to bring.
+#
+# pursePercent is a percentage of economy.txt's pursebaseCents. All numbers here
+# are D5-numbers-pass tuning surface.
+#
+# id|name|joinDay|packsPerDay|pursePercent|flavor
+
+kid-brother|Danny|0|0.5|60|Your little brother. He plays whatever he opened that morning, face up, and asks what everything does.
+neighbor|Marcy from next door|3|1.5|100|Trades hard, plays harder. Keeps her rares in a shoebox and her commons in a drawer.
+lunch-table|Theo|10|2.0|130|Runs the lunch-table games. Has opinions about which colors are good and is usually right.
+older-kid|Vince|21|3.0|180|Somebody's older brother with a paper route and no supervision. Buys a box when the rest of you buy a pack.
+shop-regular|The kid who's always at the shop|42|4.0|240|Nobody knows whose kid he is. He is there when the shop opens and there when it closes.

@@ -39,26 +39,58 @@ public final class ChronicleData {
     }
 
     /**
-     * The rival cast. Unlike the calendar, a missing roster does not throw: it
-     * would lock an existing player out of the whole mode over one data file
-     * that arrives by asset delta. But it must never be SILENT either — an
-     * empty roster is indistinguishable from "nobody has moved in yet", which
-     * is exactly how a failed asset update hid the kitchen table for a whole
-     * release. It is logged here and reported on the screen that needs it.
+     * The rival cast, from res/ if it is there and from the bundled copy if it
+     * is not.
+     *
+     * res/ is delivered by assets.zip and the update delta, which means a data
+     * file introduced alongside NEW CODE can arrive later than the code that
+     * needs it — or, on an install whose delta has never run, not at all. That
+     * is exactly what happened to the kitchen table: every other Chronicle data
+     * file was already present from the original assets.zip, so the mode booted
+     * fine and just quietly had no rivals in it.
+     *
+     * Small curated data that ships with a feature should not depend on asset
+     * delivery to exist at all. The res copy still wins when present, so the
+     * file stays moddable and the curated-data-file convention holds; the
+     * classpath copy rides in the jar/APK with the code, so the feature can
+     * never again be missing on an install that has the code for it. A test
+     * pins the two copies byte-identical so they cannot drift.
      */
     public static ChronicleRoster loadRoster() {
         ChronicleRoster roster = ChronicleRoster.parse(readDataFile(RIVALS_FILE));
-        if (roster.isEmpty()) {
-            System.err.println("Chronicle: no rivals loaded from " + ForgeConstants.CHRONICLE_DATA_DIR
-                    + RIVALS_FILE + " — the kitchen table will be empty. If this is an updated install,"
-                    + " the asset delta has not delivered the file yet.");
+        if (!roster.isEmpty()) {
+            return roster;
         }
+        List<String> bundled = readBundledRoster();
+        if (!bundled.isEmpty()) {
+            System.err.println("Chronicle: " + ForgeConstants.CHRONICLE_DATA_DIR + RIVALS_FILE
+                    + " is missing or empty — falling back to the copy bundled with the code."
+                    + " The asset update has not delivered it to this install.");
+            return ChronicleRoster.parse(bundled);
+        }
+        System.err.println("Chronicle: no rivals could be loaded from res/ OR the bundled copy —"
+                + " the kitchen table will be empty.");
         return roster;
     }
 
-    /** True when the roster data file is missing or empty — the kitchen table says so rather than showing nothing. */
-    public static boolean rosterFileMissing() {
-        return readDataFile(RIVALS_FILE).isEmpty();
+    /** The roster shipped inside the jar/APK, next to the code that needs it. */
+    static List<String> readBundledRoster() {
+        try (java.io.InputStream in = ChronicleData.class.getResourceAsStream("/chronicle/" + RIVALS_FILE)) {
+            if (in == null) {
+                return java.util.Collections.emptyList();
+            }
+            return new java.io.BufferedReader(
+                    new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))
+                    .lines().collect(java.util.stream.Collectors.toList());
+        } catch (java.io.IOException e) {
+            System.err.println("Chronicle: could not read the bundled rivals.txt — " + e);
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /** True when res/ has no usable roster and the bundled copy is carrying the mode. */
+    public static boolean rosterCameFromBundle() {
+        return ChronicleRoster.parse(readDataFile(RIVALS_FILE)).isEmpty();
     }
 
     public static ChroniclePaper loadPaper(ChronicleCalendar calendar, ChronicleConfig config) {

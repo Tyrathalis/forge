@@ -79,9 +79,8 @@ public class ChronicleKitchenScreen extends FScreen {
             //updated install for a release. Say which one it is.
             String message = controller.getRoster().isEmpty()
                     ? caption("nlChronicleRosterMissing",
-                            "The rival roster didn't load (res/chronicle/rivals.txt is missing or empty). "
-                            + "On an updated install this usually means the asset update hasn't landed yet — "
-                            + "reinstall the app to fetch a full asset set.")
+                            "The rival roster didn't load from res/ or from the copy bundled with the app. "
+                            + "That shouldn't be possible — please report it.")
                     : caption("lblChronicleNobodyAround", "Nobody's around yet. Give it a few days.");
             scroller.add(new FLabel.Builder().text(message).font(FSkinFont.get(14)).align(Align.left).build());
         }
