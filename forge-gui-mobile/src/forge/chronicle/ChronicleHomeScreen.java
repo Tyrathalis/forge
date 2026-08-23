@@ -57,6 +57,7 @@ public class ChronicleHomeScreen extends FScreen {
     private final FButton btnOpen = scroller.add(new FButton(""));
     private final FButton btnStore = scroller.add(new FButton(caption("lblChronicleStore", "The Store")));
     private final FButton btnBinder = scroller.add(new FButton(caption("lblChronicleBinder", "Binder")));
+    private final FButton btnKitchen = scroller.add(new FButton(caption("lblChronicleKitchenTable", "The Kitchen Table")));
     //testing-only actions, visible only while Forge dev mode is on
     private final FButton btnDevDay = scroller.add(new FButton("DEV: " + caption("lblChronicleDevNewDay", "New day")));
     private final FButton btnDevCash = scroller.add(new FButton("DEV: +" + formatCents(DEV_CASH_CENTS)));
@@ -72,6 +73,7 @@ public class ChronicleHomeScreen extends FScreen {
         btnOpen.setCommand(e -> Forge.openScreen(new ChronicleOpenScreen()));
         btnStore.setCommand(e -> Forge.openScreen(new ChronicleLgsScreen()));
         btnBinder.setCommand(e -> Forge.openScreen(new ChronicleBinderScreen()));
+        btnKitchen.setCommand(e -> Forge.openScreen(new ChronicleKitchenScreen()));
         btnDevDay.setCommand(e -> {
             ChronicleHub.controller().devAdvanceDay();
             update();
@@ -80,7 +82,7 @@ public class ChronicleHomeScreen extends FScreen {
             ChronicleHub.controller().devGrantCash(DEV_CASH_CENTS);
             update();
         });
-        for (FDisplayObject btn : new FDisplayObject[] { btnBegin, btnPaper, btnCollect, btnOpen, btnStore, btnBinder, btnDevDay, btnDevCash }) {
+        for (FDisplayObject btn : new FDisplayObject[] { btnBegin, btnPaper, btnCollect, btnOpen, btnStore, btnBinder, btnKitchen, btnDevDay, btnDevCash }) {
             btn.setHeight(Utils.scale(44));
         }
     }
@@ -112,6 +114,7 @@ public class ChronicleHomeScreen extends FScreen {
         btnOpen.setVisible(hasRun);
         btnStore.setVisible(hasRun);
         btnBinder.setVisible(hasRun);
+        btnKitchen.setVisible(hasRun);
         boolean devMode = forge.model.FModel.getPreferences().getPrefBoolean(
                 forge.localinstance.properties.ForgePreferences.FPref.DEV_MODE_ENABLED);
         btnDevDay.setVisible(hasRun && devMode);
@@ -130,6 +133,13 @@ public class ChronicleHomeScreen extends FScreen {
             int sealedCount = controller.getRun().sealed.size();
             btnOpen.setEnabled(sealedCount > 0);
             btnOpen.setText(caption("lblChronicleOpenSealed", "Open Sealed") + " (" + sealedCount + ")");
+
+            //surface the day's uncollected purses: the sink's whole job is being
+            //a reason to come back, so it has to say what is still on the table
+            int unpaid = controller.unpaidRivalsToday().size();
+            btnKitchen.setText(unpaid > 0
+                    ? caption("lblChronicleKitchenTable", "The Kitchen Table") + " (" + unpaid + ")"
+                    : caption("lblChronicleKitchenTable", "The Kitchen Table"));
         }
         scroller.revalidate();
     }
