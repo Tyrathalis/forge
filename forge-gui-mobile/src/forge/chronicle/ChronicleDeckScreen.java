@@ -7,6 +7,7 @@ import com.badlogic.gdx.utils.Align;
 
 import forge.Forge;
 import forge.assets.FSkinFont;
+import forge.deck.CardPool;
 import forge.deck.Deck;
 import forge.deck.DeckSection;
 import forge.deck.FDeckEditor;
@@ -54,6 +55,7 @@ public class ChronicleDeckScreen extends FScreen {
     private static final float PADDING = Utils.scale(6);
     private static final float ROW_HEIGHT = Utils.scale(44);
 
+    private final FLabel lblCollection = add(new FLabel.Builder().font(FSkinFont.get(14)).align(Align.left).build());
     private final FButton btnNew = add(new FButton(caption("lblChronicleNewDeck", "New deck")));
     private final FButton btnAuto = add(new FButton(caption("lblChronicleAutoBuild", "Build one for me")));
     private final FScrollPane scroller = add(new FScrollPane() {
@@ -86,6 +88,13 @@ public class ChronicleDeckScreen extends FScreen {
     }
 
     private void update() {
+        //what you have to build from, stated up front. A deckbuilder wants this
+        //anyway, and it makes an empty catalog self-diagnosing: if this says you
+        //own cards and the editor shows none, the fault is downstream of here.
+        CardPool owned = ChronicleHub.controller().collectionAsPool();
+        lblCollection.setText(caption("lblChronicleCollection", "Collection") + ": "
+                + owned.countAll() + " " + caption("lblChronicleCards", "cards") + ", "
+                + owned.countDistinct() + " " + caption("lblChronicleDistinct", "distinct"));
         scroller.clear();
         List<Deck> decks = ChronicleHub.controller().playerDecks();
         if (decks.isEmpty()) {
@@ -263,10 +272,13 @@ public class ChronicleDeckScreen extends FScreen {
 
     @Override
     protected void doLayout(float startY, float width, float height) {
+        float labelHeight = Utils.scale(22);
+        lblCollection.setBounds(PADDING, startY + PADDING / 2, width - 2 * PADDING, labelHeight);
         float buttonWidth = (width - 3 * PADDING) / 2;
-        btnNew.setBounds(PADDING, startY + PADDING, buttonWidth, ROW_HEIGHT);
-        btnAuto.setBounds(2 * PADDING + buttonWidth, startY + PADDING, buttonWidth, ROW_HEIGHT);
-        float top = startY + ROW_HEIGHT + 2 * PADDING;
+        float buttonY = startY + labelHeight + PADDING;
+        btnNew.setBounds(PADDING, buttonY, buttonWidth, ROW_HEIGHT);
+        btnAuto.setBounds(2 * PADDING + buttonWidth, buttonY, buttonWidth, ROW_HEIGHT);
+        float top = buttonY + ROW_HEIGHT + PADDING;
         scroller.setBounds(0, top, width, height - top);
     }
 }
