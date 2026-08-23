@@ -154,7 +154,18 @@ public class ChronicleDeckScreen extends FScreen {
         private FDeckEditor editor;
         private boolean saved = true;
 
-        @Override public void setEditor(FDeckEditor editor) { this.editor = editor; }
+        @Override
+        public void setEditor(FDeckEditor editor) {
+            this.editor = editor;
+            //Attaching is only half the contract: the editor's own deck field is
+            //populated from the controller here, and FDeckEditor.getDeck() reads
+            //that field. Skip this and getDeck() stays null through construction,
+            //so the pages are never told the deck arrived and the catalog is never
+            //refreshed — an editor that opens fine and shows nothing, forever.
+            if (editor != null) {
+                editor.notifyNewControllerModel();
+            }
+        }
         @Override public void setDeck(Deck deck) { this.deck = deck; saved = false; }
         @Override public Deck getDeck() { return deck; }
         @Override public void newDeck() { deck = new Deck(caption("lblChronicleDeck", "Deck")); saved = false; }
