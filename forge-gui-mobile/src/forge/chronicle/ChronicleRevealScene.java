@@ -99,8 +99,16 @@ public class ChronicleRevealScene extends FDisplayObject {
 
     //pacing constants — the dogfood tuning surface
     private static final float TEAR_STRIP_FRACTION = 0.24f;
-    private static final float TEAR_DRAGS_TO_OPEN = 1.1f;   //fraction of wrapper width the finger must travel
+    private static final float TEAR_SWIPE_FRACTION = 0.5f;  //fraction of screen width ONE committed swipe must travel
+    private static final float TEAR_SPRING_RATE = 3.2f;     //progress/sec the wrapper eases shut when released short
+    private static final float TEAR_FLING_MIN = 250f;       //px/s along the locked axis that counts as a committed flick
     private static final float TEAR_FLY_DURATION = 0.45f;
+    private static final int TEAR_SEGMENTS = 16;            //vertical columns the wrapper splits into
+    private static final float TEAR_JAG_FRACTION = 0.05f;   //zigzag amplitude, fraction of wrapper height
+    private static final float TEAR_PEEL_LAG = 0.6f;        //how much later the far end lets go (0 = all at once)
+    private static final float TEAR_CURL_DEG = 16f;         //peel curl at the gripped end
+    private static final float TEAR_LIFT_FRACTION = 0.12f;  //how far a fully peeled segment rises
+    private static final float TEAR_SLIDE_FRACTION = 0.3f;  //how far it slides along the pull
     private static final float FLIP_DURATION = 0.32f;
     private static final float FLY_DURATION = 0.22f;
     private static final float CASCADE_FLIP_DURATION = 0.18f;
@@ -139,6 +147,11 @@ public class ChronicleRevealScene extends FDisplayObject {
     private float glintT = Float.MAX_VALUE;   //independent of phase so the sweep can outlive FLIP
     private float wiggleT = Float.MAX_VALUE;  //tear-hint nudge
     private float tearProgress; //0..1
+    private int tearDir;           //committed drag direction: 0 = uncommitted, -1 left, +1 right
+    private float tearAnchorX;     //local x the committed travel is measured from
+    private int tearFlyDir = 1;    //direction the wrapper was actually torn, kept for the fly-off
+    private boolean tearDragging;  //a finger is down and driving the tear right now
+    private boolean tearSpringing; //finger lifted short of the tear — easing back shut
     private boolean cascading;  //batch auto-advance running
     private int autoFlipRemaining; //ceremony commons batch-flip: cards left in the auto-run
     private float softHoldT;    //counts the soft-pause dwell in CARD_UP
@@ -336,6 +349,14 @@ public class ChronicleRevealScene extends FDisplayObject {
             }
             switch (phase) {
                 case TEAR_IDLE:
+                    if (tearSpringing) {
+                        tearProgress -= TEAR_SPRING_RATE * dt;
+                        if (tearProgress <= 0) {
+                            tearProgress = 0;
+                            tearSpringing = false;
+                            tearDir = 0; //shut again: the next swipe may commit either way
+                        }
+                    }
                     break;
                 case TEAR_FLY:
                     phaseT += dt;
@@ -465,13 +486,60 @@ public class ChronicleRevealScene extends FDisplayObject {
         return true;
     }
 
+    /**
+     * The tear is a committed one-way swipe: the first horizontal travel commits a
+     * direction, and only travel that way opens the wrapper. Pulling back closes it
+     * again, and lifting short of the tear springs it shut — you cannot shake a pack
+     * open, and you never open one by accident on the return stroke.
+     */
     @Override
     public boolean pan(float x, float y, float deltaX, float deltaY, boolean moreVertical) {
-        if (phase == Phase.TEAR_IDLE) {
-            tearProgress += Math.abs(deltaX) / (getWidth() * TEAR_DRAGS_TO_OPEN);
-            if (tearProgress >= 1) {
-                tearProgress = 1;
-                startTearFly();
+        if (phase != Phase.TEAR_IDLE) {
+            return false;
+        }
+        if (!tearDragging) {
+            if (tearDir == 0) {
+                if (moreVertical || deltaX == 0) {
+                    return true; //a drag up or down the wrapper isn't a tear
+                }
+                tearDir = deltaX < 0 ? -1 : 1;
+            }
+            //anchor so wherever the tear currently sits stays put under the finger —
+            //true both for a fresh swipe (progress 0) and one resumed mid-spring
+            tearAnchorX = (x - deltaX) - tearDir * tearProgress * tearTravel();
+            tearDragging = true;
+        }
+        tearSpringing = false;
+        float travelled = (x - tearAnchorX) * tearDir;
+        if (travelled < 0) {
+            tearAnchorX = x; //pulled back past the start: the tear re-anchors here
+            travelled = 0;
+        }
+        tearProgress = Math.min(1, travelled / tearTravel());
+        if (tearProgress >= 1) {
+            tearDragging = false;
+            tearFlyDir = tearDir;
+            tearDir = 0;
+            startTearFly();
+        }
+        return true;
+    }
+
+    /** Finger travel, in local px, that a committed swipe must cover to tear the wrapper. */
+    private float tearTravel() {
+        return getWidth() * TEAR_SWIPE_FRACTION;
+    }
+
+    @Override
+    public boolean panStop(float x, float y) {
+        if (phase == Phase.TEAR_IDLE && tearDragging) {
+            //fling() fires right after this and may still finish the tear; until it
+            //does, a lifted finger means the wrapper closes back up. The committed
+            //direction survives the release so fling() can check the flick against it.
+            tearDragging = false;
+            tearSpringing = tearProgress > 0;
+            if (!tearSpringing) {
+                tearDir = 0; //dragged all the way back before lifting: either way is fair again
             }
             return true;
         }
@@ -480,12 +548,22 @@ public class ChronicleRevealScene extends FDisplayObject {
 
     @Override
     public boolean fling(float velocityX, float velocityY) {
-        if (phase == Phase.TEAR_IDLE) {
-            tearProgress = 1;
-            startTearFly();
-            return true;
+        //a flick finishes the tear only if it flies the way the drag committed to
+        if (phase != Phase.TEAR_IDLE || tearProgress <= 0 || !tearSpringing) {
+            return false;
         }
-        return false;
+        if (Math.abs(velocityX) < TEAR_FLING_MIN || Math.abs(velocityY) > Math.abs(velocityX)) {
+            return false;
+        }
+        if (Math.signum(velocityX) != tearDir) {
+            return false;
+        }
+        tearSpringing = false;
+        tearFlyDir = tearDir;
+        tearDir = 0;
+        tearProgress = 1;
+        startTearFly();
+        return true;
     }
 
     @Override
@@ -678,7 +756,7 @@ public class ChronicleRevealScene extends FDisplayObject {
         }
         drawTornWrapper(g, cx, cy, stageH, 0);
         float wiggle = wiggleT < WIGGLE_DURATION ? (float) Math.sin(wiggleT / WIGGLE_DURATION * Math.PI * 3) * 2 : 0;
-        g.drawText(Forge.getLocalizer().getMessageorUseDefault("lblChronicleTearToOpen", "Drag across to tear open"),
+        g.drawText(Forge.getLocalizer().getMessageorUseDefault("lblChronicleTearToOpen", "Swipe across to tear it open"),
                 FSkinFont.get(13), FSkinColor.getStandardColor(Color.GRAY),
                 wiggle, cy + stageH / 2 - Utils.scale(2), w, Utils.scale(18), false, Align.center, false);
     }
@@ -697,7 +775,13 @@ public class ChronicleRevealScene extends FDisplayObject {
         return art == null || art == ImageCache.getInstance().getDefaultImage() ? null : art;
     }
 
-    /** Wrapper art split at the tear line; flyT > 0 animates strip + body leaving. */
+    /**
+     * The wrapper, split along a jagged tear that propagates across it as you pull.
+     * The wrapper is drawn as vertical columns: each one is whole until the tear
+     * reaches it, then splits at its own point on the jag line and its top peels —
+     * sliding, lifting and curling, the gripped end leading and the far end lagging.
+     * flyT > 0 carries the peeled strip and the body off the stage.
+     */
     private void drawTornWrapper(Graphics g, float cx, float cy, float stageH, float flyT) {
         float artH = stageH * 0.8f;
         float artW = artH * 0.72f;
@@ -710,51 +794,115 @@ public class ChronicleRevealScene extends FDisplayObject {
         float ax = cx - artW / 2;
         float ay = cy - artH / 2;
         float stripH = artH * TEAR_STRIP_FRACTION;
+        float jagAmp = artH * TEAR_JAG_FRACTION;
+        int dir = phase == Phase.TEAR_IDLE && tearDir != 0 ? tearDir : tearFlyDir;
 
-        //body (below the tear line): drops down and fades once flying
+        //the body falls away as one piece once the strip is gone
         float bodyDy = flyT * stageH * 0.7f;
-        float bodyAlpha = 1 - flyT;
-        if (flyT > 0) {
-            g.setAlphaComposite(bodyAlpha);
+        float segW = artW / TEAR_SEGMENTS;
+        float[] edgeY = new float[TEAR_SEGMENTS];
+        float[] edgeLit = new float[TEAR_SEGMENTS];
+
+        for (int i = 0; i < TEAR_SEGMENTS; i++) {
+            float u0 = i / (float) TEAR_SEGMENTS;
+            float uMid = (i + 0.5f) / TEAR_SEGMENTS;
+            //1 at the gripped end, 0 at the far end — the tear starts where you pull
+            float grip = dir > 0 ? uMid : 1 - uMid;
+            float lagStart = (1 - grip) * TEAR_PEEL_LAG;
+            float peel = tearProgress <= lagStart ? 0
+                    : Math.min(1, (tearProgress - lagStart) / (1 - lagStart));
+
+            float sx = ax + u0 * artW;
+            float tearY = ay + stripH + jag(i) * jagAmp * Math.min(1, peel * 2);
+
+            if (peel <= 0) {
+                //untorn: this column of the wrapper is still whole
+                drawWrapperColumn(g, art, real, sx, ay + bodyDy, segW, artH,
+                        u0, u0 + 1f / TEAR_SEGMENTS, 0, 1, 1 - flyT, 0);
+                continue;
+            }
+
+            //body of the column, from its own point on the jag down
+            float bodyTop = tearY - ay;
+            drawWrapperColumn(g, art, real, sx, tearY + bodyDy, segW, artH - bodyTop,
+                    u0, u0 + 1f / TEAR_SEGMENTS, bodyTop / artH, 1, 1 - flyT, 0);
+
+            //the peeled strip above it: slides along the pull, lifts, curls
+            float dx = dir * (peel * artW * TEAR_SLIDE_FRACTION + flyT * getWidth() * 0.9f);
+            float dy = -peel * artH * TEAR_LIFT_FRACTION - flyT * getHeight() * 0.35f;
+            float angle = dir * (peel * TEAR_CURL_DEG + flyT * 30);
+            drawWrapperColumn(g, art, real, sx + dx, ay + dy, segW, bodyTop,
+                    u0, u0 + 1f / TEAR_SEGMENTS, 0, bodyTop / artH, 1 - flyT, angle);
+
+            edgeY[i] = tearY;
+            edgeLit[i] = Math.min(1, peel * 2.5f);
         }
-        if (real) {
-            int srcY = (int) (art.getHeight() * TEAR_STRIP_FRACTION);
-            g.drawRotatedImage(art, ax, ay + stripH + bodyDy, artW, artH - stripH,
-                    cx, cy + bodyDy, 0, srcY, art.getWidth(), art.getHeight() - srcY, 0);
-        } else {
-            g.fillRect(FSkinColor.getStandardColor(new Color(0.16f, 0.14f, 0.22f, 1f)).getColor(),
-                    ax, ay + stripH + bodyDy, artW, artH - stripH);
+
+        //raw paper along the fresh edge — one connected zigzag, not a row of dashes,
+        //bright where the tear just gave way and fading behind it
+        if (flyT < 1) {
+            for (int i = 0; i < TEAR_SEGMENTS; i++) {
+                if (edgeLit[i] <= 0) {
+                    continue;
+                }
+                float x0 = ax + i * segW;
+                g.setAlphaComposite(edgeLit[i] * (1 - flyT) * 0.8f);
+                g.drawLine(Utils.scale(1.5f), Color.WHITE,
+                        x0, edgeY[i] + bodyDy, x0 + segW, edgeY[i] + bodyDy);
+                if (i + 1 < TEAR_SEGMENTS && edgeLit[i + 1] > 0) {
+                    g.drawLine(Utils.scale(1.5f), Color.WHITE,
+                            x0 + segW, edgeY[i] + bodyDy, x0 + segW, edgeY[i + 1] + bodyDy);
+                }
+                g.resetAlphaComposite();
+            }
+        }
+
+        //placeholder wrappers carry the product name where the art would be
+        if (!real && flyT < 1) {
+            g.setAlphaComposite(1 - flyT);
             g.drawText(pack().title, FSkinFont.get(14), Color.WHITE,
                     ax, ay + stripH + bodyDy, artW, artH - stripH, true, Align.center, true);
-        }
-        if (flyT > 0) {
             g.resetAlphaComposite();
         }
+    }
 
-        //strip (above the tear line): shears right with drag, flies up-right when torn
-        float dx = tearProgress * artW * 0.35f + flyT * getWidth() * 0.9f;
-        float dy = -flyT * getHeight() * 0.35f;
-        float angle = tearProgress * 7 + flyT * 40;
-        float stripAlpha = 1 - flyT;
-        g.setAlphaComposite(stripAlpha);
+    /**
+     * One cell of the wrapper: the art's [u0, u1] × [v0, v1] rect, drawn at (x, y)
+     * with the given size and rotated about its bottom-left corner (where a peeling
+     * strip hinges).
+     */
+    private void drawWrapperColumn(Graphics g, Texture art, boolean real,
+                                   float x, float y, float w, float h,
+                                   float u0, float u1, float v0, float v1, float alpha, float angle) {
+        if (h <= 0 || alpha <= 0) {
+            return;
+        }
+        if (alpha < 1) {
+            g.setAlphaComposite(alpha);
+        }
         if (real) {
-            g.drawRotatedImage(art, ax + dx, ay + dy, artW, stripH,
-                    ax + dx, ay + dy + stripH, 0, 0,
-                    art.getWidth(), (int) (art.getHeight() * TEAR_STRIP_FRACTION), angle);
+            int srcX = (int) (art.getWidth() * u0);
+            int srcW = Math.max(1, (int) (art.getWidth() * (u1 - u0)));
+            int srcY = (int) (art.getHeight() * v0);
+            int srcH = Math.max(1, (int) (art.getHeight() * (v1 - v0)));
+            g.drawRotatedImage(art, x, y, w, h, x, y + h, srcX, srcY, srcW, srcH, angle);
         } else {
-            g.startRotateTransform(ax + dx, ay + dy + stripH, angle);
-            g.fillRect(FSkinColor.getStandardColor(new Color(0.22f, 0.19f, 0.3f, 1f)).getColor(),
-                    ax + dx, ay + dy, artW, stripH);
+            g.startRotateTransform(x, y + h, angle);
+            g.fillRect(FSkinColor.getStandardColor(new Color(0.19f, 0.16f, 0.26f, 1f)).getColor(), x, y, w, h);
             g.endTransform();
         }
-        g.resetAlphaComposite();
-
-        //the torn paper edge
-        if (tearProgress > 0.02f && flyT < 1) {
-            g.setAlphaComposite((0.35f + 0.5f * tearProgress) * (1 - flyT));
-            g.drawLine(Utils.scale(1.5f), Color.WHITE, ax, ay + stripH + bodyDy, ax + artW, ay + stripH + bodyDy);
+        if (alpha < 1) {
             g.resetAlphaComposite();
         }
+    }
+
+    /** Stable per-column zigzag offset in [-1, 1] — the same pack always tears the same way. */
+    private float jag(int i) {
+        int h = (packIndex * 73856093) ^ (i * 19349663);
+        h ^= h >>> 13;
+        h *= 0x5bd1e995;
+        h ^= h >>> 15;
+        return ((h & 0xFFFF) / 65535f) * 2 - 1;
     }
 
     private void drawPackArt(Graphics g, Texture art, String title, float x, float y, float w, float h, float alpha) {
