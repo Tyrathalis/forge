@@ -38,8 +38,27 @@ public final class ChronicleData {
                 ChroniclePricing.parseNotables(readDataFile(NOTABLES_FILE)));
     }
 
+    /**
+     * The rival cast. Unlike the calendar, a missing roster does not throw: it
+     * would lock an existing player out of the whole mode over one data file
+     * that arrives by asset delta. But it must never be SILENT either — an
+     * empty roster is indistinguishable from "nobody has moved in yet", which
+     * is exactly how a failed asset update hid the kitchen table for a whole
+     * release. It is logged here and reported on the screen that needs it.
+     */
     public static ChronicleRoster loadRoster() {
-        return ChronicleRoster.parse(readDataFile(RIVALS_FILE));
+        ChronicleRoster roster = ChronicleRoster.parse(readDataFile(RIVALS_FILE));
+        if (roster.isEmpty()) {
+            System.err.println("Chronicle: no rivals loaded from " + ForgeConstants.CHRONICLE_DATA_DIR
+                    + RIVALS_FILE + " — the kitchen table will be empty. If this is an updated install,"
+                    + " the asset delta has not delivered the file yet.");
+        }
+        return roster;
+    }
+
+    /** True when the roster data file is missing or empty — the kitchen table says so rather than showing nothing. */
+    public static boolean rosterFileMissing() {
+        return readDataFile(RIVALS_FILE).isEmpty();
     }
 
     public static ChroniclePaper loadPaper(ChronicleCalendar calendar, ChronicleConfig config) {

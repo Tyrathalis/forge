@@ -74,9 +74,16 @@ public class ChronicleKitchenScreen extends FScreen {
         scroller.clear();
         List<ChronicleRival> rivals = controller.rivalsToday();
         if (rivals.isEmpty()) {
-            scroller.add(new FLabel.Builder()
-                    .text(caption("lblChronicleNobodyAround", "Nobody's around yet. Give it a few days."))
-                    .font(FSkinFont.get(14)).align(Align.left).build());
+            //"nobody has moved in yet" and "the roster file never arrived" look
+            //identical on screen, and the second one hid this whole feature on an
+            //updated install for a release. Say which one it is.
+            String message = controller.getRoster().isEmpty()
+                    ? caption("nlChronicleRosterMissing",
+                            "The rival roster didn't load (res/chronicle/rivals.txt is missing or empty). "
+                            + "On an updated install this usually means the asset update hasn't landed yet — "
+                            + "reinstall the app to fetch a full asset set.")
+                    : caption("lblChronicleNobodyAround", "Nobody's around yet. Give it a few days.");
+            scroller.add(new FLabel.Builder().text(message).font(FSkinFont.get(14)).align(Align.left).build());
         }
         for (ChronicleRival rival : rivals) {
             scroller.add(new RivalTile(rival));

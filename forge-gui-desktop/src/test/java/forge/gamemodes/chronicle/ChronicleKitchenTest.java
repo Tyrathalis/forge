@@ -73,6 +73,21 @@ public class ChronicleKitchenTest extends AITest {
         ChronicleRoster.parse(Arrays.asList("a|A|0|1|100"));
     }
 
+    @Test
+    public void anAbsentRosterFileIsDistinguishableFromAnEmptyDay() {
+        //a missing rivals.txt and "nobody has moved in yet" render identically
+        //unless the roster can say which it is — that ambiguity hid the kitchen
+        //table on an updated install for a whole release
+        assertTrue(ChronicleRoster.parse(new ArrayList<String>()).isEmpty());
+        assertTrue(ChronicleRoster.parse(Arrays.asList("# only a comment", "")).isEmpty());
+        assertFalse(roster().isEmpty());
+        //and a populated roster always has somebody at day 0, so an empty table
+        //on a played save can only mean the data file did not load
+        assertFalse(ChronicleData.loadRoster().isEmpty(), "the shipped rivals.txt must parse");
+        assertFalse(ChronicleData.loadRoster().activeOn(0).isEmpty(),
+                "somebody must be around on day 0, or every save looks broken");
+    }
+
     // --- the rival's growing collection ------------------------------------
 
     @Test

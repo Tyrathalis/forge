@@ -97,4 +97,8 @@ public final class ChronicleRoster {
     public int size() {
         return rivals.size();
     }
+
+    public boolean isEmpty() {
+        return rivals.isEmpty();
+    }
 }
