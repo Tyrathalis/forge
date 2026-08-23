@@ -10,10 +10,15 @@ import forge.item.PaperCard;
 import forge.gamemodes.chronicle.io.ChronicleSaveData;
 
 /**
- * The provenance journal: every sealed opening is recorded (day, product,
+ * The provenance journal: every acquisition is recorded (day, where from,
  * contents), so a card can answer "when did I pull this?" and the binder can
  * sort by true acquisition order. Append-only; at MVP scale (a few packs a
  * day) size is a non-issue.
+ *
+ * It records departures too. Ante can take a card out of the collection, and a
+ * journal that only says where cards came from would quietly lose the more
+ * interesting half of that story — "lost to Marcy, day 34" is exactly what this
+ * mode is for.
  */
 public final class ChronicleAcquisitionLog {
 
@@ -21,19 +26,38 @@ public final class ChronicleAcquisitionLog {
     private static final String RECORD_SEP = "\u001E";
     private static final String FIELD_SEP = "\u001F";
 
-    /** One opening event. */
+    /**
+     * Where an entry's cards came from — or went. BOOSTER and STARTER keep the
+     * names {@link SealedItem.Kind} persisted, so saves written before ante
+     * existed load unchanged.
+     */
+    public enum Source {
+        BOOSTER, STARTER, ANTE_WON, ANTE_LOST;
+
+        public boolean isAnte() {
+            return this == ANTE_WON || this == ANTE_LOST;
+        }
+
+        /** True when this entry ADDED cards to the collection. */
+        public boolean isAcquisition() {
+            return this != ANTE_LOST;
+        }
+    }
+
+    /** One acquisition (or, for ANTE_LOST, one departure). */
     public static final class Entry {
         public final long seq;
         public final int dayIndex;
-        public final SealedItem.Kind kind;
-        public final String editionCode;
+        public final Source kind;
+        /** Edition code for openings; rival id for ante events. */
+        public final String origin;
         public final List<String> cardIdentities;
 
-        Entry(long seq, int dayIndex, SealedItem.Kind kind, String editionCode, List<String> cardIdentities) {
+        Entry(long seq, int dayIndex, Source kind, String origin, List<String> cardIdentities) {
             this.seq = seq;
             this.dayIndex = dayIndex;
             this.kind = kind;
-            this.editionCode = editionCode;
+            this.origin = origin;
             this.cardIdentities = Collections.unmodifiableList(cardIdentities);
         }
     }
@@ -46,15 +70,33 @@ public final class ChronicleAcquisitionLog {
 
     /** Record one opening. Cards keep pack order. */
     public Entry record(int dayIndex, SealedItem.Kind kind, String editionCode, Iterable<PaperCard> cards) {
+        return record(dayIndex, Source.valueOf(kind.name()), editionCode, cards);
+    }
+
+    /**
+     * Record cards won at ante. These are acquisitions like any other — a card
+     * won off a rival can absolutely be the first copy you have ever owned, so
+     * it takes a first-pull ordinal and earns its NEW badge.
+     */
+    public Entry recordAnteWon(int dayIndex, String rivalId, Iterable<PaperCard> cards) {
+        return record(dayIndex, Source.ANTE_WON, rivalId, cards);
+    }
+
+    /** Record cards lost at ante. Never touches first-pull ordinals: the card was still once yours. */
+    public Entry recordAnteLost(int dayIndex, String rivalId, Iterable<PaperCard> cards) {
+        return record(dayIndex, Source.ANTE_LOST, rivalId, cards);
+    }
+
+    private Entry record(int dayIndex, Source source, String origin, Iterable<PaperCard> cards) {
         List<String> identities = new ArrayList<>();
         for (PaperCard card : cards) {
             String identity = identityOf(card);
             identities.add(identity);
-            if (!firstAcquired.containsKey(identity)) {
+            if (source.isAcquisition() && !firstAcquired.containsKey(identity)) {
                 firstAcquired.put(identity, nextCardOrdinal++);
             }
         }
-        Entry entry = new Entry(nextSeq++, dayIndex, kind, editionCode, identities);
+        Entry entry = new Entry(nextSeq++, dayIndex, source, origin, identities);
         entries.add(entry);
         return entry;
     }
@@ -124,7 +166,7 @@ public final class ChronicleAcquisitionLog {
                 events.append(RECORD_SEP);
             }
             events.append(entry.seq).append(FIELD_SEP).append(entry.dayIndex).append(FIELD_SEP)
-                  .append(entry.kind).append(FIELD_SEP).append(entry.editionCode);
+                  .append(entry.kind).append(FIELD_SEP).append(entry.origin);
             for (String identity : entry.cardIdentities) {
                 events.append(FIELD_SEP).append(identity);
             }
@@ -158,7 +200,7 @@ public final class ChronicleAcquisitionLog {
                     identities.add(f[i]);
                 }
                 entries.add(new Entry(Long.parseLong(f[0]), Integer.parseInt(f[1]),
-                        SealedItem.Kind.valueOf(f[2]), f[3], identities));
+                        Source.valueOf(f[2]), f[3], identities));
             }
         }
         String firsts = data.readString("firstAcquired");

@@ -49,8 +49,18 @@ public final class ChronicleRivalPool {
         this.runSeed = runSeed;
     }
 
-    /** Everything this rival owns by the end of the given played day. */
-    public CardPool poolFor(ChronicleRival rival, int dayIndex) {
+    /**
+     * Everything this rival owns by the end of the given played day, after ante.
+     * Only the DERIVED base is cached — the ledger delta is cheap and mutable, so
+     * applying it fresh each call keeps a settled ante visible immediately.
+     */
+    public CardPool poolFor(ChronicleRival rival, int dayIndex, ChronicleRivalLedger ledger) {
+        CardPool derived = derivedPoolFor(rival, dayIndex);
+        return ledger == null ? derived : ledger.applyTo(rival.id, derived);
+    }
+
+    /** The seed-pure base: what this rival's allowance bought, before anything changed hands. */
+    public CardPool derivedPoolFor(ChronicleRival rival, int dayIndex) {
         String key = rival.id + "@" + dayIndex;
         CardPool cached = cache.get(key);
         if (cached != null) {

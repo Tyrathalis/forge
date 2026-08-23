@@ -5,22 +5,30 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import forge.item.PaperCard;
 import forge.gamemodes.chronicle.io.ChronicleSaveData;
 
 /**
  * The kitchen table: who you can play today, what beating them pays, and what
  * has already been collected.
  *
- * This is the mode's effort→reward channel (plan pin 8) and the shape of the
- * grind is the thing dogfood has to judge, so it lives behind config knobs
- * rather than constants. The shipped shape: <b>each rival pays once per played
- * day</b>, rematches are always available and always free but pay nothing, and
- * the purse scales with the rival. Time converts into progress through deck
- * quality and taking on harder rivals rather than through repetition — which
- * keeps the no-engagement-traps stance (the player owns their clock) and keeps
- * the anti-exploit invariant (income cannot be farmed by replaying one
- * opponent). If dogfood reads that as too bounded to satisfy pin 8, the pin
- * stands and this is what changes.
+ * This is the mode's effort→reward channel (plan pin 8), and it has two speeds.
+ *
+ * <b>The cash purse is bounded:</b> each rival pays once per played day, and a
+ * rematch for money is free to play but pays nothing. That keeps income
+ * unfarmable and the clock the player's.
+ *
+ * <b>Ante is unbounded, and priced in risk instead of time.</b> A player
+ * confident in their deck can keep playing for keeps as long as both sides have
+ * something to put up. It is self-limiting three ways rather than by a timer:
+ * you stake a card from your own deck every game, the rival's collection
+ * actually depletes as you take cards off them, and they stop playing for keeps
+ * once they are down to what they need ({@link ChronicleConfig#anteRivalFloorCards}).
+ * By volume it is a poor way to get cards — one per won game against a free
+ * ration of two packs a day — which is exactly why it can be unlimited.
+ *
+ * The split is the answer to a question ADR-0071 left open, and it is still the
+ * thing dogfood has to judge, so both halves sit behind config knobs.
  */
 public final class ChronicleKitchen {
 
@@ -34,6 +42,9 @@ public final class ChronicleKitchen {
         public final long purseCents;
         /** True when this was the rival's paying game for the day. */
         public final boolean paid;
+        /** Cards that changed hands, if this was played for keeps. */
+        public final List<PaperCard> anteWon = new ArrayList<>();
+        public final List<PaperCard> anteLost = new ArrayList<>();
 
         public Result(int dayIndex, String rivalId, String deckName, boolean won, long purseCents, boolean paid) {
             this.dayIndex = dayIndex;
@@ -49,6 +60,15 @@ public final class ChronicleKitchen {
     private final Map<String, Integer> lastPaidDay = new HashMap<>();
     /** Lifetime tallies, for the paper and the home screen. */
     private final Map<String, int[]> record = new HashMap<>(); //rivalId -> {wins, losses}
+
+    /**
+     * Whether a rival will still put cards up. They stop when their collection
+     * is down to roughly what a deck needs — a kid who has been cleaned out says
+     * so rather than handing over their last playable.
+     */
+    public static boolean rivalWillAnte(ChronicleConfig config, int rivalPoolSize) {
+        return rivalPoolSize >= config.anteRivalFloorCards;
+    }
 
     /** What beating this rival is worth, before the once-per-day check. */
     public static long purseCents(ChronicleConfig config, ChronicleRival rival) {

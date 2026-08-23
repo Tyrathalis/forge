@@ -314,12 +314,19 @@ public final class ChronicleController {
         public final long purseCents;
         /** False = today's purse is already collected; the rematch is free to play and pays nothing. */
         public final boolean paying;
+        /** False = this rival is down to what they need and won't play for keeps. */
+        public final boolean anteAvailable;
+        /** How many cards the rival has left — what "they've run out of spares" is measured against. */
+        public final int rivalPoolSize;
 
-        Challenge(ChronicleRival rival, Deck rivalDeck, long purseCents, boolean paying) {
+        Challenge(ChronicleRival rival, Deck rivalDeck, long purseCents, boolean paying,
+                  boolean anteAvailable, int rivalPoolSize) {
             this.rival = rival;
             this.rivalDeck = rivalDeck;
             this.purseCents = purseCents;
             this.paying = paying;
+            this.anteAvailable = anteAvailable;
+            this.rivalPoolSize = rivalPoolSize;
         }
     }
 
@@ -344,11 +351,13 @@ public final class ChronicleController {
         if (!rival.isAroundOn(day)) {
             throw new IllegalArgumentException("Chronicle: " + rival.id + " is not around on day " + day);
         }
-        CardPool pool = rivalPool.poolFor(rival, day);
+        CardPool pool = rivalPool.poolFor(rival, day, run.rivalLedger);
         long deckSeed = ChronicleSeeds.deriveDaily(run.runSeed, day, "rival-deck:" + rival.id);
         Deck deck = deckSource.buildFrom(pool, deckSeed, rival.name);
         boolean paying = run.kitchen.purseAvailable(rival, day);
-        return new Challenge(rival, deck, paying ? ChronicleKitchen.purseCents(config, rival) : 0, paying);
+        int poolSize = pool.countAll();
+        return new Challenge(rival, deck, paying ? ChronicleKitchen.purseCents(config, rival) : 0, paying,
+                ChronicleKitchen.rivalWillAnte(config, poolSize), poolSize);
     }
 
     /**
@@ -356,10 +365,57 @@ public final class ChronicleController {
      * engine's verdict — Chronicle never decides who won.
      */
     public ChronicleKitchen.Result recordMatch(ChronicleRival rival, String deckName, boolean won) {
+        return recordMatch(rival, deckName, won, null, null);
+    }
+
+    /**
+     * Record a finished match, settling any cards that changed hands at ante.
+     *
+     * Both sides move in one place: the player's collection gains and loses, the
+     * rival's ledger delta mirrors it, and the provenance journal records where
+     * each card went as well as where it came from. The engine decides all of it
+     * — {@code wonCards} and {@code lostCards} come straight from
+     * GameOutcome.AnteResult.
+     */
+    public ChronicleKitchen.Result recordMatch(ChronicleRival rival, String deckName, boolean won,
+                                               List<PaperCard> wonCards, List<PaperCard> lostCards) {
         int day = run.timeline.getDayIndex();
         ChronicleKitchen.Result result = run.kitchen.record(config, rival, day, deckName, won);
         if (result.purseCents > 0) {
             run.wallet.credit(result.purseCents);
+        }
+
+        List<PaperCard> gained = new ArrayList<>();
+        if (wonCards != null) {
+            for (PaperCard card : wonCards) {
+                run.collection.add(card, 1);
+                gained.add(card);
+            }
+        }
+        List<PaperCard> given = new ArrayList<>();
+        if (lostCards != null) {
+            for (PaperCard card : lostCards) {
+                //the engine already decided this card is gone; if the collection
+                //somehow disagrees, trust the collection and log the discrepancy
+                if (run.collection.remove(card, 1)) {
+                    given.add(card);
+                } else {
+                    System.err.println("Chronicle: ante lost a card the collection didn't hold: " + card);
+                }
+            }
+        }
+        if (!gained.isEmpty() || !given.isEmpty()) {
+            //from the rival's side of the table the two lists swap
+            run.rivalLedger.settle(rival.id, gained, given);
+            if (!gained.isEmpty()) {
+                run.acquisitions.recordAnteWon(day, rival.id, gained);
+                result.anteWon.addAll(gained);
+            }
+            if (!given.isEmpty()) {
+                run.acquisitions.recordAnteLost(day, rival.id, given);
+                result.anteLost.addAll(given);
+            }
+            bumpMetaCounter("totalAnteGames");
         }
         bumpMetaCounter(won ? "totalKitchenWins" : "totalKitchenLosses");
         autosave();

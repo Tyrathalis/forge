@@ -96,8 +96,8 @@ public class ChronicleKitchenTest extends AITest {
         ChronicleRival marcy = roster().byId("marcy");
         ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
 
-        CardPool early = pool.poolFor(marcy, 10);
-        CardPool later = pool.poolFor(marcy, 17);
+        CardPool early = pool.derivedPoolFor(marcy, 10);
+        CardPool later = pool.derivedPoolFor(marcy, 17);
         assertTrue(early.countAll() > 0, "rival should own something by day 10");
         assertTrue(later.countAll() > early.countAll(), "a week of allowance should add cards");
         for (Map.Entry<PaperCard, Integer> e : early) {
@@ -112,12 +112,12 @@ public class ChronicleKitchenTest extends AITest {
         ChronicleCalendar calendar = ChronicleData.loadCalendar();
 
         //a fresh derivation of the same run seed must reproduce it exactly
-        CardPool first = new ChronicleRivalPool(calendar, RUN_SEED).poolFor(marcy, 12);
-        CardPool second = new ChronicleRivalPool(calendar, RUN_SEED).poolFor(marcy, 12);
+        CardPool first = new ChronicleRivalPool(calendar, RUN_SEED).derivedPoolFor(marcy, 12);
+        CardPool second = new ChronicleRivalPool(calendar, RUN_SEED).derivedPoolFor(marcy, 12);
         assertEquals(digest(second), digest(first), "same run seed must give the same rival collection");
 
         //and a different run must not
-        CardPool other = new ChronicleRivalPool(calendar, RUN_SEED + 1).poolFor(marcy, 12);
+        CardPool other = new ChronicleRivalPool(calendar, RUN_SEED + 1).derivedPoolFor(marcy, 12);
         assertFalse(digest(other).equals(digest(first)), "a different run seed should give a different rival");
     }
 
@@ -132,7 +132,7 @@ public class ChronicleKitchenTest extends AITest {
             releaseDay.put(r.editionCode, r.releaseDay);
         }
         int day = 30;
-        for (Map.Entry<PaperCard, Integer> e : pool.poolFor(marcy, day)) {
+        for (Map.Entry<PaperCard, Integer> e : pool.derivedPoolFor(marcy, day)) {
             Integer released = releaseDay.get(e.getKey().getEdition());
             if (released != null) {
                 assertTrue(released <= day,
@@ -147,8 +147,8 @@ public class ChronicleKitchenTest extends AITest {
         //bought it in week one still has it in week six
         ChronicleRival kid = roster().byId("kid");
         ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
-        CardPool early = pool.poolFor(kid, 6);
-        CardPool late = pool.poolFor(kid, 42);
+        CardPool early = pool.derivedPoolFor(kid, 6);
+        CardPool late = pool.derivedPoolFor(kid, 42);
         for (Map.Entry<PaperCard, Integer> e : early) {
             assertTrue(late.count(e.getKey()) >= e.getValue(),
                     "rival lost an out-of-print card: " + e.getKey());
@@ -162,7 +162,7 @@ public class ChronicleKitchenTest extends AITest {
         //DeckGenPool is keyed by NAME and count-blind, so this is the clamp under test
         ChronicleRival marcy = roster().byId("marcy");
         ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
-        CardPool owned = pool.poolFor(marcy, 24);
+        CardPool owned = pool.derivedPoolFor(marcy, 24);
 
         Deck deck = new ChronicleDeckBuilder().buildFrom(owned, 1234L, "Marcy");
         Map<String, Integer> ownedByName = new HashMap<>();
@@ -188,7 +188,7 @@ public class ChronicleKitchenTest extends AITest {
     public void aGeneratedDeckIsLegalSizeAndReproducible() {
         ChronicleRival marcy = roster().byId("marcy");
         ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
-        CardPool owned = pool.poolFor(marcy, 24);
+        CardPool owned = pool.derivedPoolFor(marcy, 24);
 
         Deck first = new ChronicleDeckBuilder().buildFrom(owned, 99L, "Marcy");
         Deck second = new ChronicleDeckBuilder().buildFrom(owned, 99L, "Marcy");
@@ -346,6 +346,122 @@ public class ChronicleKitchenTest extends AITest {
         reloaded.load(decks.save(), ChronicleController.cardDbResolver());
         assertEquals(reloaded.size(), 1);
         assertEquals(reloaded.get("burn").getOrCreate(DeckSection.Main).count(bolt), 3);
+    }
+
+    // --- ante ---------------------------------------------------------------
+
+    @Test
+    public void anteMovesCardsOffTheRivalsDerivedBase() {
+        ChronicleRival marcy = roster().byId("marcy");
+        ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
+        ChronicleRivalLedger ledger = new ChronicleRivalLedger();
+
+        CardPool before = pool.poolFor(marcy, 20, ledger);
+        PaperCard taken = before.iterator().next().getKey();
+        int held = before.count(taken);
+
+        ledger.settle("marcy", java.util.Collections.singletonList(taken), java.util.Collections.emptyList());
+        CardPool after = pool.poolFor(marcy, 20, ledger);
+        assertEquals(after.count(taken), held - 1, "the rival should be down the card you won");
+        assertEquals(after.countAll(), before.countAll() - 1);
+
+        //and the seed-pure base is untouched — only the delta moved
+        assertEquals(pool.derivedPoolFor(marcy, 20).count(taken), held);
+    }
+
+    @Test
+    public void aStrippedRivalRecoversAsTheirAllowanceRollsIn() {
+        //the catch-up mechanic that needed no mechanic: the derived term keeps
+        //growing on schedule, so extraction can never outrun the release calendar
+        ChronicleRival marcy = roster().byId("marcy");
+        ChronicleRivalPool pool = new ChronicleRivalPool(ChronicleData.loadCalendar(), RUN_SEED);
+        ChronicleRivalLedger ledger = new ChronicleRivalLedger();
+
+        CardPool day20 = pool.poolFor(marcy, 20, ledger);
+        List<PaperCard> looted = new ArrayList<>();
+        int wanted = 10;
+        for (Map.Entry<PaperCard, Integer> e : day20) {
+            if (looted.size() >= wanted) {
+                break;
+            }
+            looted.add(e.getKey());
+        }
+        ledger.settle("marcy", looted, java.util.Collections.emptyList());
+
+        int strippedNow = pool.poolFor(marcy, 20, ledger).countAll();
+        int laterAfterLoss = pool.poolFor(marcy, 40, ledger).countAll();
+        assertTrue(laterAfterLoss > strippedNow, "twenty days of allowance should rebuild them");
+        //but never past where they would have been anyway
+        assertTrue(laterAfterLoss < pool.derivedPoolFor(marcy, 40).countAll() + 1,
+                "recovery must not exceed the derived curve");
+    }
+
+    @Test
+    public void cardsWonBackCancelRatherThanAccumulate() {
+        //one card ping-ponging between binders must not grow both piles forever
+        ChronicleRivalLedger ledger = new ChronicleRivalLedger();
+        PaperCard bolt = card("Lightning Bolt");
+
+        ledger.settle("marcy", java.util.Collections.singletonList(bolt), java.util.Collections.emptyList());
+        assertEquals(ledger.lostBy("marcy").count(bolt), 1);
+
+        ledger.settle("marcy", java.util.Collections.emptyList(), java.util.Collections.singletonList(bolt));
+        assertEquals(ledger.lostBy("marcy").count(bolt), 0, "winning it back should cancel the loss");
+        assertEquals(ledger.wonBy("marcy").count(bolt), 0, "and must not book a phantom gain");
+        assertTrue(ledger.isEmpty());
+    }
+
+    @Test
+    public void theLedgerSurvivesSaveAndReload() {
+        ChronicleRivalLedger ledger = new ChronicleRivalLedger();
+        PaperCard bolt = card("Lightning Bolt");
+        PaperCard shivan = card("Shivan Dragon");
+        ledger.settle("marcy", java.util.Collections.singletonList(bolt),
+                java.util.Collections.singletonList(shivan));
+
+        ChronicleRivalLedger reloaded = new ChronicleRivalLedger();
+        reloaded.load(ledger.save(), ChronicleController.cardDbResolver());
+        assertEquals(reloaded.lostBy("marcy").count(bolt), 1);
+        assertEquals(reloaded.wonBy("marcy").count(shivan), 1);
+    }
+
+    @Test
+    public void aRivalStopsPlayingForKeepsWhenTheyRunLow() {
+        ChronicleConfig config = config();
+        assertTrue(ChronicleKitchen.rivalWillAnte(config, config.anteRivalFloorCards));
+        assertTrue(ChronicleKitchen.rivalWillAnte(config, config.anteRivalFloorCards + 50));
+        assertFalse(ChronicleKitchen.rivalWillAnte(config, config.anteRivalFloorCards - 1),
+                "a cleaned-out rival should decline rather than hand over their last playable");
+    }
+
+    @Test
+    public void anteWinsAreRealAcquisitionsAndLossesAreRecorded() {
+        ChronicleAcquisitionLog log = new ChronicleAcquisitionLog();
+        PaperCard shivan = card("Shivan Dragon");
+        PaperCard bolt = card("Lightning Bolt");
+
+        log.recordAnteWon(12, "marcy", java.util.Collections.singletonList(shivan));
+        assertTrue(log.firstAcquiredOrdinal(shivan) > 0,
+                "a card won at ante can be the first copy you ever owned — it earns its NEW badge");
+        assertEquals(log.eventsFor(shivan).get(0).kind, ChronicleAcquisitionLog.Source.ANTE_WON);
+        assertEquals(log.eventsFor(shivan).get(0).origin, "marcy");
+
+        log.recordAnteLost(12, "marcy", java.util.Collections.singletonList(bolt));
+        assertEquals(log.firstAcquiredOrdinal(bolt), 0, "losing a card must not mint an acquisition ordinal");
+        assertEquals(log.eventsFor(bolt).get(0).kind, ChronicleAcquisitionLog.Source.ANTE_LOST);
+        assertFalse(ChronicleAcquisitionLog.Source.ANTE_LOST.isAcquisition());
+    }
+
+    @Test
+    public void theJournalStillLoadsSavesWrittenBeforeAnteExisted() {
+        //Source keeps SealedItem.Kind's names precisely so old records resolve
+        ChronicleAcquisitionLog log = new ChronicleAcquisitionLog();
+        log.record(3, forge.gamemodes.chronicle.SealedItem.Kind.BOOSTER, "LEA",
+                java.util.Collections.singletonList(card("Lightning Bolt")));
+        ChronicleAcquisitionLog reloaded = new ChronicleAcquisitionLog();
+        reloaded.load(log.save());
+        assertEquals(reloaded.all().get(0).kind, ChronicleAcquisitionLog.Source.BOOSTER);
+        assertEquals(reloaded.all().get(0).origin, "LEA");
     }
 
     // --- helpers ------------------------------------------------------------

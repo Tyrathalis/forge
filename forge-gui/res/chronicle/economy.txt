@@ -20,6 +20,14 @@ lgsStockSlots=4
 # up with a real deck, not replace the allowance.
 pursebaseCents=150
 
+# Playing for keeps: a rival stops putting cards up once their collection is
+# down to about this many. Their deck needs ~36 non-basics, so this leaves a
+# real margin of spares - a kid who has been cleaned out says so rather than
+# handing over their last playable. This is the ONLY limit on ante games; the
+# channel is otherwise unbounded and priced in risk (ADR-0071 + the 08-22
+# two-speed amendment).
+anteRivalFloorCards=75
+
 # Buylist base (what the shop PAYS), cents per rarity. Notables multiply
 # these - see notables.txt.
 buylistBasicLandCents=1

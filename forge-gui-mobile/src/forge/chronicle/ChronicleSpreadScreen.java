@@ -14,6 +14,7 @@ import forge.gamemodes.chronicle.ChronicleAcquisitionLog;
 import forge.gamemodes.chronicle.ChronicleCalendar;
 import forge.gamemodes.chronicle.ChronicleController;
 import forge.gamemodes.chronicle.ChronicleRelease;
+import forge.gamemodes.chronicle.ChronicleRival;
 import forge.gamemodes.chronicle.SealedItem;
 import forge.item.PaperCard;
 import forge.itemmanager.CardManager;
@@ -108,7 +109,7 @@ public class ChronicleSpreadScreen extends FScreen {
         } else {
             for (ChronicleAcquisitionLog.Entry event : events) {
                 sb.append('\n').append(caption("lblChronicleDay", "Day")).append(' ').append(event.dayIndex + 1)
-                  .append(" - ").append(productLabel(event.editionCode, event.kind));
+                  .append(" - ").append(originLabel(event));
                 int copies = ChronicleAcquisitionLog.copiesIn(event, card);
                 if (copies > 1) {
                     sb.append("  x").append(copies);
@@ -144,6 +145,29 @@ public class ChronicleSpreadScreen extends FScreen {
             }
         }
         FOptionPane.showMessageDialog(sb.toString(), card.getName());
+    }
+
+    /**
+     * Where an entry's cards came from — or went. The journal records ante both
+     * ways, so a card can read "lost to Marcy" as readily as "Alpha booster pack".
+     */
+    private String originLabel(ChronicleAcquisitionLog.Entry event) {
+        switch (event.kind) {
+            case ANTE_WON: {
+                ChronicleRival rival = ChronicleHub.controller().getRoster().byId(event.origin);
+                return caption("lblChronicleWonFrom", "won from") + " "
+                        + (rival != null ? rival.name : event.origin);
+            }
+            case ANTE_LOST: {
+                ChronicleRival rival = ChronicleHub.controller().getRoster().byId(event.origin);
+                return caption("lblChronicleLostTo", "lost to") + " "
+                        + (rival != null ? rival.name : event.origin);
+            }
+            case STARTER:
+                return productLabel(event.origin, SealedItem.Kind.STARTER);
+            default:
+                return productLabel(event.origin, SealedItem.Kind.BOOSTER);
+        }
     }
 
     private String productLabel(String editionCode, SealedItem.Kind kind) {

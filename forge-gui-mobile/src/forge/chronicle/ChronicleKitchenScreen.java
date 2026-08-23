@@ -27,12 +27,11 @@ import forge.util.Utils;
  * The kitchen table: who's around today, what beating them pays, and your
  * record against them.
  *
- * This is the mode's effort→reward channel (plan pin 8). Each rival pays once
- * per played day; after that they will still play you as many times as you
- * like, for nothing. That is the shape ADR-0071 recommended and left for the
- * dogfood to judge — income cannot be farmed by replaying one kid, but the
- * games never stop being available, and daily earning capacity grows as the
- * timeline brings more rivals to the table.
+ * This is the mode's effort→reward channel (plan pin 8), and it has two speeds.
+ * Cash is bounded — each rival pays once per played day — so income cannot be
+ * farmed. Playing for keeps is unbounded and priced in risk instead: you stake a
+ * card out of your own deck every game, and the rival's collection really
+ * depletes, until they are down to what they need and stop putting cards up.
  */
 public class ChronicleKitchenScreen extends FScreen {
 
@@ -90,7 +89,7 @@ public class ChronicleKitchenScreen extends FScreen {
      * game impossible rather than letting the player walk into a broken match:
      * no decks at all, and a deck the binder no longer backs.
      */
-    private void challenge(ChronicleRival rival) {
+    private void challenge(ChronicleRival rival, boolean forKeeps) {
         ChronicleController controller = ChronicleHub.controller();
         List<Deck> decks = controller.playerDecks();
         if (decks.isEmpty()) {
@@ -118,22 +117,53 @@ public class ChronicleKitchenScreen extends FScreen {
             return;
         }
         if (playable.size() == 1) {
-            start(rival, playable.get(0));
+            start(rival, playable.get(0), forKeeps);
             return;
         }
         GuiChoose.oneOrNone(caption("lblChronicleWhichDeck", "Which deck?"), playable, chosen -> {
             if (chosen != null) {
-                start(rival, chosen);
+                start(rival, chosen, forKeeps);
             }
         });
     }
 
     /** Deriving the rival's collection and building their deck is real work — do it off the GL thread. */
-    private void start(ChronicleRival rival, Deck playerDeck) {
+    private void start(ChronicleRival rival, Deck playerDeck, boolean forKeeps) {
         LoadingOverlay.runBackgroundTask(rival.name + " " + caption("lblChronicleDigsOutADeck", "digs out a deck..."), () -> {
             final ChronicleController.Challenge challenge = ChronicleHub.controller().challenge(rival);
-            FThreads.invokeInEdtLater(() -> ChronicleMatch.play(challenge, playerDeck, this::update));
+            FThreads.invokeInEdtLater(() -> {
+                if (forKeeps && !challenge.anteAvailable) {
+                    FOptionPane.showMessageDialog(rival.name + " "
+                            + caption("lblChronicleWontAnte", "hasn't got anything spare to put up."), rival.name);
+                    update();
+                    return;
+                }
+                if (forKeeps) {
+                    confirmStake(rival, playerDeck, challenge);
+                } else {
+                    ChronicleMatch.play(challenge, playerDeck, false, this::update);
+                }
+            });
         });
+    }
+
+    /**
+     * Ante is the one action in Chronicle that can permanently take a card out
+     * of the collection, and seed integrity means there is no taking it back. It
+     * gets said plainly, once, before the cards are shuffled.
+     */
+    private void confirmStake(ChronicleRival rival, Deck playerDeck, ChronicleController.Challenge challenge) {
+        String warning = caption("nlChronicleAnteWarning",
+                "Playing for keeps. You each put up a card of the same rarity, drawn at random from your deck "
+                        + "— winner takes both. Whatever you lose is gone for good.")
+                + "\n\n" + playerDeck.getName();
+        FOptionPane.showConfirmDialog(warning, rival.name,
+                caption("lblChroniclePlayForKeeps", "Play for keeps"), caption("lblCancel", "Cancel"),
+                false, confirmed -> {
+                    if (confirmed) {
+                        ChronicleMatch.play(challenge, playerDeck, true, this::update);
+                    }
+                });
     }
 
     /** One rival: who they are, what today's game is worth, and how you've done against them. */
@@ -141,6 +171,7 @@ public class ChronicleKitchenScreen extends FScreen {
         private final FLabel lblName;
         private final FLabel lblFlavor;
         private final FButton btnPlay;
+        private final FButton btnAnte;
 
         RivalTile(ChronicleRival rival) {
             ChronicleController controller = ChronicleHub.controller();
@@ -162,7 +193,11 @@ public class ChronicleKitchenScreen extends FScreen {
                                     forge.gamemodes.chronicle.ChronicleKitchen.purseCents(controller.getConfig(), rival))
                     : caption("lblChronicleRematch", "Rematch (no money on it)");
             btnPlay = add(new FButton(label));
-            btnPlay.setCommand(e -> challenge(rival));
+            btnPlay.setCommand(e -> challenge(rival, false));
+
+            //the unbounded channel: always offered, priced in risk rather than time
+            btnAnte = add(new FButton(caption("lblChroniclePlayForKeeps", "Play for keeps")));
+            btnAnte.setCommand(e -> challenge(rival, true));
         }
 
         float preferredHeight() {
@@ -175,7 +210,9 @@ public class ChronicleKitchenScreen extends FScreen {
             float flavorHeight = Utils.scale(30);
             lblName.setBounds(0, 0, width, nameHeight);
             lblFlavor.setBounds(0, nameHeight, width, flavorHeight);
-            btnPlay.setBounds(0, nameHeight + flavorHeight, width, ROW_HEIGHT);
+            float half = (width - PADDING) / 2;
+            btnPlay.setBounds(0, nameHeight + flavorHeight, half, ROW_HEIGHT);
+            btnAnte.setBounds(half + PADDING, nameHeight + flavorHeight, half, ROW_HEIGHT);
         }
     }
 
