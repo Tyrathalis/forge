@@ -223,6 +223,17 @@ public final class SColumnUtil {
         return columns;
     }
 
+    public static Map<ColumnDef, ItemColumnConfig> getChronicleDeckPoolColumns() {
+        //Chronicle's deck-editor catalog: the collection you build from, so it
+        //shows how many copies you own and badges what you have just pulled.
+        //NEW and OWNED both ship with null functions and are supplied by the
+        //editor's colOverrides.
+        Map<ColumnDef, ItemColumnConfig> columns = getCardColumns(ColumnDef.QUANTITY, false, true, false, true, false);
+        columns.get(ColumnDef.NEW).setSortPriority(1);
+        columns.get(ColumnDef.NAME).setSortPriority(2);
+        return columns;
+    }
+
     public static Map<ColumnDef, ItemColumnConfig> getConquestDeckEditorDefaultColumns() {
         Map<ColumnDef, ItemColumnConfig> columns = getCardColumns(ColumnDef.DECK_QUANTITY, false, false, false, true, false);
         columns.get(ColumnDef.CMC).setSortPriority(1);

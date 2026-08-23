@@ -41,6 +41,13 @@ import forge.util.Utils;
  * exactly the legality ADR-0071 chose — the editor caps a deck at the copies
  * you own, while two decks may still name the same card, because naming a card
  * never removes it from the binder.
+ *
+ * The catalog uses Chronicle's OWN ItemManagerConfig rather than borrowing
+ * Quest's. ItemManagerConfig holds persisted per-config view state — group-by,
+ * pile-by, view index, column widths — so sharing QUEST_EDITOR_POOL meant
+ * Chronicle and Quest silently reconfigured each other's editors, and a bad
+ * value saved by one broke the other. Chronicle's binder already had its own
+ * config for the same reason.
  */
 public class ChronicleDeckScreen extends FScreen {
 
@@ -122,17 +129,14 @@ public class ChronicleDeckScreen extends FScreen {
         FDeckEditor.GameTypeDeckEditorConfig config =
                 new FDeckEditor.GameTypeDeckEditorConfig(GameType.Constructed, controller)
                         .setPlayerInventorySupplier(ChronicleDeckScreen::collectionPool)
-                        .setCatalogConfig(ItemManagerConfig.QUEST_EDITOR_POOL);
+                        //own config, so the catalog needs its own caption too
+                        .setCatalogConfig(ItemManagerConfig.CHRONICLE_DECK_POOL, "lblCollection");
         Forge.openScreen(new ChronicleDeckEditor(config, deck));
     }
 
     /** The collection, as the editor's catalog. Rebuilt per open so a fresh pull shows up. */
     private static ItemPool<PaperCard> collectionPool() {
-        ItemPool<PaperCard> pool = new ItemPool<>(PaperCard.class);
-        for (Map.Entry<PaperCard, Integer> e : ChronicleHub.controller().getRun().collection.entries()) {
-            pool.add(e.getKey(), e.getValue());
-        }
-        return pool;
+        return ChronicleHub.controller().collectionAsPool();
     }
 
     /** Routes the editor's saves into the Chronicle run instead of Forge's deck store. */

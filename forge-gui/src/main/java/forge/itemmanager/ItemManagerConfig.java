@@ -137,6 +137,8 @@ public enum ItemManagerConfig {
             null, null, 6, 0),
     CHRONICLE_BINDER(SColumnUtil.getBinderDefaultColumns(), false, false, true,
             null, null, 4, 1),
+    CHRONICLE_DECK_POOL(SColumnUtil.getChronicleDeckPoolColumns(), false, false, false,
+            null, null, 4, 0),
     SIDEBOARD(SColumnUtil.getDeckEditorDefaultColumns(), false, false, true,
             GroupDef.DEFAULT, ColumnDef.CMC, 3, 0);
 

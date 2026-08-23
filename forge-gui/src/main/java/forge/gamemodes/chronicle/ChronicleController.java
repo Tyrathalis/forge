@@ -445,14 +445,23 @@ public final class ChronicleController {
         return ChronicleDecks.shortfall(deck, run.collection);
     }
 
-    /** Build a deck from the player's own collection — the "just make me something" button. */
-    public Deck autoBuildPlayerDeck(String name) {
+    /**
+     * The collection as a plain pool — the deck editor's catalog, and the input
+     * to auto-build. Headless on purpose: the screens had their own copy of this
+     * loop, which put "what can I build from?" somewhere no test could reach.
+     */
+    public CardPool collectionAsPool() {
         CardPool owned = new CardPool();
         for (Map.Entry<PaperCard, Integer> e : run.collection.entries()) {
             owned.add(e.getKey(), e.getValue());
         }
+        return owned;
+    }
+
+    /** Build a deck from the player's own collection — the "just make me something" button. */
+    public Deck autoBuildPlayerDeck(String name) {
         long seed = ChronicleSeeds.deriveDaily(run.runSeed, run.timeline.getDayIndex(), "player-autobuild:" + name);
-        return deckSource.buildFrom(owned, seed, name);
+        return deckSource.buildFrom(collectionAsPool(), seed, name);
     }
 
     // --- dev-mode testing actions (UI gates these behind Forge dev mode) ----

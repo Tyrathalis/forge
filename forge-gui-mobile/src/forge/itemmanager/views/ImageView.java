@@ -73,6 +73,8 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     private float scrollHeight = 0;
     private ColumnDef pileBy = null;
     private GroupDef groupBy = null;
+    /** Column overrides in force, so pile-by can use them rather than the enum's raw functions. */
+    private Map<ColumnDef, ItemColumn> colOverrides = null;
     private ItemInfo focalItem;
     private boolean updatingLayout;
     private float totalZoomAmount;
@@ -245,6 +247,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
 
     @Override
     public void setup(ItemManagerConfig config, Map<ColumnDef, ItemColumn> colOverrides) {
+        this.colOverrides = colOverrides;
         setGroupBy(config.getGroupBy(), true);
         setPileBy(config.getPileBy(), true);
         setColumnCount(config.getImageColumnCount(), true);
@@ -319,6 +322,29 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
             }
             refresh(null, -1, 0);
         }
+    }
+
+    /**
+     * Sort function for a pile-by column, preferring the caller's override.
+     *
+     * ColumnDef.NEW, PRICE, OWNED and DECKS all ship with null functions —
+     * "functions will be set later" — and are supplied per-consumer through the
+     * override map. Pile-by read the enum's raw fnSort instead, so piling by any
+     * of those columns dereferenced null and took the app down mid-layout. Any
+     * config whose column set includes one of them could hit this; Quest's
+     * editor pool and inventory both can.
+     */
+    private Function<Entry<InventoryItem, Integer>, Comparable<?>> pileSortFn(ColumnDef col) {
+        if (colOverrides != null && colOverrides.containsKey(col)) {
+            Function<Entry<InventoryItem, Integer>, Comparable<?>> override = colOverrides.get(col).getFnSort();
+            if (override != null) {
+                return override;
+            }
+        }
+        if (col.fnSort == null) {
+            return entry -> null; //nothing to pile on: one undifferentiated pile beats a crash
+        }
+        return col.fnSort;
     }
 
     public ColumnDef getPileBy() {
@@ -546,7 +572,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                     ItemInfo itemInfo = group.items.get(j);
                     if (itemInfo == null)
                         continue;
-                    Comparable<?> key = groupPileBy.fnSort.apply(itemInfo);
+                    Comparable<?> key = pileSortFn(groupPileBy).apply((Entry<InventoryItem, Integer>) itemInfo);
                     if (key != null && !piles.containsKey(key)) {
                         piles.put(key, new Pile());
                     }

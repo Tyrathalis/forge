@@ -464,6 +464,53 @@ public class ChronicleKitchenTest extends AITest {
         assertEquals(reloaded.all().get(0).origin, "LEA");
     }
 
+    // --- the deck editor's catalog -------------------------------------------
+
+    @Test
+    public void theCatalogPoolIsEverythingYouOwn() {
+        //"nothing in my inventory" (v18, found in play): this is the supplier the
+        //editor's catalog reads, so it gets asserted where a test can reach it
+        //rather than living in the screen where only play could catch it.
+        ChronicleController controller = newLoadedController();
+        controller.newRun(RUN_SEED);
+        controller.collectRation(controller.rationChoices().get(0).editionCode);
+        for (SealedItem item : new ArrayList<>(controller.getRun().sealed.all())) {
+            controller.openSealed(item.itemId);
+        }
+
+        CardPool pool = controller.collectionAsPool();
+        assertTrue(pool.countAll() > 0, "opening the daily ration must put cards in the catalog pool");
+        assertEquals(pool.countAll(), controller.getRun().collection.totalCopies());
+        assertEquals(pool.countDistinct(), controller.getRun().collection.distinctOwned());
+        for (Map.Entry<PaperCard, Integer> e : controller.getRun().collection.entries()) {
+            assertEquals(pool.count(e.getKey()), (int) e.getValue(), "catalog lost copies of " + e.getKey());
+        }
+    }
+
+    @Test
+    public void theCatalogPoolIsACopyNotTheCollection() {
+        //the editor mutates the pool it is handed; that must not reach the binder
+        ChronicleController controller = newLoadedController();
+        controller.newRun(RUN_SEED);
+        controller.collectRation(controller.rationChoices().get(0).editionCode);
+        for (SealedItem item : new ArrayList<>(controller.getRun().sealed.all())) {
+            controller.openSealed(item.itemId);
+        }
+
+        CardPool pool = controller.collectionAsPool();
+        int before = controller.getRun().collection.totalCopies();
+        PaperCard any = pool.iterator().next().getKey();
+        pool.remove(any, 1);
+        assertEquals(controller.getRun().collection.totalCopies(), before,
+                "editing the catalog pool must not touch the collection");
+    }
+
+    private static ChronicleController newLoadedController() {
+        ChronicleConfig cfg = ChronicleData.loadConfig();
+        return new ChronicleController(ChronicleData.loadCalendar(), cfg, ChronicleData.loadPricing(cfg),
+                ChronicleData.loadRoster(), ChronicleController.cardDbResolver(), java.time.Clock.systemDefaultZone());
+    }
+
     // --- helpers ------------------------------------------------------------
 
     private static PaperCard card(String name) {
