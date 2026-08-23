@@ -60,7 +60,7 @@ public class ChronicleFortnightTest extends AITest {
     private static ChronicleController newController(TestClock clock) {
         ChronicleConfig config = ChronicleData.loadConfig();
         return new ChronicleController(ChronicleData.loadCalendar(), config, ChronicleData.loadPricing(config),
-                ChronicleController.cardDbResolver(), clock);
+                ChronicleData.loadRoster(), ChronicleController.cardDbResolver(), clock);
     }
 
     /**

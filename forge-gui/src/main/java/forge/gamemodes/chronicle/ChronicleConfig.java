@@ -19,15 +19,18 @@ public final class ChronicleConfig {
     public final int stipendPeriodDays;
     /** LGS daily deal slots. */
     public final int lgsStockSlots;
+    /** Kitchen-table purse: base cents a rival's win pays, before their pursePercent. */
+    public final long pursebaseCents;
     /** Buylist base, cents per rarity. */
     public final Map<CardRarity, Integer> buylistBaseCents;
 
     public ChronicleConfig(int rationPacks, long stipendCents, int stipendPeriodDays, int lgsStockSlots,
-                           Map<CardRarity, Integer> buylistBaseCents) {
+                           long pursebaseCents, Map<CardRarity, Integer> buylistBaseCents) {
         this.rationPacks = rationPacks;
         this.stipendCents = stipendCents;
         this.stipendPeriodDays = stipendPeriodDays;
         this.lgsStockSlots = lgsStockSlots;
+        this.pursebaseCents = pursebaseCents;
         this.buylistBaseCents = new HashMap<>(buylistBaseCents);
     }
 
@@ -58,6 +61,7 @@ public final class ChronicleConfig {
                 intOf(kv, "stipendCents", 1000),
                 intOf(kv, "stipendPeriodDays", 7),
                 intOf(kv, "lgsStockSlots", 4),
+                intOf(kv, "pursebaseCents", 150),
                 base);
     }
 

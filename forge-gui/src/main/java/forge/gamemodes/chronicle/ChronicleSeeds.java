@@ -18,6 +18,13 @@ public final class ChronicleSeeds {
     public static final String DOMAIN_LGS_STOCK = "lgs-stock";
     /** Contents of one sealed item; qualified by the item's id. */
     public static final String DOMAIN_SEALED_CONTENTS = "sealed-contents";
+    /**
+     * Rival collections derive through {@link ChronicleRivalPool}, which owns its
+     * own domains ("rival-pack", "rival-product") and deliberately keys them on
+     * (run seed, rival id, PACK INDEX) rather than the day — a rival's pack i is
+     * the same pack forever, so their collection is strictly cumulative and,
+     * like the player's pulls, cannot be rerolled.
+     */
 
     private static final long FNV_OFFSET = 0xcbf29ce484222325L;
     private static final long FNV_PRIME = 0x100000001b3L;

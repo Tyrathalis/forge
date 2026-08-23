@@ -13,6 +13,13 @@ stipendPeriodDays=7
 # LGS daily deal slots (the seeded stock roll).
 lgsStockSlots=4
 
+# Kitchen-table purse: base cents a rival's win pays, scaled by that rival's
+# pursePercent in rivals.txt. Each rival pays at most once per played day;
+# rematches are free to play and pay nothing (ADR-0071). Seeded so beating the
+# mid-tier kid is worth roughly half a booster - the sink should reward showing
+# up with a real deck, not replace the allowance.
+pursebaseCents=150
+
 # Buylist base (what the shop PAYS), cents per rarity. Notables multiply
 # these - see notables.txt.
 buylistBasicLandCents=1

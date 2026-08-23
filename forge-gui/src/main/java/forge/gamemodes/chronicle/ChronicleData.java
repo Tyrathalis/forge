@@ -20,6 +20,7 @@ public final class ChronicleData {
     public static final String ECONOMY_FILE = "economy.txt";
     public static final String NOTABLES_FILE = "notables.txt";
     public static final String PAPER_FLAVOR_FILE = "paper-flavor.txt";
+    public static final String RIVALS_FILE = "rivals.txt";
 
     private ChronicleData() {
     }
@@ -37,6 +38,10 @@ public final class ChronicleData {
                 ChroniclePricing.parseNotables(readDataFile(NOTABLES_FILE)));
     }
 
+    public static ChronicleRoster loadRoster() {
+        return ChronicleRoster.parse(readDataFile(RIVALS_FILE));
+    }
+
     public static ChroniclePaper loadPaper(ChronicleCalendar calendar, ChronicleConfig config) {
         return new ChroniclePaper(calendar, config, readDataFile(PAPER_FLAVOR_FILE));
     }
@@ -46,7 +51,7 @@ public final class ChronicleData {
         FileUtil.ensureDirectoryExists(ForgeConstants.CHRONICLE_SAVE_DIR);
         ChronicleConfig config = loadConfig();
         ChronicleController controller = new ChronicleController(loadCalendar(), config, loadPricing(config),
-                ChronicleController.cardDbResolver(), Clock.systemDefaultZone());
+                loadRoster(), ChronicleController.cardDbResolver(), Clock.systemDefaultZone());
         controller.setAutosaveFile(new File(ForgeConstants.CHRONICLE_SAVE_DIR, "autosave.sav"));
         return controller;
     }
