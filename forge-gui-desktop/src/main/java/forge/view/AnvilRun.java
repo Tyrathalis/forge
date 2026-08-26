@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -375,11 +374,20 @@ public final class AnvilRun {
                 reask, pairNames.size(), fixedPair ? "-" : String.valueOf(gamesPerPair), profiles);
 
         Map<String, Integer> tally = new TreeMap<>();
-        ScheduledExecutorService watchdogs = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "anvil-watchdog");
-            t.setDaemon(true);
-            return t;
-        });
+        // Direct ScheduledThreadPoolExecutor (not the Executors wrapper) so
+        // remove-on-cancel can be set: cancelled rollout clocks otherwise
+        // sit in the queue until their deadline, each lambda pinning its
+        // whole Game copy — invisible at seq-probe scale (3 arms x K), an
+        // OOM at sched scale (up to 33 arms x 8 rolls per point; the M10
+        // serve-smoke JVM died here). Pure memory semantics, no game path.
+        java.util.concurrent.ScheduledThreadPoolExecutor watchdogPool =
+                new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+                    Thread t = new Thread(r, "anvil-watchdog");
+                    t.setDaemon(true);
+                    return t;
+                });
+        watchdogPool.setRemoveOnCancelPolicy(true);
+        ScheduledExecutorService watchdogs = watchdogPool;
         long t0 = System.currentTimeMillis();
         PrintWriter results = null;
         PrintWriter labels = null;
