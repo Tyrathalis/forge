@@ -591,6 +591,11 @@ public final class AnvilRun {
                 }
                 Obs.endGame(status, winnerIdx, turns, wallMs, drawClockHit[0]);
                 bridge.gameEnd("g" + idx, winner, turns, wallMs);
+                // Between mainline games, same rationale as the sched-mode
+                // per-completion clear above: bridged seats never run the
+                // AI-window clear, so long-lived workers accumulate one game
+                // graph per game (historically masked by chunk recycling).
+                forge.ai.AiCache.clear();
                 tally.merge(status, 1, Integer::sum);
                 if (results != null) {
                     results.println("{\"i\":" + idx + ",\"seed\":" + seed
@@ -1383,6 +1388,17 @@ public final class AnvilRun {
                                 (System.nanoTime() - c0) / 1_000_000);
                         ScheduleDirective.clear(copy);
                         Obs.endWireGame(copy);
+                        // AiCache is a GLOBAL static memo that heuristic play
+                        // clears at every AI priority window — but bridged
+                        // seats never take that path, so it grows one game
+                        // graph per completion (the M10 sweep OOM: 144/146
+                        // retained Games rooted at AiCache.dataMap, heap-dump
+                        // proven). Clearing BETWEEN completions is outside any
+                        // game's play: entity-keyed entries can't hit across
+                        // copies (identity args), deck-keyed entries recompute
+                        // identically — trace-invisible, and proven so by the
+                        // serve-smoke row-identity re-check.
+                        forge.ai.AiCache.clear();
                     }
                 }
             }
