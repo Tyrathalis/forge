@@ -31,6 +31,7 @@ import forge.ai.anvil.Census;
 import forge.ai.anvil.LocalRandomBridge;
 import forge.ai.anvil.Obs;
 import forge.ai.anvil.PlayerControllerAnvil;
+import forge.ai.anvil.ScheduleDirective;
 import forge.deck.Deck;
 import forge.game.Game;
 import forge.game.GameEndReason;
@@ -39,6 +40,7 @@ import forge.game.GameType;
 import forge.game.Match;
 import forge.game.card.Card;
 import forge.game.event.GameEventPlayerPriority;
+import forge.game.event.GameEventTurnBegan;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
@@ -100,7 +102,7 @@ public final class AnvilRun {
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
-                    + "[-seqarms nat|all] "
+                    + "[-seqarms nat|all] [-forceschedule <tsv>] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -260,9 +262,53 @@ public final class AnvilRun {
         }
         boolean seqNatOnly = forceSeq > 0 && "nat".equals(seqArms);
 
+        // M10 sched mode (m10-ceiling-spec "Engine build owed"):
+        // -forceschedule <file> = per-(game, turn) schedule arms; NATURAL +
+        // each directed arm x K paired completions per fork point,
+        // horizon-stopped (h > 0) or run to natural end (h = 0), one labels
+        // row per completion (directive trace + certify-style snapshot).
+        // TSV contract with the Python planner (labels must not contain
+        // tabs; the planner asserts):
+        //   gameIdx \t turn \t horizon \t seat \t armId \t joint|auto \t label...
+        // armId >= 1 (0 = the implicit NATURAL arm); no labels = hold-all.
+        Map<Integer, Map<Integer, SchedPoint>> schedJobs = null;
+        int schedMaxArms = 0;
+        if (params.containsKey("forceschedule")) {
+            if (rolloutK <= 0 || !params.containsKey("labels")) {
+                System.err.println("FATAL: -forceschedule requires -rollout <k> + -labels");
+                System.exit(2);
+            }
+            if (forkObs || forceBranch || forceSeq > 0 || drillTargets != null) {
+                System.err.println("FATAL: -forceschedule excludes -forkobs/-forcebranch/-forceseq/-drillfile");
+                System.exit(2);
+            }
+            schedJobs = readSchedFile(params.get("forceschedule").get(0));
+            // derive drill targeting from the jobs; the completions are the
+            // product, so the mainline always stops after its last point.
+            drillTargets = new HashMap<>();
+            for (Map.Entry<Integer, Map<Integer, SchedPoint>> e : schedJobs.entrySet()) {
+                int[] ts = new int[e.getValue().size()];
+                int i = 0;
+                for (int t : e.getValue().keySet()) {
+                    ts[i++] = t;
+                }
+                java.util.Arrays.sort(ts);
+                drillTargets.put(e.getKey(), ts);
+                for (SchedPoint p : e.getValue().values()) {
+                    schedMaxArms = Math.max(schedMaxArms, p.arms.size());
+                }
+            }
+            drillStop = true;
+        }
+
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
             bridge = new LocalRandomBridge();
+        } else if ("local-oneshot".equals(bridgeMode)) {
+            // M10 smoke rig: random-legal through the one-shot path (the
+            // realizer AI-fits targets), so forced-mask directive genres run
+            // without a decision server. Never a corpus/measurement arm.
+            bridge = new forge.ai.anvil.LocalOneShotBridge();
         } else if (bridgeMode.startsWith("grpc:")) {
             String[] hp = bridgeMode.substring(5).split(":");
             forge.anvil.GrpcBridge grpc = new forge.anvil.GrpcBridge(
@@ -479,7 +525,8 @@ public final class AnvilRun {
                     game.subscribeToEvents(new RolloutMonitor(game, idx, seed,
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
                             type.toString(), labels, watchdogs, drillTurns, drillStop,
-                            forkObs, forceBranch, forceSeq, seqNatOnly));
+                            forkObs, forceBranch, forceSeq, seqNatOnly,
+                            schedJobs != null ? schedJobs.get(idx) : null));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
@@ -487,7 +534,8 @@ public final class AnvilRun {
                 // eat the whole game budget). Forced-branch mode runs 2xK;
                 // sequence mode 3xK (1xK single-natural-arm).
                 int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
-                int perPoint = (forceSeq > 0 ? (seqNatOnly ? 1 : 3) : (forceBranch ? 2 : 1))
+                int perPoint = (schedJobs != null ? (1 + schedMaxArms)
+                        : forceSeq > 0 ? (seqNatOnly ? 1 : 3) : (forceBranch ? 2 : 1))
                         * rolloutK;
                 int extraS = rolloutK > 0 ? fpBudget * perPoint * 45 : 0;
                 final boolean[] drawClockHit = {false};
@@ -613,6 +661,114 @@ public final class AnvilRun {
     }
 
     // ------------------------------------------------------------------
+    // M10 sched mode data (m10-ceiling-spec): one SchedPoint per sampled
+    // (game, turn); each directed arm is an ordered schedule + a payment
+    // mode. The file is a TSV contract with the Python planner.
+    // ------------------------------------------------------------------
+
+    static final class SchedArm {
+        final int id;
+        final boolean joint;
+        final List<String> labels;
+
+        SchedArm(int id, boolean joint, List<String> labels) {
+            this.id = id;
+            this.joint = joint;
+            this.labels = labels;
+        }
+    }
+
+    static final class SchedPoint {
+        final int turn;
+        final int horizon; // 0 = run completions to natural game end
+        final int seat;    // registered-player index expected at the fork
+        final List<SchedArm> arms = new ArrayList<>();
+
+        SchedPoint(int turn, int horizon, int seat) {
+            this.turn = turn;
+            this.horizon = horizon;
+            this.seat = seat;
+        }
+    }
+
+    private static Map<Integer, Map<Integer, SchedPoint>> readSchedFile(String path) {
+        Map<Integer, Map<Integer, SchedPoint>> out = new HashMap<>();
+        try {
+            for (String line : Files.readAllLines(Paths.get(path), StandardCharsets.UTF_8)) {
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] f = line.split("\t", -1);
+                if (f.length < 6) {
+                    throw new IllegalArgumentException("bad sched line (need >= 6 tab fields): " + line);
+                }
+                int idx = Integer.parseInt(f[0]);
+                int turn = Integer.parseInt(f[1]);
+                int horizon = Integer.parseInt(f[2]);
+                int seat = Integer.parseInt(f[3]);
+                int armId = Integer.parseInt(f[4]);
+                boolean joint;
+                if ("joint".equals(f[5])) {
+                    joint = true;
+                } else if ("auto".equals(f[5])) {
+                    joint = false;
+                } else {
+                    throw new IllegalArgumentException("bad paymode (joint|auto): " + line);
+                }
+                if (armId < 1) {
+                    throw new IllegalArgumentException("armId must be >= 1 (0 = natural): " + line);
+                }
+                List<String> armLabels = new ArrayList<>();
+                for (int i = 6; i < f.length; i++) {
+                    if (!f[i].isEmpty()) {
+                        armLabels.add(f[i]);
+                    }
+                }
+                SchedPoint p = out.computeIfAbsent(idx, k -> new TreeMap<>())
+                        .computeIfAbsent(turn, t -> new SchedPoint(t, horizon, seat));
+                if (p.horizon != horizon || p.seat != seat) {
+                    throw new IllegalArgumentException(
+                            "horizon/seat mismatch within g" + idx + " t" + turn);
+                }
+                for (SchedArm a : p.arms) {
+                    if (a.id == armId) {
+                        throw new IllegalArgumentException(
+                                "duplicate armId " + armId + " at g" + idx + " t" + turn);
+                    }
+                }
+                p.arms.add(new SchedArm(armId, joint, armLabels));
+            }
+        } catch (Exception e) {
+            System.err.println("FATAL: cannot read sched file " + path + ": " + e);
+            System.exit(2);
+        }
+        return out;
+    }
+
+    /** Bounded-horizon stop for sched completions: end-of-turn stopTurn =
+     *  the first TurnBegan with a higher number; forced end is a Draw so
+     *  the row stays obviously non-decisive (the CensusRun/certify
+     *  convention). */
+    static final class HorizonStop {
+        final Game game;
+        final int stopTurn;
+        volatile boolean stopped = false;
+
+        HorizonStop(Game game, int stopTurn) {
+            this.game = game;
+            this.stopTurn = stopTurn;
+        }
+
+        @Subscribe
+        public void onTurnBegan(GameEventTurnBegan ev) {
+            if (!game.isGameOver() && ev.turnNumber() > stopTurn) {
+                stopped = true;
+                game.setGameOver(GameEndReason.Draw);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Rollout-label mode (M2 D4): fork the live game at sampled quiescent
     // MAIN1 priority windows, complete K copies to game end under the
     // bridge, one labels-JSONL record per fork point. Fork discipline is
@@ -651,6 +807,8 @@ public final class AnvilRun {
         final boolean forceBranch;
         final int forceSeq;
         final boolean seqNatOnly;
+        /** M10 sched mode: this game's fork points by turn; null = not sched. */
+        final Map<Integer, SchedPoint> sched;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
@@ -658,7 +816,8 @@ public final class AnvilRun {
                 boolean reshuffle, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs,
                 int[] drillTurns, boolean stopAfter, boolean forkObs,
-                boolean forceBranch, int forceSeq, boolean seqNatOnly) {
+                boolean forceBranch, int forceSeq, boolean seqNatOnly,
+                Map<Integer, SchedPoint> sched) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -673,6 +832,7 @@ public final class AnvilRun {
             this.forceBranch = forceBranch;
             this.forceSeq = forceSeq;
             this.seqNatOnly = seqNatOnly;
+            this.sched = sched;
             if (drillTurns != null) {
                 // Drill mode: explicit fork turns from the manifest.
                 for (int t : drillTurns) {
@@ -733,6 +893,10 @@ public final class AnvilRun {
         }
 
         private void doRollouts(int turn, int targetTurn) {
+            if (sched != null) {
+                doSchedRollouts(turn, targetTurn);
+                return;
+            }
             if (forceSeq > 0) {
                 doSeqRollouts(turn, targetTurn);
                 return;
@@ -1100,6 +1264,251 @@ public final class AnvilRun {
                 labels.println(sb);
                 labels.flush();
             }
+        }
+
+        /** M10 sched rollouts (m10-ceiling-spec instrument): NATURAL + each
+         *  directed schedule arm x K completions per fork point, rollSeeds
+         *  PAIRED across arms per (point, roll) — the ADR-0073
+         *  same-determinization pattern; horizon-stopped (h > 0) or run to
+         *  natural game end (h = 0, stage 2). ONE labels row per completion
+         *  carrying the directive trace + the certify-style end snapshot.
+         *  Labels-only; drift / seat mismatch emits one loud skip row and no
+         *  completions (the Python reader counts these against replay
+         *  fidelity). */
+        private void doSchedRollouts(int turn, int targetTurn) {
+            int myFp = fp++;
+            SchedPoint point = sched.get(targetTurn);
+            PhaseHandler ph = game.getPhaseHandler();
+            Player prio = ph.getPriorityPlayer();
+            boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
+                    && ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            int prioSeat = -1;
+            for (int j = 0; j < game.getRegisteredPlayers().size(); j++) {
+                if (game.getRegisteredPlayers().get(j).getName().equals(prio.getName())) {
+                    prioSeat = j;
+                }
+            }
+            String skip = point == null ? "no_point"
+                    : turn != targetTurn ? "drift"
+                    : !bridgeSeat ? "seat_unbridged"
+                    : prioSeat != point.seat ? "seat_mismatch" : null;
+            if (skip != null) {
+                if (labels != null) {
+                    synchronized (labels) {
+                        labels.println("{\"ev\":\"sched\",\"i\":" + gameIdx
+                                + ",\"seed\":" + seed + ",\"fp\":" + myFp
+                                + ",\"t\":" + turn + ",\"tt\":" + targetTurn
+                                + ",\"skip\":\"" + skip + "\"}");
+                        labels.flush();
+                    }
+                }
+                return;
+            }
+            Obs.mark(game, "fork", "fp", myFp, "kr", k);
+            byte[] rngState = snapshotRng();
+            String seatName = prio.getName();
+            for (int r = 0; r < k; r++) {
+                // Keyed on the TARGET TURN, not the fp counter: stage 2 re-runs
+                // a SUBSET of stage-1 points (positives only), so fp numbering
+                // shifts between runs — the rollSeed identity the spec's
+                // both-horizon trick depends on must survive that.
+                long rollSeed = splitmix64(
+                        seed ^ (targetTurn * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L));
+                for (int ai = -1; ai < point.arms.size(); ai++) {
+                    SchedArm arm = ai < 0 ? null : point.arms.get(ai);
+                    long c0 = System.nanoTime();
+                    Game copy;
+                    try {
+                        copy = new GameCopier(game).makeCopy();
+                    } catch (Throwable t) {
+                        writeSchedRow(myFp, targetTurn, arm, r, rollSeed, null, null,
+                                null, true, false, 0);
+                        MyRandom.setRandom(restoreRng(rngState));
+                        continue;
+                    }
+                    Random rollRng = new Random(rollSeed);
+                    if (reshuffle) {
+                        for (Player p : copy.getPlayers()) {
+                            List<Card> lib = new ArrayList<>();
+                            for (Card c : p.getZone(ZoneType.Library)) {
+                                lib.add(c);
+                            }
+                            Collections.shuffle(lib, rollRng);
+                            p.getZone(ZoneType.Library).setCards(lib);
+                        }
+                    }
+                    copy.getPhaseHandler().devResumeAtPriority();
+                    copy.copyLastState();
+                    String wid = "g" + gameIdx + ".f" + myFp + "r" + r + "s"
+                            + (arm == null ? 0 : arm.id);
+                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                    ScheduleDirective dir = null;
+                    if (arm != null) {
+                        dir = ScheduleDirective.arm(copy, seatName, targetTurn,
+                                arm.labels, arm.joint);
+                    }
+                    HorizonStop stop = null;
+                    if (point.horizon > 0) {
+                        stop = new HorizonStop(copy, targetTurn + point.horizon);
+                        copy.subscribeToEvents(stop);
+                    }
+                    MyRandom.setRandom(rollRng);
+                    boolean crashed = false;
+                    final boolean[] clockHit = {false};
+                    ScheduledFuture<?> clock = watchdogs.schedule(() -> {
+                        clockHit[0] = true;
+                        copy.setGameOver(GameEndReason.Draw);
+                    }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                    try {
+                        copy.getPhaseHandler().mainGameLoop();
+                    } catch (Throwable t) {
+                        crashed = true;
+                    } finally {
+                        clock.cancel(false);
+                        if (!copy.isGameOver()) {
+                            copy.setGameOver(GameEndReason.Draw);
+                        }
+                        MyRandom.setRandom(restoreRng(rngState));
+                        writeSchedRow(myFp, targetTurn, arm, r, rollSeed, copy, dir,
+                                stop, crashed, clockHit[0],
+                                (System.nanoTime() - c0) / 1_000_000);
+                        ScheduleDirective.clear(copy);
+                        Obs.endWireGame(copy);
+                    }
+                }
+            }
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+        }
+
+        /** One sched labels row — the schema is a CONTRACT with the Python
+         *  reader; fields and their conditionality must not drift. copy ==
+         *  null encodes a GameCopier crash (crash:true, no snapshot). */
+        private void writeSchedRow(int myFp, int targetTurn, SchedArm arm, int roll,
+                long rollSeed, Game copy, ScheduleDirective dir, HorizonStop stop,
+                boolean crashed, boolean clockHit, long ms) {
+            if (labels == null) {
+                return;
+            }
+            StringBuilder sb = new StringBuilder(480);
+            sb.append("{\"ev\":\"sched\",\"i\":").append(gameIdx)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"fp\":").append(myFp)
+                    .append(",\"t\":").append(targetTurn)
+                    .append(",\"arm\":").append(arm == null ? 0 : arm.id)
+                    .append(",\"roll\":").append(roll)
+                    .append(",\"rollseed\":").append(rollSeed)
+                    .append(",\"crash\":").append(crashed);
+            if (arm != null) {
+                sb.append(",\"joint\":").append(arm.joint)
+                        .append(",\"sched_n\":").append(arm.labels.size());
+            }
+            if (dir != null) {
+                sb.append(",\"exec\":").append(dir.executed)
+                        .append(",\"void\":").append(dir.isVoid())
+                        .append(",\"deferred\":").append(dir.deferred)
+                        .append(",\"degraded_at\":").append(dir.degradedAt);
+                if (dir.degradeWhy != null) {
+                    sb.append(",\"degrade_why\":\"").append(jstr(dir.degradeWhy)).append('"');
+                }
+                if (dir.landPlayed != null) {
+                    sb.append(",\"land\":\"").append(jstr(dir.landPlayed)).append('"');
+                }
+                sb.append(",\"steps\":\"").append(jstr(dir.traceSummary())).append('"')
+                        .append(",\"pay\":{\"win\":").append(dir.payWindows)
+                        .append(",\"dir\":").append(dir.payDirected)
+                        .append(",\"salvage\":").append(dir.paySalvage)
+                        .append(",\"fail\":").append(dir.payFail)
+                        .append(",\"auto\":").append(dir.payAuto)
+                        .append(",\"costmod\":").append(dir.payCostmod)
+                        .append(",\"err\":").append(dir.payErr).append('}');
+            }
+            if (copy != null) {
+                int tEnd = -1;
+                try {
+                    tEnd = copy.getPhaseHandler().getTurn();
+                } catch (Exception ignored) {
+                }
+                // Unique-winner extraction, NOT getWinningLobbyPlayer: a
+                // forced draw (horizon stop / rollout clock) runs
+                // Player.onGameOver, which marks EVERY surviving player as
+                // "won" — the winning-player accessor then returns an
+                // arbitrary map-order pick (JVM-varying; the smoke's
+                // determinism diff caught exactly this). Exactly one won =
+                // a real winner; anything else = -1.
+                int winner = -1;
+                int nWon = 0;
+                if (copy.getOutcome() != null) {
+                    for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                        forge.game.player.PlayerOutcome po =
+                                copy.getRegisteredPlayers().get(j).getOutcome();
+                        if (po != null && po.hasWon()) {
+                            winner = j;
+                            nWon++;
+                        }
+                    }
+                    if (nWon != 1) {
+                        winner = -1;
+                    }
+                }
+                boolean stopped = stop != null && stop.stopped;
+                sb.append(",\"stopped\":").append(stopped)
+                        .append(",\"ended\":").append(!crashed && !stopped && !clockHit
+                                && copy.getOutcome() != null)
+                        .append(",\"t_end\":").append(tEnd)
+                        .append(",\"winner\":").append(winner);
+                // certify-style end snapshot, registered-player seat order
+                int np = copy.getRegisteredPlayers().size();
+                int[] life = new int[np];
+                int[] creatures = new int[np];
+                int[] power = new int[np];
+                int[] hand = new int[np];
+                int[] lands = new int[np];
+                try {
+                    for (int j = 0; j < np; j++) {
+                        Player gp = null;
+                        for (Player q : copy.getPlayers()) {
+                            if (q.getName().equals(copy.getRegisteredPlayers().get(j).getName())) {
+                                gp = q;
+                            }
+                        }
+                        if (gp == null) {
+                            continue;
+                        }
+                        life[j] = gp.getLife();
+                        hand[j] = gp.getCardsIn(ZoneType.Hand).size();
+                        for (Card c : gp.getCardsIn(ZoneType.Battlefield)) {
+                            if (c.isCreature()) {
+                                creatures[j]++;
+                                power[j] += c.getNetPower();
+                            }
+                            if (c.isLand()) {
+                                lands[j]++;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+                sb.append(",\"snap\":{");
+                appendIntArr(sb, "life", life).append(',');
+                appendIntArr(sb, "creatures", creatures).append(',');
+                appendIntArr(sb, "power", power).append(',');
+                appendIntArr(sb, "hand", hand).append(',');
+                appendIntArr(sb, "lands", lands).append('}');
+            }
+            sb.append(",\"ms\":").append(ms).append('}');
+            synchronized (labels) {
+                labels.println(sb);
+                labels.flush();
+            }
+        }
+
+        private StringBuilder appendIntArr(StringBuilder sb, String key, int[] v) {
+            sb.append('"').append(key).append("\":[");
+            for (int i = 0; i < v.length; i++) {
+                sb.append(i > 0 ? "," : "").append(v[i]);
+            }
+            return sb.append(']');
         }
 
         /** M7 D2 sequence probe (routing pin 2026-08-11): THREE arms per fork

@@ -9,6 +9,7 @@ import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
 import forge.game.combat.Combat;
+import forge.game.phase.PhaseType;
 import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
 import forge.game.trigger.WrappedAbility;
@@ -249,6 +250,33 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             return null;
         }
 
+        // M10 schedule directive (m10-ceiling-spec "Engine build owed"): the
+        // within-turn -forceschedule arm. Only one directive genre is armed
+        // per copy; Forced/Seq take structural precedence. The window rule
+        // (land-first / next-item force / degrade-and-count / hold) lives in
+        // ScheduleDirective.window; this path only masks the ask and reports
+        // outcomes back.
+        ScheduleDirective sc = (fd == null && sd == null)
+                ? ScheduleDirective.active(getGame(), player) : null;
+        boolean schedForce = false;
+        if (sc != null) {
+            final PhaseType phase = getGame().getPhaseHandler().getPhase();
+            final boolean quiescentMain = getGame().getStack().isEmpty()
+                    && (phase == PhaseType.MAIN1 || phase == PhaseType.MAIN2);
+            final ScheduleDirective.Window w = sc.window(options, quiescentMain);
+            if (w.kind == ScheduleDirective.W_PASS) {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "sched", "pick", "pass");
+                return null;
+            }
+            if (w.kind == ScheduleDirective.W_NATURAL) {
+                sc = null; // degraded at this window: natural play from here
+            } else {
+                options = w.ask; // masked forbid-decline ask (land or item)
+                schedForce = true;
+            }
+        }
+
         for (int attempt = 0;; attempt++) {
             // Index 0 = pass; one round-trip per attempt.
             List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
@@ -264,7 +292,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
             // M1 one-shot: the composite CastPlan path; null = M0-shape bridge.
             CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
-                    Obs.lastDecForBridge(getGame()), attempt, forcedAct || seqAct);
+                    Obs.lastDecForBridge(getGame()), attempt, forcedAct || seqAct || schedForce);
             if (plan != null) {
                 OneShot r = oneShotCast(options, plan, obsSeq, attempt);
                 if (r.sas != null || r.vetoedOption > 0) {
@@ -291,6 +319,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         } else {
                             sd.exhausts++; // server passed despite the mask
                         }
+                    } else if (schedForce) {
+                        // realized cast advances the schedule (or settles the
+                        // land question); a pass despite the mask degrades.
+                        sc.onCast(r.sas != null && !r.sas.isEmpty() ? r.sas.get(0) : null);
                     } else if (sd != null && sd.mode == SeqMode.OBSERVE
                             && r.sas != null) {
                         // M8 D1: pure recording — the ask above ran exactly
@@ -310,16 +342,19 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     }
                     return r.sas; // realized cast, model pass, or oor pass
                 }
-                if (forcedAct || seqAct) {
-                    // Forced/seq act re-asks on veto regardless of the global
-                    // §6b flag: the arm is DEFINED as the best realizable
-                    // cast under the mask. Exhaustion: one-shot = skip
-                    // (pair drops); sequence = degrade to pass, counted.
+                if (forcedAct || seqAct || schedForce) {
+                    // Forced/seq/sched act re-asks on veto regardless of the
+                    // global §6b flag: the arm is DEFINED as the best
+                    // realizable cast under the mask. Exhaustion: one-shot =
+                    // skip (pair drops); sequence = degrade to pass, counted;
+                    // schedule = degrade-and-count (land asks just settle).
                     if (attempt + 1 >= REASK_CAP) {
                         if (forcedAct) {
                             fd.result = ForcedResult.SKIP_EXHAUSTED;
-                        } else {
+                        } else if (seqAct) {
                             sd.exhausts++;
+                        } else {
+                            sc.onExhaust("veto_cap");
                         }
                         return null;
                     }
@@ -339,6 +374,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         fd.result = ForcedResult.SKIP_EXHAUSTED;
                     } else if (seqAct) {
                         sd.exhausts++;
+                    } else if (schedForce) {
+                        sc.onExhaust("veto");
                     }
                     return null; // only pass remains; nothing left to ask
                 }
@@ -349,6 +386,9 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 fd.result = ForcedResult.SKIP_NO_ONESHOT;
             } else if (seqAct) {
                 sd.exhausts++; // M0-shape bridge can't honor the mask
+                return null;
+            } else if (schedForce) {
+                sc.onExhaust("no_oneshot"); // M0-shape bridge can't honor the mask
                 return null;
             }
             return selectOnePick(options, labels, obsSeq);
@@ -588,6 +628,21 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     @Override
     public boolean payManaCost(forge.card.mana.ManaCost toPay, forge.game.cost.CostPartMana costPartMana,
             SpellAbility sa, String prompt, forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
+        // M10 schedule directive (m10-ceiling-spec knob c): a JOINT arm owns
+        // every in-scope payment window on its target turn regardless of the
+        // serve config's bridged tags — schedule-consistent selection is
+        // engine-side and deterministic given the schedule. A null return
+        // falls through to the normal path (costmod / non-consequential /
+        // enumeration error), reason-counted on the directive.
+        if (!effect && toPay != null && !toPay.isZero()) {
+            final ScheduleDirective sdir = ScheduleDirective.paymentDirective(getGame(), player);
+            if (sdir != null) {
+                final Boolean paid = schedulePay(sdir, toPay, sa, effect);
+                if (paid != null) {
+                    return paid;
+                }
+            }
+        }
         if (!bridged(TAG_PAY_CLASS) || effect || toPay == null || toPay.isZero()) {
             return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         }
@@ -692,6 +747,55 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     private boolean autoPay(forge.card.mana.ManaCost toPay, SpellAbility sa, boolean effect) {
         return forge.ai.ComputerUtilMana.payManaCost(
                 new forge.game.cost.Cost(toPay, effect), getPlayer(), sa, effect);
+    }
+
+    /** Schedule-consistent directed payment (m10-ceiling-spec knob c): pick
+     *  the enumerated plan that maximizes feasibility of the remaining
+     *  scheduled items (ScheduleDirective.selectPlan), float it, and let
+     *  auto complete from the float — the ADR-0065 float-then-apply
+     *  primitive. Returns null to fall through to the normal payment path;
+     *  failures are reason codes on the directive, NEVER vetoes, never
+     *  exceptions into the game thread (the payManaCost bridged-path rule). */
+    private Boolean schedulePay(ScheduleDirective sdir, forge.card.mana.ManaCost toPay,
+            SpellAbility sa, boolean effect) {
+        sdir.payWindows++;
+        try {
+            // cost-modified windows: out-of-scope v1 (spec §12b) — raw toPay
+            // diverges from what auto pays; enumeration would target the
+            // wrong cost.
+            if (PaymentEnumerator.costModified(sa)) {
+                sdir.payCostmod++;
+                return null;
+            }
+            final PaymentEnumerator.Result r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
+            final boolean auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            if (!PaymentEnumerator.consequential(r, auto) || r.options.isEmpty()) {
+                sdir.payAuto++; // no real choice at this window
+                return null;
+            }
+            final int pick = sdir.selectPlan(r, getPlayer());
+            final PaymentEnumerator.PaymentClass pc = r.options.get(pick).plan;
+            final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(getPlayer(), pc);
+            final boolean paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+            if (!paid) {
+                sdir.payFail++;
+            } else if (out == PaymentEnumerator.ExecOutcome.DIRECTED_OK) {
+                sdir.payDirected++;
+            } else {
+                sdir.paySalvage++;
+            }
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "sched",
+                    "sa", Census.str(sa), "effect", false,
+                    "pick", pick + 1, "options", r.options.size(),
+                    "exec", !paid ? "directed_fail"
+                            : out == PaymentEnumerator.ExecOutcome.DIRECTED_OK
+                                    ? "directed_ok" : "directed_salvage",
+                    "paid", paid);
+            return paid;
+        } catch (Exception e) {
+            sdir.payErr++;
+            return null;
+        }
     }
 
     /** Wire option labels (spec §5, goals per §12a): option 0 = auto; each

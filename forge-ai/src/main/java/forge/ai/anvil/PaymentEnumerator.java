@@ -139,6 +139,10 @@ public final class PaymentEnumerator {
     public static final class Result {
         /** Outcome-distinct goal options (spec §12a); the wire list is {auto} ∪ these. */
         public final List<GoalOption> options = new ArrayList<>();
+        /** The full atom universe the enumeration ran over (M10 schedule
+         *  directive: the residual-capacity scorer needs atoms OUTSIDE the
+         *  chosen plan too). Read-only by convention. */
+        public List<Atom> allAtoms = java.util.Collections.emptyList();
         /** Distinct feasible compositions found (node-budget-bounded, uncensored). */
         public int planCount = 0;
         public boolean truncated = false;
@@ -437,6 +441,7 @@ public final class PaymentEnumerator {
 
         final List<Atom> atoms = collectAtoms(payer, sa);
         result.atomCount = atoms.size();
+        result.allAtoms = atoms;
 
         // group into source classes, deterministic order (key sort; atoms stay id-sorted)
         final Map<String, List<Atom>> byKey = new TreeMap<>();
