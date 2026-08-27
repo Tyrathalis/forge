@@ -960,6 +960,8 @@ public final class AnvilRun {
         final Map<Integer, SchedPoint> sched;
         /** M11 choice mode: this game's fork points by turn; null = not choice. */
         final Map<Integer, ChoicePoint> choice;
+        /** One printed stack per distinct throwable class per lane run. */
+        private final Set<String> crashClassesPrinted = new HashSet<>();
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
@@ -1734,7 +1736,8 @@ public final class AnvilRun {
                         copy = new GameCopier(game).makeCopy();
                     } catch (Throwable t) {
                         writeChoiceRow(myFp, targetTurn, arm, r, rollSeed, null, null,
-                                null, true, false, 0);
+                                null, true, false,
+                                "copier:" + t.getClass().getSimpleName(), 0);
                         MyRandom.setRandom(restoreRng(rngState));
                         continue;
                     }
@@ -1767,6 +1770,7 @@ public final class AnvilRun {
                     }
                     MyRandom.setRandom(rollRng);
                     boolean crashed = false;
+                    String crashWhy = null;
                     final boolean[] clockHit = {false};
                     ScheduledFuture<?> clock = watchdogs.schedule(() -> {
                         clockHit[0] = true;
@@ -1776,6 +1780,18 @@ public final class AnvilRun {
                         copy.getPhaseHandler().mainGameLoop();
                     } catch (Throwable t) {
                         crashed = true;
+                        // The M11 crash forensics gap (2026-08-27): swallowed
+                        // throwables left a 0.6%-of-completions crash class
+                        // unattributable (fast early-resume deaths, whole
+                        // points wiped). Class+message ride the row; one
+                        // stack per lane run goes to stderr.
+                        crashWhy = t.getClass().getSimpleName() + ": "
+                                + String.valueOf(t.getMessage());
+                        if (crashClassesPrinted.add(t.getClass().getName())) {
+                            System.err.println("[choice] completion crash at g"
+                                    + gameIdx + " t" + targetTurn + ":");
+                            t.printStackTrace();
+                        }
                     } finally {
                         clock.cancel(false);
                         if (!copy.isGameOver()) {
@@ -1783,7 +1799,7 @@ public final class AnvilRun {
                         }
                         MyRandom.setRandom(restoreRng(rngState));
                         writeChoiceRow(myFp, targetTurn, arm, r, rollSeed, copy, dir,
-                                stop, crashed, clockHit[0],
+                                stop, crashed, clockHit[0], crashWhy,
                                 (System.nanoTime() - c0) / 1_000_000);
                         ChoiceDirective.clear(copy);
                         Obs.endWireGame(copy);
@@ -1802,7 +1818,7 @@ public final class AnvilRun {
          *  field-identical). copy == null encodes a GameCopier crash. */
         private void writeChoiceRow(int myFp, int targetTurn, ChoiceArm arm, int roll,
                 long rollSeed, Game copy, ChoiceDirective dir, HorizonStop stop,
-                boolean crashed, boolean clockHit, long ms) {
+                boolean crashed, boolean clockHit, String crashWhy, long ms) {
             if (labels == null) {
                 return;
             }
@@ -1815,6 +1831,9 @@ public final class AnvilRun {
                     .append(",\"roll\":").append(roll)
                     .append(",\"rollseed\":").append(rollSeed)
                     .append(",\"crash\":").append(crashed);
+            if (crashWhy != null) {
+                sb.append(",\"crash_why\":\"").append(jstr(crashWhy)).append('"');
+            }
             if (arm != null) {
                 sb.append(",\"kind\":\"")
                         .append(arm.kind == ChoiceDirective.KIND_TUTOR ? "tutor" : "prevent")
