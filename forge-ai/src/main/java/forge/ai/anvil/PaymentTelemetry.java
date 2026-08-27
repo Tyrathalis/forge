@@ -92,7 +92,22 @@ public final class PaymentTelemetry {
                 return;
             }
         }
-        Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt, "effect", effect);
+        // M11 mining-rung finding (m11-routing-probes-spec.md): 61% of
+        // effect=true rows carried an empty sa string — host card + api
+        // make the fallthrough row attributable. Record-only; no behavior.
+        String src = null;
+        String api = null;
+        try {
+            if (sa != null && sa.getHostCard() != null) {
+                src = sa.getHostCard().getName();
+            }
+            if (sa != null && sa.getApi() != null) {
+                api = sa.getApi().toString();
+            }
+        } catch (Exception ignored) {
+        }
+        Census.rec(g, p, "payManaCost", "sa", Census.str(sa), "prompt", prompt,
+                "effect", effect, "src", src, "api", api);
     }
 
     /** Directive kv rider: the matched window's record says what the

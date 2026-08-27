@@ -236,6 +236,11 @@ public class CensusPlayerController extends PlayerControllerAi {
     public <T extends GameEntity> T chooseSingleEntityForEffect(FCollectionView<T> optionList, DelayedReveal delayedReveal, SpellAbility sa, String title, boolean isOptional, Player relatedPlayer, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleEntityForEffect", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
         long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleEntityForEffect", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
+        T __f = ChoiceDirective.forceEntity(getGame(), getPlayer(), optionList, sa, title);
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         T __r = super.chooseSingleEntityForEffect(optionList, delayedReveal, sa, title, isOptional, relatedPlayer, params);
         Obs.ret(getGame(), __s, __r);
         return __r;
@@ -884,8 +889,13 @@ public class CensusPlayerController extends PlayerControllerAi {
 
     @Override
     public boolean payCostToPreventEffect(Cost cost, SpellAbility sa, boolean alreadyPaid, FCollectionView<Player> allPayers) {
-        Census.rec(getGame(), getPlayer(), "payCostToPreventEffect", "sa", Census.str(sa), "alreadyPaid", alreadyPaid, "allPayers", Census.sz(allPayers));
+        ChoiceDirective.recPrevent(getGame(), getPlayer(), cost, sa, alreadyPaid, allPayers);
         long __s = Obs.dec(getGame(), getPlayer(), "payCostToPreventEffect", "sa", Census.str(sa), "alreadyPaid", alreadyPaid, "allPayers", Census.sz(allPayers));
+        Boolean __f = ChoiceDirective.forcePrevent(getGame(), getPlayer(), cost, sa);
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         boolean __r = super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
         Obs.ret(getGame(), __s, __r);
         return __r;
@@ -967,6 +977,11 @@ public class CensusPlayerController extends PlayerControllerAi {
     public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
         long __s = Obs.dec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
+        Card __f = ChoiceDirective.forceZoneChange(getGame(), getPlayer(), fetchList, sa, selectPrompt);
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         Card __r = super.chooseSingleCardForZoneChange(destination, origin, sa, fetchList, delayedReveal, selectPrompt, isOptional, decider);
         Obs.ret(getGame(), __s, __r);
         return __r;

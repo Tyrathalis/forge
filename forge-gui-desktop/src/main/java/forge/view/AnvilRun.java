@@ -27,6 +27,7 @@ import forge.ai.anvil.AnvilBridge;
 import forge.ai.simulation.GameCopier;
 import forge.ai.anvil.AnvilLobbyPlayer;
 import forge.ai.anvil.Census;
+import forge.ai.anvil.ChoiceDirective;
 import forge.ai.anvil.LocalRandomBridge;
 import forge.ai.anvil.Obs;
 import forge.ai.anvil.PlayerControllerAnvil;
@@ -101,7 +102,7 @@ public final class AnvilRun {
                     + "[-range <start> <count> -seedbase <long> [-results <jsonl>] [-stopfile <path>]] "
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
-                    + "[-seqarms nat|all] [-forceschedule <tsv>] "
+                    + "[-seqarms nat|all] [-forceschedule <tsv>] [-forcechoice <tsv>] "
                     + "[-n <games>] [-s <baseSeed>]");
             return;
         }
@@ -295,6 +296,44 @@ public final class AnvilRun {
                 drillTargets.put(e.getKey(), ts);
                 for (SchedPoint p : e.getValue().values()) {
                     schedMaxArms = Math.max(schedMaxArms, p.arms.size());
+                }
+            }
+            drillStop = true;
+        }
+
+        // M11 choice mode (m11-routing-probes-spec.md): -forcechoice <file> =
+        // per-(game, turn) forced-choice arms; NATURAL + each arm x K paired
+        // completions per fork point, horizon-stopped (h > 0) or run to
+        // natural end (h = 0), one labels row per completion (directive
+        // trace + certify-style snapshot). TSV contract with the planner:
+        //   gameIdx \t turn \t seat \t horizon \t armId \t tutor|prevent \t action
+        // armId >= 1 (0 = the implicit NATURAL arm); action = 0-based
+        // candidate index (tutor) or pay|decline (prevent).
+        Map<Integer, Map<Integer, ChoicePoint>> choiceJobs = null;
+        int choiceMaxArms = 0;
+        if (params.containsKey("forcechoice")) {
+            if (rolloutK <= 0 || !params.containsKey("labels")) {
+                System.err.println("FATAL: -forcechoice requires -rollout <k> + -labels");
+                System.exit(2);
+            }
+            if (forkObs || forceBranch || forceSeq > 0 || drillTargets != null
+                    || schedJobs != null) {
+                System.err.println("FATAL: -forcechoice excludes "
+                        + "-forkobs/-forcebranch/-forceseq/-drillfile/-forceschedule");
+                System.exit(2);
+            }
+            choiceJobs = readChoiceFile(params.get("forcechoice").get(0));
+            drillTargets = new HashMap<>();
+            for (Map.Entry<Integer, Map<Integer, ChoicePoint>> e : choiceJobs.entrySet()) {
+                int[] ts = new int[e.getValue().size()];
+                int i = 0;
+                for (int t : e.getValue().keySet()) {
+                    ts[i++] = t;
+                }
+                java.util.Arrays.sort(ts);
+                drillTargets.put(e.getKey(), ts);
+                for (ChoicePoint p : e.getValue().values()) {
+                    choiceMaxArms = Math.max(choiceMaxArms, p.arms.size());
                 }
             }
             drillStop = true;
@@ -534,7 +573,8 @@ public final class AnvilRun {
                             rolloutK, rolloutPoints, rolloutReshuffle, bridge,
                             type.toString(), labels, watchdogs, drillTurns, drillStop,
                             forkObs, forceBranch, forceSeq, seqNatOnly,
-                            schedJobs != null ? schedJobs.get(idx) : null));
+                            schedJobs != null ? schedJobs.get(idx) : null,
+                            choiceJobs != null ? choiceJobs.get(idx) : null));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
@@ -543,6 +583,7 @@ public final class AnvilRun {
                 // sequence mode 3xK (1xK single-natural-arm).
                 int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
                 int perPoint = (schedJobs != null ? (1 + schedMaxArms)
+                        : choiceJobs != null ? (1 + choiceMaxArms)
                         : forceSeq > 0 ? (seqNatOnly ? 1 : 3) : (forceBranch ? 2 : 1))
                         * rolloutK;
                 int extraS = rolloutK > 0 ? fpBudget * perPoint * 45 : 0;
@@ -758,6 +799,101 @@ public final class AnvilRun {
         return out;
     }
 
+    // ------------------------------------------------------------------
+    // M11 choice mode data (m11-routing-probes-spec.md): one ChoicePoint
+    // per sampled (game, turn); each arm forces one candidate index
+    // (tutor) or pay/decline (prevent) via ChoiceDirective. TSV contract
+    // with the Python planner.
+    // ------------------------------------------------------------------
+
+    static final class ChoiceArm {
+        final int id;
+        final int kind;    // ChoiceDirective.KIND_*
+        final int action;  // tutor: candidate index; prevent: ACT_PAY/ACT_DECLINE
+
+        ChoiceArm(int id, int kind, int action) {
+            this.id = id;
+            this.kind = kind;
+            this.action = action;
+        }
+    }
+
+    static final class ChoicePoint {
+        final int turn;
+        final int horizon; // 0 = run completions to natural game end
+        final int seat;    // registered-player index expected at the fork
+        final List<ChoiceArm> arms = new ArrayList<>();
+
+        ChoicePoint(int turn, int horizon, int seat) {
+            this.turn = turn;
+            this.horizon = horizon;
+            this.seat = seat;
+        }
+    }
+
+    private static Map<Integer, Map<Integer, ChoicePoint>> readChoiceFile(String path) {
+        Map<Integer, Map<Integer, ChoicePoint>> out = new HashMap<>();
+        try {
+            for (String line : Files.readAllLines(Paths.get(path), StandardCharsets.UTF_8)) {
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] f = line.split("\t", -1);
+                if (f.length != 7) {
+                    throw new IllegalArgumentException("bad choice line (need 7 tab fields): " + line);
+                }
+                int idx = Integer.parseInt(f[0]);
+                int turn = Integer.parseInt(f[1]);
+                int seat = Integer.parseInt(f[2]);
+                int horizon = Integer.parseInt(f[3]);
+                int armId = Integer.parseInt(f[4]);
+                int kind;
+                if ("tutor".equals(f[5])) {
+                    kind = ChoiceDirective.KIND_TUTOR;
+                } else if ("prevent".equals(f[5])) {
+                    kind = ChoiceDirective.KIND_PREVENT;
+                } else {
+                    throw new IllegalArgumentException("bad kind (tutor|prevent): " + line);
+                }
+                int action;
+                if (kind == ChoiceDirective.KIND_PREVENT) {
+                    if ("pay".equals(f[6])) {
+                        action = ChoiceDirective.ACT_PAY;
+                    } else if ("decline".equals(f[6])) {
+                        action = ChoiceDirective.ACT_DECLINE;
+                    } else {
+                        throw new IllegalArgumentException("bad prevent action (pay|decline): " + line);
+                    }
+                } else {
+                    action = Integer.parseInt(f[6]);
+                    if (action < 0) {
+                        throw new IllegalArgumentException("tutor action must be >= 0: " + line);
+                    }
+                }
+                if (armId < 1) {
+                    throw new IllegalArgumentException("armId must be >= 1 (0 = natural): " + line);
+                }
+                ChoicePoint p = out.computeIfAbsent(idx, k -> new TreeMap<>())
+                        .computeIfAbsent(turn, t -> new ChoicePoint(t, horizon, seat));
+                if (p.horizon != horizon || p.seat != seat) {
+                    throw new IllegalArgumentException(
+                            "horizon/seat mismatch within g" + idx + " t" + turn);
+                }
+                for (ChoiceArm a : p.arms) {
+                    if (a.id == armId) {
+                        throw new IllegalArgumentException(
+                                "duplicate armId " + armId + " at g" + idx + " t" + turn);
+                    }
+                }
+                p.arms.add(new ChoiceArm(armId, kind, action));
+            }
+        } catch (Exception e) {
+            System.err.println("FATAL: cannot read choice file " + path + ": " + e);
+            System.exit(2);
+        }
+        return out;
+    }
+
     /** Bounded-horizon stop for sched completions: end-of-turn stopTurn =
      *  the first TurnBegan with a higher number; forced end is a Draw so
      *  the row stays obviously non-decisive (the CensusRun/certify
@@ -822,6 +958,8 @@ public final class AnvilRun {
         final boolean seqNatOnly;
         /** M10 sched mode: this game's fork points by turn; null = not sched. */
         final Map<Integer, SchedPoint> sched;
+        /** M11 choice mode: this game's fork points by turn; null = not choice. */
+        final Map<Integer, ChoicePoint> choice;
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
         int fp = 0;
 
@@ -830,7 +968,7 @@ public final class AnvilRun {
                 PrintWriter labels, ScheduledExecutorService watchdogs,
                 int[] drillTurns, boolean stopAfter, boolean forkObs,
                 boolean forceBranch, int forceSeq, boolean seqNatOnly,
-                Map<Integer, SchedPoint> sched) {
+                Map<Integer, SchedPoint> sched, Map<Integer, ChoicePoint> choice) {
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -846,6 +984,7 @@ public final class AnvilRun {
             this.forceSeq = forceSeq;
             this.seqNatOnly = seqNatOnly;
             this.sched = sched;
+            this.choice = choice;
             if (drillTurns != null) {
                 // Drill mode: explicit fork turns from the manifest.
                 for (int t : drillTurns) {
@@ -908,6 +1047,10 @@ public final class AnvilRun {
         private void doRollouts(int turn, int targetTurn) {
             if (sched != null) {
                 doSchedRollouts(turn, targetTurn);
+                return;
+            }
+            if (choice != null) {
+                doChoiceRollouts(turn, targetTurn);
                 return;
             }
             if (forceSeq > 0) {
@@ -1533,6 +1676,236 @@ public final class AnvilRun {
                 sb.append(i > 0 ? "," : "").append(v[i]);
             }
             return sb.append(']');
+        }
+
+        /** M11 choice rollouts (m11-routing-probes-spec.md): NATURAL + each
+         *  forced-choice arm x K completions per fork point, rollSeeds
+         *  PAIRED across arms per (point, roll) — the doSchedRollouts
+         *  pattern verbatim (fork at the target turn's quiescent MAIN1
+         *  own-priority window; windows in earlier phases / on turns where
+         *  the seat never holds a MAIN1 window are OUT of coverage, which
+         *  the planner prices — the spec's ~85% coverage cap, loudly
+         *  counted by fired:false rows). One labels row per completion
+         *  carrying the ChoiceDirective trace + the certify-style end
+         *  snapshot. */
+        private void doChoiceRollouts(int turn, int targetTurn) {
+            int myFp = fp++;
+            ChoicePoint point = choice.get(targetTurn);
+            PhaseHandler ph = game.getPhaseHandler();
+            Player prio = ph.getPriorityPlayer();
+            boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
+                    && ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            int prioSeat = -1;
+            for (int j = 0; j < game.getRegisteredPlayers().size(); j++) {
+                if (game.getRegisteredPlayers().get(j).getName().equals(prio.getName())) {
+                    prioSeat = j;
+                }
+            }
+            String skip = point == null ? "no_point"
+                    : turn != targetTurn ? "drift"
+                    : !bridgeSeat ? "seat_unbridged"
+                    : prioSeat != point.seat ? "seat_mismatch" : null;
+            if (skip != null) {
+                if (labels != null) {
+                    synchronized (labels) {
+                        labels.println("{\"ev\":\"choice\",\"i\":" + gameIdx
+                                + ",\"seed\":" + seed + ",\"fp\":" + myFp
+                                + ",\"t\":" + turn + ",\"tt\":" + targetTurn
+                                + ",\"skip\":\"" + skip + "\"}");
+                        labels.flush();
+                    }
+                }
+                return;
+            }
+            Obs.mark(game, "fork", "fp", myFp, "kr", k);
+            byte[] rngState = snapshotRng();
+            String seatName = prio.getName();
+            for (int r = 0; r < k; r++) {
+                // Target-turn-keyed rollSeed (the sched-mode identity rule):
+                // paired across arms per (point, roll), stable across re-runs
+                // of a subset of points.
+                long rollSeed = splitmix64(
+                        seed ^ (targetTurn * 0x9E3779B97F4A7C15L) ^ (r * 0xBF58476D1CE4E5B9L));
+                for (int ai = -1; ai < point.arms.size(); ai++) {
+                    ChoiceArm arm = ai < 0 ? null : point.arms.get(ai);
+                    long c0 = System.nanoTime();
+                    Game copy;
+                    try {
+                        copy = new GameCopier(game).makeCopy();
+                    } catch (Throwable t) {
+                        writeChoiceRow(myFp, targetTurn, arm, r, rollSeed, null, null,
+                                null, true, false, 0);
+                        MyRandom.setRandom(restoreRng(rngState));
+                        continue;
+                    }
+                    Random rollRng = new Random(rollSeed);
+                    if (reshuffle) {
+                        for (Player p : copy.getPlayers()) {
+                            List<Card> lib = new ArrayList<>();
+                            for (Card c : p.getZone(ZoneType.Library)) {
+                                lib.add(c);
+                            }
+                            Collections.shuffle(lib, rollRng);
+                            p.getZone(ZoneType.Library).setCards(lib);
+                        }
+                    }
+                    copy.getPhaseHandler().devResumeAtPriority();
+                    copy.copyLastState();
+                    String wid = "g" + gameIdx + ".f" + myFp + "r" + r + "c"
+                            + (arm == null ? 0 : arm.id);
+                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                    ChoiceDirective dir = null;
+                    if (arm != null) {
+                        dir = ChoiceDirective.arm(copy, seatName, targetTurn,
+                                arm.kind, arm.action);
+                    }
+                    HorizonStop stop = null;
+                    if (point.horizon > 0) {
+                        stop = new HorizonStop(copy, targetTurn + point.horizon);
+                        copy.subscribeToEvents(stop);
+                    }
+                    MyRandom.setRandom(rollRng);
+                    boolean crashed = false;
+                    final boolean[] clockHit = {false};
+                    ScheduledFuture<?> clock = watchdogs.schedule(() -> {
+                        clockHit[0] = true;
+                        copy.setGameOver(GameEndReason.Draw);
+                    }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                    try {
+                        copy.getPhaseHandler().mainGameLoop();
+                    } catch (Throwable t) {
+                        crashed = true;
+                    } finally {
+                        clock.cancel(false);
+                        if (!copy.isGameOver()) {
+                            copy.setGameOver(GameEndReason.Draw);
+                        }
+                        MyRandom.setRandom(restoreRng(rngState));
+                        writeChoiceRow(myFp, targetTurn, arm, r, rollSeed, copy, dir,
+                                stop, crashed, clockHit[0],
+                                (System.nanoTime() - c0) / 1_000_000);
+                        ChoiceDirective.clear(copy);
+                        Obs.endWireGame(copy);
+                        // AiCache: the global memo bridged seats never clear
+                        // (the M10 sweep OOM lesson) — clear between
+                        // completions, outside any game's play.
+                        forge.ai.AiCache.clear();
+                    }
+                }
+            }
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+        }
+
+        /** One choice labels row — schema is a CONTRACT with the Python
+         *  reader (the writeSchedRow idiom; end-snapshot block kept
+         *  field-identical). copy == null encodes a GameCopier crash. */
+        private void writeChoiceRow(int myFp, int targetTurn, ChoiceArm arm, int roll,
+                long rollSeed, Game copy, ChoiceDirective dir, HorizonStop stop,
+                boolean crashed, boolean clockHit, long ms) {
+            if (labels == null) {
+                return;
+            }
+            StringBuilder sb = new StringBuilder(480);
+            sb.append("{\"ev\":\"choice\",\"i\":").append(gameIdx)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"fp\":").append(myFp)
+                    .append(",\"t\":").append(targetTurn)
+                    .append(",\"arm\":").append(arm == null ? 0 : arm.id)
+                    .append(",\"roll\":").append(roll)
+                    .append(",\"rollseed\":").append(rollSeed)
+                    .append(",\"crash\":").append(crashed);
+            if (arm != null) {
+                sb.append(",\"kind\":\"")
+                        .append(arm.kind == ChoiceDirective.KIND_TUTOR ? "tutor" : "prevent")
+                        .append("\",\"act\":").append(arm.action);
+            }
+            if (dir != null) {
+                sb.append(",\"fired\":").append(dir.fired)
+                        .append(",\"windows\":").append(dir.windowsSeen)
+                        .append(",\"ncand\":").append(dir.ncand);
+                if (dir.chosen != null) {
+                    sb.append(",\"chosen\":\"").append(jstr(dir.chosen)).append('"');
+                }
+                if (dir.miss != null) {
+                    sb.append(",\"miss\":\"").append(jstr(dir.miss)).append('"');
+                }
+                if (dir.kind == ChoiceDirective.KIND_PREVENT) {
+                    sb.append(",\"pay_ok\":").append(dir.payOk);
+                }
+            }
+            if (copy != null) {
+                int tEnd = -1;
+                try {
+                    tEnd = copy.getPhaseHandler().getTurn();
+                } catch (Exception ignored) {
+                }
+                // Unique-winner extraction, NOT getWinningLobbyPlayer (the
+                // writeSchedRow forced-draw lesson: every survivor "won").
+                int winner = -1;
+                int nWon = 0;
+                if (copy.getOutcome() != null) {
+                    for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                        forge.game.player.PlayerOutcome po =
+                                copy.getRegisteredPlayers().get(j).getOutcome();
+                        if (po != null && po.hasWon()) {
+                            winner = j;
+                            nWon++;
+                        }
+                    }
+                    if (nWon != 1) {
+                        winner = -1;
+                    }
+                }
+                boolean stopped = stop != null && stop.stopped;
+                sb.append(",\"stopped\":").append(stopped)
+                        .append(",\"ended\":").append(!crashed && !stopped && !clockHit
+                                && copy.getOutcome() != null)
+                        .append(",\"t_end\":").append(tEnd)
+                        .append(",\"winner\":").append(winner);
+                int np = copy.getRegisteredPlayers().size();
+                int[] life = new int[np];
+                int[] creatures = new int[np];
+                int[] power = new int[np];
+                int[] hand = new int[np];
+                int[] lands = new int[np];
+                try {
+                    for (int j = 0; j < np; j++) {
+                        Player gp = null;
+                        for (Player q : copy.getPlayers()) {
+                            if (q.getName().equals(copy.getRegisteredPlayers().get(j).getName())) {
+                                gp = q;
+                            }
+                        }
+                        if (gp == null) {
+                            continue;
+                        }
+                        life[j] = gp.getLife();
+                        hand[j] = gp.getCardsIn(ZoneType.Hand).size();
+                        for (Card c : gp.getCardsIn(ZoneType.Battlefield)) {
+                            if (c.isCreature()) {
+                                creatures[j]++;
+                                power[j] += c.getNetPower();
+                            }
+                            if (c.isLand()) {
+                                lands[j]++;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+                sb.append(",\"snap\":{");
+                appendIntArr(sb, "life", life).append(',');
+                appendIntArr(sb, "creatures", creatures).append(',');
+                appendIntArr(sb, "power", power).append(',');
+                appendIntArr(sb, "hand", hand).append(',');
+                appendIntArr(sb, "lands", lands).append('}');
+            }
+            sb.append(",\"ms\":").append(ms).append('}');
+            synchronized (labels) {
+                labels.println(sb);
+                labels.flush();
+            }
         }
 
         /** M7 D2 sequence probe (routing pin 2026-08-11): THREE arms per fork
