@@ -46,8 +46,13 @@ public final class PaymentEnumerator {
      * now scale with source classes: spare(k) per class + min_life on
      * phyrexian costs, per-goal argmax compositions, outcome-deduped.
      */
-    /** Defensive cap on the surfaced option list (incl. auto). Expected never hit (≤11 source classes measured); logged, never silent. */
-    public static final int GOAL_MAX = 16;
+    /** Defensive cap on the surfaced option list (incl. auto). Re-pinned
+     *  16→24 at the cousins touch (2026-08-28, user-adjudicated pre-data):
+     *  cousin source classes (convoke creatures / improvise artifacts /
+     *  delve graveyard classes) stack on the ≤11 measured mana classes, so
+     *  16 lost its headroom. Truncation gate (0.5% of consequential)
+     *  stays armed; logged, never silent. */
+    public static final int GOAL_MAX = 24;
     /** DFS node budget — the only enumeration bound. Re-pinned 200k→2M at the
      *  paygoals census read (2026-08-19): the 1% nodecap gate fired at 1.25%
      *  (141 late-game monster boards, atoms p50 16 / p90 36); on the goal
@@ -72,25 +77,45 @@ public final class PaymentEnumerator {
     // ------------------------------------------------------------------
     // Data model
 
-    /** One (card, mana ability) activation candidate. */
+    /** Atom mechanisms (the cousins touch, 2026-08-28): MANA = a real mana
+     *  ability; the cousins are cost-composition resources — engine-applied
+     *  inside CostAdjustment.adjust(ManaCostBeingPaid,…) via controller
+     *  callbacks, so they pay MAIN-cost shards only (never activation
+     *  costs, never floats) and execute through the callback overrides in
+     *  PlayerControllerAnvil, not through executeDirected. */
+    public static final int MECH_MANA = 0;
+    public static final int MECH_CONVOKE = 1;
+    public static final int MECH_IMPROVISE = 2;
+    public static final int MECH_DELVE = 3;
+
+    /** One (card, mana ability) activation candidate — or, since the
+     *  cousins touch, one cousin resource commitment (ma == null). */
     public static final class Atom {
         public final Card host;
         public final SpellAbility ma;
         /** Predicted units produced (includes TapsForMana boosts via predictManafromSpellAbility). */
         public final int yield;
-        /** Per produced unit: mask of colors this unit can be (fixed producers: exact bit; combo/any: option mask). */
+        /** Per produced unit: mask of colors this unit can be (fixed producers: exact bit; combo/any: option mask).
+         *  Cousin atoms: [card color mask] for convoke (0 = colorless creature, generic-only), [0] for improvise/delve. */
         public final byte[] unitMasks;
         /** Mana part of the activation cost (never null; may be zero) — nonzero = chained activation. */
         public final ManaCost activationMana;
         public final String classKey;
+        /** MECH_MANA / MECH_CONVOKE / MECH_IMPROVISE / MECH_DELVE. */
+        public final int mech;
 
         Atom(Card host, SpellAbility ma, int yield, byte[] unitMasks, ManaCost activationMana, String classKey) {
+            this(host, ma, yield, unitMasks, activationMana, classKey, MECH_MANA);
+        }
+
+        Atom(Card host, SpellAbility ma, int yield, byte[] unitMasks, ManaCost activationMana, String classKey, int mech) {
             this.host = host;
             this.ma = ma;
             this.yield = yield;
             this.unitMasks = unitMasks;
             this.activationMana = activationMana;
             this.classKey = classKey;
+            this.mech = mech;
         }
     }
 
@@ -105,15 +130,34 @@ public final class PaymentEnumerator {
         /** Pool spend per ManaAtom.MANATYPES index. */
         public final int[] poolSpend;
         public final int phyrexianLife;
+        /** Cousin commitments (the cousins touch): the exact shard each
+         *  convoke tap eats — the Map the chooseCardsForConvokeOrImprovise
+         *  callback returns verbatim (CostAdjustment applies it
+         *  unvalidated; legality is enumeration-side). */
+        public final Map<Card, ManaCostShard> convokeTaps;
+        public final Map<Card, ManaCostShard> improviseTaps;
+        /** Graveyard cards this plan exiles via delve (1 generic each). */
+        public final List<Card> delveExiles;
 
         PaymentClass(String key, Map<String, Integer> classCounts, List<Atom> atoms,
-                Map<Atom, byte[]> unitColors, int[] poolSpend, int phyrexianLife) {
+                Map<Atom, byte[]> unitColors, int[] poolSpend, int phyrexianLife,
+                Map<Card, ManaCostShard> convokeTaps, Map<Card, ManaCostShard> improviseTaps,
+                List<Card> delveExiles) {
             this.key = key;
             this.classCounts = classCounts;
             this.atoms = atoms;
             this.unitColors = unitColors;
             this.poolSpend = poolSpend;
             this.phyrexianLife = phyrexianLife;
+            this.convokeTaps = convokeTaps;
+            this.improviseTaps = improviseTaps;
+            this.delveExiles = delveExiles;
+        }
+
+        /** True when any cousin commitment exists (executor arms the
+         *  callback directives only then). */
+        public boolean hasCousins() {
+            return !convokeTaps.isEmpty() || !improviseTaps.isEmpty() || !delveExiles.isEmpty();
         }
     }
 
@@ -123,7 +167,10 @@ public final class PaymentEnumerator {
      *  carries no label text, so the model reads goal semantics through this
      *  small vocab — MUST match anvil.training.dataset.PAY_KINDS):
      *  0=pay 1=spare_creature 2=spare_land 3=spare_artifact 4=spare_other
-     *  5=min_life. */
+     *  5=min_life 6=spare_graveyard (delve classes) 7=spare_pool (the
+     *  pool-tie residual fix, 2026-08-28: minimize floating-pool spend —
+     *  surfaces the lex-hidden pay-life plan on phyrexian pool-tie
+     *  boards, and float-conservation plans generally). */
     public static final class GoalOption {
         public final List<String> goals;
         public final List<Integer> kinds;
@@ -150,7 +197,11 @@ public final class PaymentEnumerator {
         public boolean goalCapHit = false;
         public boolean nodeCapHit = false;
         public int nodesVisited = 0;
+        /** Mana atoms only (telemetry continuity across the cousins touch). */
         public int atomCount = 0;
+        /** Cousin resource atoms (convoke/improvise/delve) — separate count. */
+        public int cousinAtomCount = 0;
+        /** Mana + cousin source classes (the option list scales with this). */
         public int sourceClassCount = 0;
     }
 
@@ -178,26 +229,36 @@ public final class PaymentEnumerator {
     }
 
     /**
-     * Cost-modified detection, static prong (spec §12b): the adjusted cost
-     * is not determined until payment (delve exile choices), so this flags
-     * MECHANISM PRESENCE — reduction-side keywords on the host, or any
-     * ReduceCost static in play. Over-flagging is the conservative
-     * direction (the window keeps day-zero auto behavior; surface loss is
-     * measured at the census read) — per-spell applicability would mean
-     * re-implementing CostAdjustment. The retrospective backstop (0 plans
-     * on the raw cost while auto pays) catches leaks loudly.
+     * Cost-modified detection (spec §12b, REWRITTEN at the cousins touch
+     * 2026-08-28, m9-plan payment-completion queue items 2+4):
+     * convoke/improvise/delve LEFT this detector — they are enumerated as
+     * cousin resource atoms now. What remains cost-modified (auto + kv):
+     * - assist/offering/emerge keywords (interactive adjustments with no
+     *   enumeration model yet), spell-gated like the engine's own
+     *   CostAdjustment dispatch (sa.isSpell() — an EmptySa combat window
+     *   must not trip on the attacker's own casting keywords);
+     * - TapCreaturesForMana param + waterbend (convoke-shaped script
+     *   mechanisms outside the named cousin scope, conservative);
+     * - ReduceCost/SetCost statics PER-SPELL: a static only scopes out the
+     *   windows it actually applies to (CostAdjustment.staticAppliesTo =
+     *   the engine's own applicability predicate; the old presence-scan
+     *   absorbed 25.48% of in-scope traffic). SetCost joins the scan —
+     *   it was invisible before (measured leak 0, free conservatism).
+     * The retrospective backstop (0 plans on the raw cost while auto
+     * pays = costmod_late) still catches leaks loudly.
      */
     public static boolean costModified(final SpellAbility sa) {
         final Card host = sa.getHostCard();
         if (host == null) {
             return false;
         }
-        if (host.hasKeyword(forge.game.keyword.Keyword.DELVE)
-                || host.hasKeyword(forge.game.keyword.Keyword.CONVOKE)
-                || host.hasKeyword(forge.game.keyword.Keyword.IMPROVISE)
-                || host.hasKeyword(forge.game.keyword.Keyword.ASSIST)
-                || host.hasKeyword(forge.game.keyword.Keyword.OFFERING)
-                || host.hasKeyword(forge.game.keyword.Keyword.EMERGE)) {
+        if (sa.isSpell()
+                && (host.hasKeyword(forge.game.keyword.Keyword.ASSIST)
+                    || host.hasKeyword(forge.game.keyword.Keyword.OFFERING)
+                    || host.hasKeyword(forge.game.keyword.Keyword.EMERGE))) {
+            return true;
+        }
+        if (sa.hasParam("TapCreaturesForMana") || sa.getMaxWaterbend() != null) {
             return true;
         }
         final Player activator = sa.getActivatingPlayer();
@@ -212,7 +273,9 @@ public final class PaymentEnumerator {
         }
         for (final Card c : scan) {
             for (final forge.game.staticability.StaticAbility stAb : c.getStaticAbilities()) {
-                if (stAb.checkMode(forge.game.staticability.StaticAbilityMode.ReduceCost)) {
+                if ((stAb.checkMode(forge.game.staticability.StaticAbilityMode.ReduceCost)
+                        || stAb.checkMode(forge.game.staticability.StaticAbilityMode.SetCost))
+                        && forge.game.cost.CostAdjustment.staticAppliesTo(sa, stAb)) {
                     return true;
                 }
             }
@@ -303,6 +366,88 @@ public final class PaymentEnumerator {
         return new Atom(c, ma, unitMasks.length, unitMasks, actMana, key);
     }
 
+    /**
+     * Cousin resource atoms (the cousins touch, 2026-08-28): convoke taps
+     * (untapped creatures — pays generic or a colored shard intersecting
+     * the creature's own colors, never snow/{C}), improvise taps (untapped
+     * artifacts — generic/2-hybrid only), delve exiles (graveyard cards —
+     * strictly GENERIC, the engine's decreaseGenericMana). Spell-gated
+     * exactly like the engine's CostAdjustment dispatch. Kept OUT of
+     * Result.allAtoms — that list is the residual-mana-capacity universe
+     * (ScheduleDirective.residualUnits) and cousins are not mana.
+     */
+    static List<Atom> collectCousinAtoms(final Player payer, final SpellAbility sa) {
+        final List<Atom> atoms = new ArrayList<>();
+        if (sa == null || !sa.isSpell() || sa.getHostCard() == null) {
+            return atoms;
+        }
+        final Card host = sa.getHostCard();
+        final boolean convoke = host.hasKeyword(forge.game.keyword.Keyword.CONVOKE);
+        final boolean improvise = host.hasKeyword(forge.game.keyword.Keyword.IMPROVISE);
+        final boolean delve = host.hasKeyword(forge.game.keyword.Keyword.DELVE);
+        if (convoke || improvise) {
+            final List<Card> field = new ArrayList<>(payer.getCardsIn(ZoneType.Battlefield));
+            field.sort(Comparator.comparingInt(Card::getId));
+            for (final Card c : field) {
+                if (!c.canTap()) {
+                    continue;
+                }
+                // a convokable artifact-creature goes to convoke (colored
+                // capability is a superset of improvise's generic-only)
+                if (convoke && c.isCreature()) {
+                    final byte mask = (byte) c.getColor().getColor();
+                    atoms.add(new Atom(c, null, 1, new byte[] { mask }, ManaCost.ZERO,
+                            "cvk:" + classKey(c, new byte[] { mask }, ManaCost.ZERO), MECH_CONVOKE));
+                } else if (improvise && c.isArtifact()) {
+                    atoms.add(new Atom(c, null, 1, new byte[] { 0 }, ManaCost.ZERO,
+                            "imp:" + classKey(c, new byte[] { 0 }, ManaCost.ZERO), MECH_IMPROVISE));
+                }
+            }
+        }
+        if (delve) {
+            final List<Card> grave = new ArrayList<>(payer.getCardsIn(ZoneType.Graveyard));
+            grave.sort(Comparator.comparingInt(Card::getId));
+            for (final Card c : grave) {
+                // type-grouped classes (user pin 2026-08-28): the residual
+                // is what the graveyard loses — the shared res signature
+                // (creature P/T, land/artifact/other) carries it; name
+                // excluded per the spec §2 convention.
+                atoms.add(new Atom(c, null, 1, new byte[] { 0 }, ManaCost.ZERO,
+                        "dlv:" + classKey(c, new byte[] { 0 }, ManaCost.ZERO), MECH_DELVE));
+            }
+        }
+        return atoms;
+    }
+
+    /** Can this cousin atom pay this shard? Mirrors the engine's own
+     *  arithmetic: payManaViaConvoke's predicate (convoke/improvise) and
+     *  decreaseGenericMana (delve). */
+    static boolean cousinCanPay(final Atom a, final ManaCostShard shard) {
+        if (shard.isSnow() || shard.isColorless()) {
+            return false;
+        }
+        switch (a.mech) {
+        case MECH_DELVE:
+            return shard == ManaCostShard.GENERIC;
+        case MECH_IMPROVISE:
+            return shard.canBePaidWithManaOfColor((byte) 0);
+        case MECH_CONVOKE:
+            final byte mask = a.unitMasks[0];
+            if (mask == 0) {
+                return shard.canBePaidWithManaOfColor((byte) 0);
+            }
+            for (final byte c : ManaAtom.MANATYPES) {
+                if ((mask & c) != 0 && shard.canBePaidWithManaOfColor(c)) {
+                    return true;
+                }
+            }
+            // any colored creature can still pay a generic-payable shard
+            return shard.canBePaidWithManaOfColor((byte) 0);
+        default:
+            return false;
+        }
+    }
+
     /** Source-class signature (spec §2). Card NAME deliberately excluded. */
     static String classKey(Card c, byte[] unitMasks, ManaCost activationMana) {
         final StringBuilder sb = new StringBuilder();
@@ -349,6 +494,9 @@ public final class PaymentEnumerator {
         final Map<String, Integer> planCounts = new TreeMap<>();
         final List<Atom> planAtoms = new ArrayList<>();
         final Map<Atom, byte[]> planColors = new LinkedHashMap<>();
+        /** Cousin commitments in the plan-in-progress: the exact main-cost
+         *  shard each cousin atom pays (the callback-map currency). */
+        final Map<Atom, ManaCostShard> planCousinShards = new LinkedHashMap<>();
         final int[] poolSpend = new int[ManaAtom.MANATYPES.length];
         int phyrexianLife = 0;
         final java.util.Set<String> planKeys = new java.util.HashSet<>();
@@ -387,14 +535,32 @@ public final class PaymentEnumerator {
             final List<Integer> kinds = new ArrayList<>();
             for (final List<Atom> cls : classes) {
                 final Atom rep = cls.get(0);
-                names.add("spare:" + rep.host.getName() + (cls.size() > 1 ? " x" + cls.size() : ""));
+                // delve classes get their own goal prefix + kind (the
+                // residual is a graveyard resource, not a battlefield tap);
+                // convoke/improvise residuals ARE taps — host-type kinds
+                names.add((rep.mech == MECH_DELVE ? "spare_gy:" : "spare:")
+                        + rep.host.getName() + (cls.size() > 1 ? " x" + cls.size() : ""));
                 keys.add(rep.classKey);
-                kinds.add(rep.host.isCreature() ? 1 : rep.host.isLand() ? 2 : rep.host.isArtifact() ? 3 : 4);
+                kinds.add(rep.mech == MECH_DELVE ? 6
+                        : rep.host.isCreature() ? 1 : rep.host.isLand() ? 2 : rep.host.isArtifact() ? 3 : 4);
             }
             if (hasPhyrexian) {
                 names.add("pay_mana_not_life");
                 keys.add(null);
                 kinds.add(5);
+            }
+            int poolTotal = 0;
+            for (final int n : poolRemaining) {
+                poolTotal += n;
+            }
+            if (poolTotal > 0 && !names.isEmpty()) {
+                // the pool-tie residual fix (2026-08-28, queue item 5):
+                // minimize floating-pool spend — surfaces the plan the
+                // spread-then-lex tie-break hid (pay 2 life, keep the
+                // pool) whenever floating mana is on the table.
+                names.add("spare_pool");
+                keys.add(null);
+                kinds.add(7);
             }
             if (names.isEmpty()) {
                 names.add("pay"); // pool-only boards: one option so forced windows stay expressible
@@ -441,11 +607,19 @@ public final class PaymentEnumerator {
 
         final List<Atom> atoms = collectAtoms(payer, sa);
         result.atomCount = atoms.size();
-        result.allAtoms = atoms;
+        result.allAtoms = atoms; // mana atoms ONLY — cousins are not residual mana capacity
 
-        // group into source classes, deterministic order (key sort; atoms stay id-sorted)
+        final List<Atom> cousins = collectCousinAtoms(payer, sa);
+        result.cousinAtomCount = cousins.size();
+
+        // group into source classes, deterministic order (key sort; atoms
+        // stay id-sorted; cousin keys are mech-prefixed so they never
+        // collide with mana classes)
         final Map<String, List<Atom>> byKey = new TreeMap<>();
         for (Atom a : atoms) {
+            byKey.computeIfAbsent(a.classKey, k -> new ArrayList<>()).add(a);
+        }
+        for (Atom a : cousins) {
             byKey.computeIfAbsent(a.classKey, k -> new ArrayList<>()).add(a);
         }
         final List<List<Atom>> classes = new ArrayList<>(byKey.values());
@@ -556,6 +730,9 @@ public final class PaymentEnumerator {
         if (st.planAtoms.size() < st.planCap) {
             for (int k = 0; k < st.classes.size(); k++) {
                 final List<Atom> cls = st.classes.get(k);
+                if (cls.get(0).mech != MECH_MANA) {
+                    continue; // cousin classes: branch (e)
+                }
                 Atom a = null; // deterministic: lowest id whose HOST is uncommitted
                 for (final Atom cand : cls) {
                     if (!st.usedHosts.contains(cand.host)) {
@@ -625,6 +802,43 @@ public final class PaymentEnumerator {
             dfs(st, shardIdx + 1);
             st.phyrexianLife--;
         }
+
+        // (e) cousin commitment (the cousins touch): convoke tap /
+        // improvise tap / delve exile pays THIS shard directly — main-cost
+        // shards only (the engine applies cousins to the cost before any
+        // mana flows; activation costs are real mana, cousins are not).
+        // No floats: yield 1, consumed by the shard it pays.
+        if (shardIdx < st.mainShards.size() && st.planAtoms.size() < st.planCap) {
+            for (int k = 0; k < st.classes.size(); k++) {
+                final List<Atom> cls = st.classes.get(k);
+                if (cls.get(0).mech == MECH_MANA) {
+                    continue;
+                }
+                Atom a = null; // deterministic: lowest id whose HOST is uncommitted
+                for (final Atom cand : cls) {
+                    if (!st.usedHosts.contains(cand.host)) {
+                        a = cand;
+                        break;
+                    }
+                }
+                if (a == null || !cousinCanPay(a, shard)) {
+                    continue;
+                }
+                st.usedHosts.add(a.host);
+                st.planAtoms.add(a);
+                st.planCounts.merge(a.classKey, 1, Integer::sum);
+                st.planCousinShards.put(a, shard);
+
+                dfs(st, shardIdx + 1);
+
+                st.planCousinShards.remove(a);
+                if (st.planCounts.merge(a.classKey, -1, Integer::sum) == 0) {
+                    st.planCounts.remove(a.classKey);
+                }
+                st.planAtoms.remove(st.planAtoms.size() - 1);
+                st.usedHosts.remove(a.host);
+            }
+        }
     }
 
     private static int appendCostShards(DfsState st, ManaCost cost) {
@@ -676,14 +890,21 @@ public final class PaymentEnumerator {
         for (final int n : st.planCounts.values()) {
             spread = Math.max(spread, n);
         }
+        int poolSpent = 0;
+        for (final int s : st.poolSpend) {
+            poolSpent += s;
+        }
         PaymentClass materialized = null;
         for (int g = 0; g < st.goalNames.length; g++) {
             final int obj;
+            final int kind = st.goalKinds.get(g);
             if (st.goalClassKeys[g] != null) {
                 final Integer taps = st.planCounts.get(st.goalClassKeys[g]);
                 obj = taps == null ? 0 : taps;
-            } else if ("pay_mana_not_life".equals(st.goalNames[g])) {
+            } else if (kind == 5) { // pay_mana_not_life
                 obj = st.phyrexianLife;
+            } else if (kind == 7) { // spare_pool (the pool-tie residual fix)
+                obj = poolSpent;
             } else {
                 obj = 0; // the fallback "pay" goal: any feasible plan
             }
@@ -706,8 +927,28 @@ public final class PaymentEnumerator {
                     }
                     colors.put(e.getKey(), cc);
                 }
+                // cousin commitments, atom-commit order (the callback maps)
+                final Map<Card, ManaCostShard> cvk = new LinkedHashMap<>();
+                final Map<Card, ManaCostShard> imp = new LinkedHashMap<>();
+                final List<Card> dlv = new ArrayList<>();
+                for (Map.Entry<Atom, ManaCostShard> e : st.planCousinShards.entrySet()) {
+                    switch (e.getKey().mech) {
+                    case MECH_CONVOKE:
+                        cvk.put(e.getKey().host, e.getValue());
+                        break;
+                    case MECH_IMPROVISE:
+                        imp.put(e.getKey().host, e.getValue());
+                        break;
+                    case MECH_DELVE:
+                        dlv.add(e.getKey().host);
+                        break;
+                    default:
+                        break;
+                    }
+                }
                 materialized = new PaymentClass(key, new TreeMap<>(st.planCounts),
-                        new ArrayList<>(st.planAtoms), colors, st.poolSpend.clone(), st.phyrexianLife);
+                        new ArrayList<>(st.planAtoms), colors, st.poolSpend.clone(), st.phyrexianLife,
+                        cvk, imp, dlv);
             }
             st.bestObj[g] = obj;
             st.bestSpread[g] = spread;
@@ -762,7 +1003,15 @@ public final class PaymentEnumerator {
         if (!anyChained) {
             return true; // no activation costs — nothing temporal to violate
         }
-        for (final ManaCostShard sh : st.mainShards) {
+        // main cost minus the cousin-paid shards: the engine applies
+        // convoke/improvise/delve to the cost BEFORE any mana flows
+        // (CostAdjustment inside the payment), so those pips never compete
+        // for mana units.
+        final List<ManaCostShard> mainReq = new ArrayList<>(st.mainShards);
+        for (final ManaCostShard paid : st.planCousinShards.values()) {
+            mainReq.remove(paid);
+        }
+        for (final ManaCostShard sh : mainReq) {
             req.add(sh);
             limits.add(Integer.MAX_VALUE);
         }
@@ -777,6 +1026,9 @@ public final class PaymentEnumerator {
         }
         for (int i = 0; i < ordered.size(); i++) {
             final Atom a = ordered.get(i);
+            if (a.mech != MECH_MANA) {
+                continue; // cousin commitments are not mana units
+            }
             // Materialized colors, not masks: the executor expresses each
             // unit at its plan color (assigned by the DFS, else the
             // completePlan firstColor default) — at execution time a combo
@@ -871,6 +1123,15 @@ public final class PaymentEnumerator {
         ordered.sort(EXEC_ORDER);
         int idx = 0;
         for (final Atom a : ordered) {
+            if (a.mech != MECH_MANA) {
+                // cousin commitments execute inside the auto-completion:
+                // the caller arms the callback directives
+                // (PlayerControllerAnvil.armCousins) and the engine's own
+                // CostAdjustment consumes them via
+                // chooseCardsForConvokeOrImprovise / chooseCardsToDelve.
+                idx++;
+                continue;
+            }
             a.ma.setActivatingPlayer(p);
             if (!a.ma.canPlay()) {
                 salvageWhy(why, "canplay", a, idx);
@@ -911,6 +1172,9 @@ public final class PaymentEnumerator {
         for (final Atom a : ordered) {
             if (sb.length() > 0) {
                 sb.append(';');
+            }
+            if (a.mech != MECH_MANA) {
+                sb.append(a.mech == MECH_CONVOKE ? "cvk:" : a.mech == MECH_IMPROVISE ? "imp:" : "dlv:");
             }
             sb.append(a.host.getName()).append('#').append(a.host.getId());
             if (!a.activationMana.isZero()) {

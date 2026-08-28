@@ -36,6 +36,10 @@ public final class PaymentTelemetry {
      *  gains the directive kv when armed. Unarmed windows and pick-0
      *  windows are byte-identical to telemetry-only play. */
     public static void rec(Game g, Player p, ManaCost toPay, SpellAbility sa, String prompt, boolean effect) {
+        // Cousins hygiene (2026-08-28): a certify-armed cousin directive is
+        // consumed inside its own window's super auto-pay; any arm still
+        // standing at the NEXT window's entry is stale by construction.
+        CousinDirective.disarm(p);
         if (enabled && !effect && toPay != null && !toPay.isZero()) {
             final PayDirective d = PayDirective.match(g, p, sa);
             try {

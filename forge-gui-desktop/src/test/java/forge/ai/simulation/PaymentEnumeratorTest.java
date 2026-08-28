@@ -358,4 +358,230 @@ public class PaymentEnumeratorTest extends SimulationTest {
                 r.options.size() <= r.sourceClassCount);
         AssertJUnit.assertFalse("no truncation on the goal surface", r.truncated);
     }
+
+    // ------------------------------------------------------------------
+    // The cousins touch (2026-08-28): convoke/improvise/delve enumeration,
+    // costmod per-spell refinement, the pool-tie spare_pool fix.
+
+    /** Convoke spell: creature taps enter the plan space. Green bears can
+     *  cover Stoke's generic pips but never its {R}{R} (a convoke tap pays
+     *  a colored shard only through the creature's own colors); a pure-mana
+     *  plan coexists on a 4-mountain board. The spell is no longer
+     *  cost-modified. */
+    @Test
+    public void testConvokeCreatureTapsEnterPlans() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        for (int i = 0; i < 4; i++) {
+            addCard("Mountain", p);
+        }
+        Card b1 = addCard("Grizzly Bears", p);
+        Card b2 = addCard("Grizzly Bears", p);
+        b1.setSickness(false);
+        b2.setSickness(false);
+        Card stoke = addCardToZone("Stoke the Flames", p, ZoneType.Hand); // {2}{R}{R}, convoke
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility castSa = stoke.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        AssertJUnit.assertFalse("convoke left the costmod detector",
+                PaymentEnumerator.costModified(castSa));
+        PaymentEnumerator.Result r = enumerate(p, stoke);
+        AssertJUnit.assertTrue("cousin atoms collected", r.cousinAtomCount >= 2);
+        boolean sawConvoke = false, sawPureMana = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (!opt.plan.convokeTaps.isEmpty()) {
+                sawConvoke = true;
+                for (forge.card.mana.ManaCostShard sh : opt.plan.convokeTaps.values()) {
+                    AssertJUnit.assertTrue("green bears pay generic pips only",
+                            sh == forge.card.mana.ManaCostShard.GENERIC);
+                }
+            } else if (!opt.plan.hasCousins()) {
+                sawPureMana = true;
+            }
+        }
+        AssertJUnit.assertTrue("a convoke-tapping plan surfaced", sawConvoke);
+        AssertJUnit.assertTrue("the pure-mana plan coexists", sawPureMana);
+    }
+
+    /** Improvise: artifact taps cover generic only — {U}{U} stays on the
+     *  islands. Two islands alone cannot pay {3}{U}{U}, so the window is
+     *  forced open by the improvise plans. */
+    @Test
+    public void testImproviseArtifactsGenericOnly() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Island", p);
+        addCard("Island", p);
+        for (int i = 0; i < 3; i++) {
+            addCard("Ornithopter", p);
+        }
+        Card re = addCardToZone("Reverse Engineer", p, ZoneType.Hand); // {3}{U}{U}, improvise
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility castSa = re.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        AssertJUnit.assertFalse(PaymentEnumerator.costModified(castSa));
+        PaymentEnumerator.Result r = enumerate(p, re);
+        AssertJUnit.assertTrue("improvise plans exist", r.planCount >= 1);
+        boolean sawImprovise = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (opt.plan.improviseTaps.isEmpty()) {
+                continue;
+            }
+            sawImprovise = true;
+            AssertJUnit.assertEquals("all three thopters tapped for the generic 3",
+                    3, opt.plan.improviseTaps.size());
+            for (forge.card.mana.ManaCostShard sh : opt.plan.improviseTaps.values()) {
+                AssertJUnit.assertTrue("improvise pays generic-payable shards only",
+                        sh.canBePaidWithManaOfColor((byte) 0));
+            }
+        }
+        AssertJUnit.assertTrue(sawImprovise);
+        boolean auto = PaymentEnumerator.autoPayable(p, castSa, castSa.getPayCosts().getTotalMana(), false);
+        AssertJUnit.assertTrue("improvise window is live: consequential",
+                PaymentEnumerator.consequential(r, auto));
+    }
+
+    /** Delve: graveyard cards cover generic pips (strictly GENERIC), the
+     *  graveyard groups into type-based source classes, and the spare_gy
+     *  goals carry the spare_graveyard kind (6). */
+    @Test
+    public void testDelveGraveyardClassesAndGoal() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Island", p);
+        addCard("Island", p);
+        for (int i = 0; i < 3; i++) {
+            addCardToZone("Forest", p, ZoneType.Graveyard);
+            addCardToZone("Grizzly Bears", p, ZoneType.Graveyard);
+        }
+        Card dig = addCardToZone("Dig Through Time", p, ZoneType.Hand); // {6}{U}{U}, delve
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility castSa = dig.getFirstSpellAbility();
+        castSa.setActivatingPlayer(p);
+        AssertJUnit.assertFalse(PaymentEnumerator.costModified(castSa));
+        PaymentEnumerator.Result r = enumerate(p, dig);
+        AssertJUnit.assertEquals("6 graveyard cards = 6 delve atoms", 6, r.cousinAtomCount);
+        boolean sawFullDelve = false, sawGyGoal = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (opt.plan.delveExiles.size() == 6) {
+                sawFullDelve = true;
+            }
+            for (int gi = 0; gi < opt.goals.size(); gi++) {
+                if (opt.goals.get(gi).startsWith("spare_gy:")) {
+                    sawGyGoal = true;
+                    AssertJUnit.assertEquals("spare_graveyard kind code",
+                            6, (int) opt.kinds.get(gi));
+                }
+            }
+        }
+        AssertJUnit.assertTrue("the full-delve plan surfaced (islands cover {U}{U})", sawFullDelve);
+        AssertJUnit.assertTrue("spare_gy goals labeled", sawGyGoal);
+    }
+
+    /** The pool-tie residual fix (payment-completion queue item 5): with
+     *  floating {U} and a {U/P} cost, the pay-life plan used to hide behind
+     *  the spread-then-lex tie-break (no goal preferred it). spare_pool
+     *  (kind 7) surfaces it. */
+    @Test
+    public void testPoolTiePayLifePlanSurfaces() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        Card island = addCard("Island", p);
+        Card probe = addCardToZone("Gitaxian Probe", p, ZoneType.Hand); // {U/P}
+        game.getAction().checkStateEffects(true);
+        // float one blue for real: the pool carries it, the island taps out
+        SpellAbility islandMana = island.getManaAbilities().get(0);
+        islandMana.setActivatingPlayer(p);
+        p.getManaPool().addMana(new forge.game.mana.Mana(forge.card.MagicColor.BLUE,
+                island, islandMana.getManaPart(), p));
+        island.tap(true, islandMana, p);
+
+        PaymentEnumerator.Result r = enumerate(p, probe);
+        boolean sawLifeViaSparePool = false, sawPoolPay = false;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (opt.plan.phyrexianLife > 0 && opt.goals.contains("spare_pool")) {
+                sawLifeViaSparePool = true;
+                AssertJUnit.assertEquals("spare_pool kind code", 7,
+                        (int) opt.kinds.get(opt.goals.indexOf("spare_pool")));
+            }
+            if (opt.plan.phyrexianLife == 0 && opt.plan.poolSpend[1] == 1) {
+                sawPoolPay = true;
+            }
+        }
+        AssertJUnit.assertTrue("the lex-hidden pay-life plan surfaces via spare_pool",
+                sawLifeViaSparePool);
+        AssertJUnit.assertTrue("the pool-pay plan still surfaces", sawPoolPay);
+    }
+
+    /** Costmod per-spell refinement (queue item 4): Goblin Electromancer's
+     *  ReduceCost static scopes out instants/sorceries ONLY — a creature
+     *  spell under the same static returns to the surface (the old
+     *  presence-scan flagged every window for that player). */
+    @Test
+    public void testCostmodPerSpellApplicability() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        addCard("Goblin Electromancer", p);
+        addCard("Island", p);
+        addCard("Island", p);
+        Card opt = addCardToZone("Opt", p, ZoneType.Hand); // instant: static applies
+        Card bear = addCardToZone("Grizzly Bears", p, ZoneType.Hand); // creature: it does not
+        game.getAction().checkStateEffects(true);
+
+        SpellAbility optSa = opt.getFirstSpellAbility();
+        optSa.setActivatingPlayer(p);
+        AssertJUnit.assertTrue("instant under Electromancer stays costmod",
+                PaymentEnumerator.costModified(optSa));
+        SpellAbility bearSa = bear.getFirstSpellAbility();
+        bearSa.setActivatingPlayer(p);
+        AssertJUnit.assertFalse("creature spell under Electromancer returns to the surface",
+                PaymentEnumerator.costModified(bearSa));
+    }
+
+    /** CousinDirective consume semantics: an armed plan's maps are served
+     *  filtered to the engine's offered list (misses counted); unarmed
+     *  returns null = natural play; disarm restores natural. */
+    @Test
+    public void testCousinDirectiveConsume() {
+        Game game = initAndCreateGame();
+        Player p = setUp(game);
+        for (int i = 0; i < 4; i++) {
+            addCard("Mountain", p);
+        }
+        Card b1 = addCard("Grizzly Bears", p);
+        Card b2 = addCard("Grizzly Bears", p);
+        b1.setSickness(false);
+        b2.setSickness(false);
+        Card stoke = addCardToZone("Stoke the Flames", p, ZoneType.Hand);
+        game.getAction().checkStateEffects(true);
+
+        PaymentEnumerator.Result r = enumerate(p, stoke);
+        PaymentEnumerator.PaymentClass convokePlan = null;
+        for (PaymentEnumerator.GoalOption opt : r.options) {
+            if (opt.plan.convokeTaps.size() == 2) {
+                convokePlan = opt.plan;
+                break;
+            }
+        }
+        AssertJUnit.assertNotNull(convokePlan);
+
+        AssertJUnit.assertNull("unarmed = natural",
+                forge.ai.anvil.CousinDirective.forceConvokeOrImprovise(game, p, null,
+                        p.getCardsIn(ZoneType.Battlefield), false, true));
+
+        forge.ai.anvil.CousinDirective.Armed a = forge.ai.anvil.CousinDirective.arm(p, convokePlan);
+        java.util.Map<Card, forge.card.mana.ManaCostShard> served =
+                forge.ai.anvil.CousinDirective.forceConvokeOrImprovise(game, p, null,
+                        p.getCardsIn(ZoneType.Battlefield), false, true);
+        AssertJUnit.assertEquals("both planned taps served", 2, served.size());
+        AssertJUnit.assertEquals(2, a.convokeServed);
+        AssertJUnit.assertEquals(0, a.misses);
+        forge.ai.anvil.CousinDirective.disarm(p);
+        AssertJUnit.assertNull("disarmed = natural again",
+                forge.ai.anvil.CousinDirective.forceConvokeOrImprovise(game, p, null,
+                        p.getCardsIn(ZoneType.Battlefield), false, true));
+    }
 }

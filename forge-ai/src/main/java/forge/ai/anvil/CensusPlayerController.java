@@ -465,6 +465,11 @@ public class CensusPlayerController extends PlayerControllerAi {
     public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDelve", "genericAmount", genericAmount, "grave", Census.sz(grave));
         long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsToDelve", "genericAmount", genericAmount, "grave", Census.sz(grave));
+        CardCollectionView __f = CousinDirective.forceDelve(getGame(), getPlayer(), grave);
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         CardCollectionView __r = super.chooseCardsToDelve(genericAmount, grave);
         Obs.ret(getGame(), __s, __r);
         return __r;
@@ -474,6 +479,11 @@ public class CensusPlayerController extends PlayerControllerAi {
     public Map<Card, ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa, ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures, Integer maxReduction) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForConvokeOrImprovise", "sa", Census.str(sa), "untappedCards", Census.sz(untappedCards), "artifacts", artifacts, "creatures", creatures, "maxReduction", maxReduction);
         long __s = Obs.dec(getGame(), getPlayer(), "chooseCardsForConvokeOrImprovise", "sa", Census.str(sa), "untappedCards", Census.sz(untappedCards), "artifacts", artifacts, "creatures", creatures, "maxReduction", maxReduction);
+        Map<Card, ManaCostShard> __f = CousinDirective.forceConvokeOrImprovise(getGame(), getPlayer(), sa, untappedCards, artifacts, creatures);
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         Map<Card, ManaCostShard> __r = super.chooseCardsForConvokeOrImprovise(sa, manaCost, untappedCards, artifacts, creatures, maxReduction);
         Obs.ret(getGame(), __s, __r);
         return __r;

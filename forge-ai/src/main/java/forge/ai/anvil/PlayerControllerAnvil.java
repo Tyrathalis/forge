@@ -625,15 +625,53 @@ public class PlayerControllerAnvil extends CensusPlayerController {
      * measure itself. Auto/heuristic payment goes through ComputerUtilMana
      * directly (calling super would double-log the census record).
      */
+    /** Non-null while inside a bridged payCombatCost (the cousins touch,
+     *  2026-08-28): the attacker/blocker whose combat cost is being paid.
+     *  Marks the nested payManaCost window (which arrives with effect=true
+     *  and a degenerate EmptySa) as in-scope combat — CostAdjustment is a
+     *  no-op for effect costs, so these are the CLEAN enumeration case
+     *  (no costmod branch). Game-thread-scoped, cleared in a finally. */
+    private forge.game.card.Card combatPayCard;
+
+    /**
+     * M10 cousins touch: combat costs (CantAttackUnless/CantBlockUnless/
+     * OptionalAttackCost statics) route through PlayerController.payManaCost
+     * on the AI path — the effect=true gate was the single blocker. The
+     * marker widens the nested window's scope; auto (option 0) remains
+     * bit-identical to today's playNoStack behavior. Pay-vs-decline itself
+     * stays heuristic (ComputerUtilCost.canPayCost upstream) — that is
+     * ADR-0080's re-deferred genre; this is only HOW to pay.
+     */
+    @Override
+    public boolean payCombatCost(forge.game.card.Card c, forge.game.cost.Cost cost,
+            SpellAbility sa, String prompt) {
+        if (!bridged(TAG_PAY_CLASS)) {
+            return super.payCombatCost(c, cost, sa, prompt);
+        }
+        combatPayCard = c;
+        try {
+            return super.payCombatCost(c, cost, sa, prompt);
+        } finally {
+            combatPayCard = null;
+        }
+    }
+
     @Override
     public boolean payManaCost(forge.card.mana.ManaCost toPay, forge.game.cost.CostPartMana costPartMana,
             SpellAbility sa, String prompt, forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
+        // Cousins hygiene: any armed directive from a previous window is
+        // stale by construction at the next window's entry (the certify
+        // path's arm is consumed inside its own super auto-pay and has no
+        // post-super hook to clear itself).
+        CousinDirective.disarm(getPlayer());
+        final boolean combat = combatPayCard != null;
         // M10 schedule directive (m10-ceiling-spec knob c): a JOINT arm owns
         // every in-scope payment window on its target turn regardless of the
         // serve config's bridged tags — schedule-consistent selection is
         // engine-side and deterministic given the schedule. A null return
         // falls through to the normal path (costmod / non-consequential /
-        // enumeration error), reason-counted on the directive.
+        // enumeration error), reason-counted on the directive. Combat
+        // windows are not schedule-owned (slots are casts).
         if (!effect && toPay != null && !toPay.isZero()) {
             final ScheduleDirective sdir = ScheduleDirective.paymentDirective(getGame(), player);
             if (sdir != null) {
@@ -643,7 +681,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 }
             }
         }
-        if (!bridged(TAG_PAY_CLASS) || effect || toPay == null || toPay.isZero()) {
+        if (!bridged(TAG_PAY_CLASS) || (effect && !combat) || toPay == null || toPay.isZero()) {
             return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         }
         final PaymentEnumerator.Result r;
@@ -652,8 +690,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         try {
             // cost-modified windows: out-of-scope v1 (spec §12b) — raw toPay
             // diverges from what auto pays; goal enumeration would target
-            // the wrong cost. Auto + kv, never bridged.
-            if (PaymentEnumerator.costModified(sa)) {
+            // the wrong cost. Auto + kv, never bridged. Combat windows skip
+            // the detector: CostAdjustment never adjusts effect costs, and
+            // the EmptySa's host is the attacker (its own casting keywords
+            // must not trip the scan).
+            if (!combat && PaymentEnumerator.costModified(sa)) {
                 Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
                         "sa", Census.str(sa), "effect", false, "costmod", true);
                 long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
@@ -671,10 +712,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             // today's behavior (auto), loudly reason-coded — never a veto.
             // Mirrors the non-consequential path (super would double-record).
             Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
-                    "sa", Census.str(sa), "effect", false,
+                    "sa", Census.str(sa), "effect", effect,
                     "enumerr", e.getClass().getSimpleName());
             long s2 = Obs.dec(getGame(), getPlayer(), "payManaCost",
-                    "sa", Census.str(sa), "effect", false);
+                    "sa", Census.str(sa), "effect", effect);
             boolean paid = autoPay(toPay, sa, effect);
             Obs.ret(getGame(), s2, paid);
             return paid;
@@ -685,10 +726,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             // AFTER autoPay so the §12b retrospective backstop (0 plans yet
             // auto pays = static-detector leak) is one kv, not a join.
             long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
-                    "sa", Census.str(sa), "effect", false);
+                    "sa", Census.str(sa), "effect", effect);
             boolean paid = autoPay(toPay, sa, effect);
             Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto",
-                    "sa", Census.str(sa), "effect", false,
+                    "sa", Census.str(sa), "effect", effect,
                     "goals", r.options.size(), "plans", r.planCount, "conseq", false,
                     "trunc", r.goalCapHit, "nodecap", r.nodeCapHit,
                     "costmod_late", r.planCount == 0 && paid);
@@ -696,33 +737,69 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             return paid;
         }
         final List<String> labels = paymentOptionLabels(r);
-        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels,
-                "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", false,
+        // combat windows (cousins touch): extra kvs only there — non-combat
+        // rows stay byte-shaped for the banked observe-frame joins
+        final Object[] decKv = kvPlus(combat, new Object[] {
+                "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", effect,
                 "fpool", floatingPool(), "goals", r.options.size(), "plans", r.planCount,
-                "trunc", r.goalCapHit, "forced", forced);
+                "trunc", r.goalCapHit, "forced", forced });
+        long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels, decKv);
         int pick = bridge.selectOne(TAG_PAY_CLASS, labels);
         if (pick <= 0 || pick > r.options.size()) {
             boolean paid = autoPay(toPay, sa, effect);
-            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
+            Census.rec(getGame(), getPlayer(), "payManaCost", kvPlus(combat, new Object[] {
+                    "by", "bridge",
                     "options", labels.size(), "pick", "auto", "paid", paid,
                     "goals", r.options.size(), "plans", r.planCount, "conseq", true,
-                    "trunc", r.goalCapHit, "forced", forced);
+                    "trunc", r.goalCapHit, "forced", forced }));
             Obs.ret(getGame(), obsSeq, "auto:" + paid);
             return paid;
         }
         final PaymentEnumerator.PaymentClass pc = r.options.get(pick - 1).plan;
-        final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(getPlayer(), pc);
-        boolean paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+        // Cousins: ALWAYS armed on a directed payment — an empty map is the
+        // correct directive on a cousin-keyword spell whose chosen plan uses
+        // no cousin resources (natural play would convoke/delve what the
+        // plan deliberately spares). No-op for non-cousin spells.
+        final CousinDirective.Armed cousins = CousinDirective.arm(getPlayer(), pc);
+        final PaymentEnumerator.ExecOutcome out;
+        final boolean paid;
+        try {
+            out = PaymentEnumerator.executeDirected(getPlayer(), pc);
+            paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+        } finally {
+            CousinDirective.disarm(getPlayer());
+        }
         int residue = getPlayer().getManaPool().totalMana();
         String exec = !paid ? "directed_fail"
                 : out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
-        Census.rec(getGame(), getPlayer(), "payManaCost", "by", "bridge",
+        Object[] recKv = kvPlus(combat, new Object[] {
+                "by", "bridge",
                 "options", labels.size(), "pick", pick, "exec", exec, "paid", paid,
                 "float_residue", residue,
                 "goals", r.options.size(), "plans", r.planCount, "conseq", true,
-                "trunc", r.goalCapHit, "forced", forced);
+                "trunc", r.goalCapHit, "forced", forced });
+        if (pc.hasCousins()) {
+            recKv = java.util.Arrays.copyOf(recKv, recKv.length + 2);
+            recKv[recKv.length - 2] = "cousins";
+            recKv[recKv.length - 1] = cousins.summary();
+        }
+        Census.rec(getGame(), getPlayer(), "payManaCost", recKv);
         Obs.ret(getGame(), obsSeq, exec);
         return paid;
+    }
+
+    /** Append the combat-marker kvs when marked (cousins touch): non-combat
+     *  rows keep their pre-touch kv shape. */
+    private Object[] kvPlus(boolean combat, Object[] kv) {
+        if (!combat) {
+            return kv;
+        }
+        final Object[] out = java.util.Arrays.copyOf(kv, kv.length + 4);
+        out[kv.length] = "combat";
+        out[kv.length + 1] = true;
+        out[kv.length + 2] = "cmb";
+        out[kv.length + 3] = combatPayCard.getName() + "#" + combatPayCard.getId();
+        return out;
     }
 
     /** Current floating pool by mana type (spec §6 window context: WUBRGC). */
@@ -775,8 +852,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             }
             final int pick = sdir.selectPlan(r, getPlayer());
             final PaymentEnumerator.PaymentClass pc = r.options.get(pick).plan;
-            final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(getPlayer(), pc);
-            final boolean paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+            // cousins armed like the bridged path (empty maps = deliberate)
+            CousinDirective.arm(getPlayer(), pc);
+            final PaymentEnumerator.ExecOutcome out;
+            final boolean paid;
+            try {
+                out = PaymentEnumerator.executeDirected(getPlayer(), pc);
+                paid = autoPay(toPay, sa, effect); // completes from the float, pool-first
+            } finally {
+                CousinDirective.disarm(getPlayer());
+            }
             if (!paid) {
                 sdir.payFail++;
             } else if (out == PaymentEnumerator.ExecOutcome.DIRECTED_OK) {

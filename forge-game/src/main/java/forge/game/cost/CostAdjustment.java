@@ -507,6 +507,18 @@ public class CostAdjustment {
         return 0;
     }    
 
+    /**
+     * Anvil (fork-local, additive): per-spell applicability of a
+     * cost-adjusting static — exactly the predicate the adjustment loops
+     * use internally. The payment surface's cost-modified detector calls
+     * this so that a ReduceCost/SetCost static in play only scopes out the
+     * spells it actually applies to (m9-plan payment-completion queue
+     * item 4), instead of every window for that player.
+     */
+    public static boolean staticAppliesTo(final SpellAbility sa, final StaticAbility st) {
+        return checkRequirement(sa, st);
+    }
+
     private static boolean checkRequirement(final SpellAbility sa, final StaticAbility st) {
         if (!st.checkConditions()) {
             return false;

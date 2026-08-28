@@ -225,6 +225,12 @@ public final class PayDirective {
         kinds = new ArrayList<>(opt.kinds);
         try {
             final StringBuilder why = new StringBuilder();
+            // Cousins (2026-08-28): armed here, CONSUMED inside the window's
+            // own super auto-pay (which runs after this resolve returns —
+            // there is no post-super hook on the generated controller), and
+            // swept at the next window's entry (PaymentTelemetry.rec /
+            // PlayerControllerAnvil.payManaCost both disarm on entry).
+            CousinDirective.arm(p, opt.plan);
             final PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, opt.plan, why);
             fired = true;
             exec = out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
