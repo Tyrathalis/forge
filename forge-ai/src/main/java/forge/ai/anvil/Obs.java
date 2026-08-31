@@ -447,17 +447,23 @@ public final class Obs {
 
     /**
      * Store-frame marker record (M2 D4 rollout labels): {"k":"mark","s":seq,
-     * "m":kind,"t":turn, ...numeric kv}. Shares the dec seq counter so marks
-     * order strictly against decision records; readers that don't know the
-     * kind skip it (decode_frame handles dec/ret/end only). Store sessions
-     * only — wire sessions have nowhere to persist a mark.
+     * "m":kind,"t":turn, ...numeric kv}. Carries the NEXT decision's seq as
+     * an order stamp but does NOT consume it (ADR-0089: marks only exist in
+     * rollout-mode streams, so a consumed id shifted every post-fork
+     * decision's s by +1 vs a fork-free generation of the same game — and
+     * the serve's sampling noise is keyed (game_seed, s), so replayed
+     * mainlines re-rolled every post-fork decision and diverged; the mint's
+     * parity witness caught it at +1 per fork point, content-aligned).
+     * Readers order marks by record position (_pos), never by s; nothing
+     * reads mark.s. Store sessions only — wire sessions have nowhere to
+     * persist a mark.
      */
     public static synchronized void mark(Game g, String kind, Object... kv) {
         Session ses = sessions.get(g);
         if (ses == null || !ses.store || frame == null || g != currentGame) {
             return;
         }
-        long s = ses.seq++;
+        long s = ses.seq;
         StringBuilder sb = new StringBuilder(192);
         sb.append("{\"k\":\"mark\",\"s\":").append(s)
                 .append(",\"m\":").append(q(kind));
