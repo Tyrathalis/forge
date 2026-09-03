@@ -769,8 +769,21 @@ public final class AnvilRun {
                 } else {
                     throw new IllegalArgumentException("bad paymode (joint|auto): " + line);
                 }
-                if (armId < 1) {
-                    throw new IllegalArgumentException("armId must be >= 1 (0 = natural): " + line);
+                if (armId < 0) {
+                    throw new IllegalArgumentException("armId must be >= 0 (0 = natural): " + line);
+                }
+                if (armId == 0) {
+                    // M10 reset (ADR-0094) paired strength read: a NATURAL-ONLY
+                    // fork point — the row creates the point with no directed
+                    // arm; the implicit natural arm (ai = -1) runs its K
+                    // completions alone. Labels after the paymode are ignored.
+                    SchedPoint p0 = out.computeIfAbsent(idx, k -> new TreeMap<>())
+                            .computeIfAbsent(turn, t -> new SchedPoint(t, horizon, seat));
+                    if (p0.horizon != horizon || p0.seat != seat) {
+                        throw new IllegalArgumentException(
+                                "horizon/seat mismatch within g" + idx + " t" + turn);
+                    }
+                    continue;
                 }
                 List<String> armLabels = new ArrayList<>();
                 for (int i = 6; i < f.length; i++) {
