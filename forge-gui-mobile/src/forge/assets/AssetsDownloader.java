@@ -245,6 +245,13 @@ public class AssetsDownloader {
         }
 
         FileHandle versionFile = assetsDir.child("version.txt");
+        FileHandle resBuildDate = resDir.child("build.txt");
+        //fork: a version-name match alone is not proof res/ is current. The debug-profile
+        //APKs shipped through v23 carried a bare, never-changing versionName, so this gate
+        //closed on every boot and no res refresh ever ran; require the installed res build
+        //stamp to match the APK's as well (missing stamps keep upstream's behaviour)
+        boolean resStampCurrent = !buildTxtFileHandle.exists() || !resBuildDate.exists()
+                || buildTxtFileHandle.readString().strip().equals(resBuildDate.readString().strip());
         if (!versionFile.exists()) {
             try {
                 versionFile.file().createNewFile();
@@ -254,12 +261,11 @@ public class AssetsDownloader {
                 Forge.exitAnimation(false); //can't continue if this fails
                 return;
             }
-        } else if (versionString.equals(FileUtil.readFileToString(versionFile.file())) && FSkin.getSkinDir() != null) {
+        } else if (versionString.equals(FileUtil.readFileToString(versionFile.file())) && FSkin.getSkinDir() != null && resStampCurrent) {
             run(runnable);
             return; //if version matches what had been previously saved and FSkin isn't requesting assets download, no need to download assets
         }
 
-        FileHandle resBuildDate = resDir.child("build.txt");
         if (buildTxtFileHandle.exists() && resBuildDate.exists()) {
             String buildString = buildTxtFileHandle.readString();
             String target = resBuildDate.readString();
@@ -560,8 +566,8 @@ public class AssetsDownloader {
                     }
                     continue;
                 }
-                if (!path.startsWith("res/")) {
-                    continue;
+                if (!path.startsWith("res/") || path.endsWith(".xcf")) {
+                    continue; //assets.zip ships no .xcf sources (build-android.sh excludes them)
                 }
                 final File local = new File(ASSETS_DIR, path);
                 if (!local.isFile() || local.length() != entry.size()) {

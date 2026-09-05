@@ -335,6 +335,14 @@
                                 <goals>
                                     <goal>manifest-merger</goal>
                                 </goals>
+                                <configuration>
+                                    <!-- the release profiles stamp the dated snapshot version here; without it the
+                                         merger falls back to the bare project version, versionName never changes
+                                         between versionCode bumps, and AssetsDownloader's Android startup gate
+                                         (versionName == last-synced version) skips every res refresh - the fork's
+                                         v17-v23 APKs shipped that way -->
+                                    <manifestVersionName>${snapshot-version}</manifestVersionName>
+                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
