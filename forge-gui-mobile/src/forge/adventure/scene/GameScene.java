@@ -2,8 +2,10 @@ package forge.adventure.scene;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.math.Vector2;
 import forge.Forge;
+import forge.FrameRate;
 import forge.adventure.data.BiomeData;
 import forge.adventure.pointofintrest.PointOfInterest;
 import forge.adventure.stage.MapStage;
@@ -25,6 +27,7 @@ public class GameScene extends HudScene {
 
     private static GameScene object;
     private String location = "";
+    private String locationColorID = "[+c]";
 
     public static GameScene instance() {
         if (object == null)
@@ -47,6 +50,9 @@ public class GameScene extends HudScene {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
         stage.draw();
         hud.draw();
+        if (Forge.showFPS) {
+            FrameRate.getInstance().sampleAdventure((SpriteBatch) stage.getBatch());
+        }
     }
 
     @Override
@@ -59,6 +65,10 @@ public class GameScene extends HudScene {
         // IIRC This is used before and the player will start inside the POI.
         // but we don't allow saving inside the POI anymore.
         // WorldStage.getInstance().handlePointsOfInterestCollision();
+    }
+
+    public String getLocationColorID() {
+        return locationColorID;
     }
 
     public String getAdventurePlayerLocation(boolean forHeader, boolean skipRoads) {
@@ -78,6 +88,14 @@ public class GameScene extends HudScene {
             else {
                 BiomeData data = biomeData.get(currentBiome);
                 location = forHeader ? TextUtil.capitalize(data.name) + " Map" : data.name;
+                switch (data.name) {
+                    case "white" -> locationColorID = "[+w]";
+                    case "red" -> locationColorID = "[+r]";
+                    case "green" -> locationColorID = "[+g]";
+                    case "blue" -> locationColorID = "[+u]";
+                    case "black" -> locationColorID = "[+b]";
+                    default -> locationColorID = "[+c]";
+                }
             }
         }
         return location;
