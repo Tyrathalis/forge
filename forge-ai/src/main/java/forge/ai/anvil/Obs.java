@@ -328,6 +328,15 @@ public final class Obs {
      */
     public static synchronized void startForkGame(Game g, String wireId, long synthG,
             long rollSeed, String fmt, Game parent, int parentG, int fp, int r, int tt) {
+        startForkGame(g, wireId, synthG, rollSeed, fmt, parent, parentG, fp, r, tt, Integer.MIN_VALUE);
+    }
+
+    /** Arm-aware variant (M11 Build 0, -forceschedule -forkobs): the fork
+     *  header additionally carries "a" = the schedule arm id (0 = the natural
+     *  line) so readers join completions to their arm without decoding the
+     *  wire id. arm == Integer.MIN_VALUE omits the field (plain rollouts). */
+    public static synchronized void startForkGame(Game g, String wireId, long synthG,
+            long rollSeed, String fmt, Game parent, int parentG, int fp, int r, int tt, int arm) {
         if (forkFile == null || (parent != null && sessions.get(parent) == null)) {
             // No parent session = the parent's mainline frame already closed
             // (hard-cap abandoned thread still running its completions):
@@ -349,7 +358,11 @@ public final class Obs {
         StringBuilder sb = buildHeader(synthG, rollSeed, g, fmt, wireId);
         sb.setLength(sb.length() - 1);
         sb.append(",\"fork\":{\"pg\":").append(parentG).append(",\"fp\":").append(fp)
-                .append(",\"r\":").append(r).append(",\"tt\":").append(tt).append("}}");
+                .append(",\"r\":").append(r).append(",\"tt\":").append(tt);
+        if (arm != Integer.MIN_VALUE) {
+            sb.append(",\"a\":").append(arm);
+        }
+        sb.append("}}");
         s.headerRecord = sb.toString();
         sessions.put(g, s);
         lastStartedSession = s;

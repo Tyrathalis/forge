@@ -281,8 +281,12 @@ public final class AnvilRun {
                 System.err.println("FATAL: -forceschedule requires -rollout <k> + -labels");
                 System.exit(2);
             }
-            if (forkObs || forceBranch || forceSeq > 0 || drillTargets != null) {
-                System.err.println("FATAL: -forceschedule excludes -forkobs/-forcebranch/-forceseq/-drillfile");
+            // M11 Build 0 (critic-lookahead read): -forkobs is ALLOWED here —
+            // every completion's decision windows stream to the fork store
+            // (arm-aware synthetic ids, "a" in the fork header) so a critic
+            // can value the post-arm states. Recording only; game path untouched.
+            if (forceBranch || forceSeq > 0 || drillTargets != null) {
+                System.err.println("FATAL: -forceschedule excludes -forcebranch/-forceseq/-drillfile");
                 System.exit(2);
             }
             schedJobs = readSchedFile(params.get("forceschedule").get(0));
@@ -1635,7 +1639,22 @@ public final class AnvilRun {
                     copy.copyLastState();
                     String wid = "g" + gameIdx + ".f" + myFp + "r" + r + "s"
                             + (arm == null ? 0 : arm.id);
-                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    final int armId = arm == null ? 0 : arm.id;
+                    if (forkObs) {
+                        // M11 Build 0: per-completion fork-store frame. The
+                        // synthetic id folds the arm in (0 = natural, 1..16 =
+                        // arms, 20 slots) under the plain path's (g, fp, r)
+                        // layout; the fork header carries "a" for the join.
+                        long off = (((long) gameIdx * 100 + myFp) * 100 + r) * 20 + armId;
+                        if (off >= FORK_NS_STRIDE) {
+                            throw new IllegalStateException(
+                                    "fork id offset " + off + " >= FORK_NS_STRIDE (gameIdx " + gameIdx + ")");
+                        }
+                        Obs.startForkGame(copy, wid, forkGBase + off, rollSeed, fmt, game,
+                                gameIdx, myFp, r, targetTurn, armId);
+                    } else {
+                        Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    }
                     bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
                     ScheduleDirective dir = null;
                     if (arm != null) {
@@ -1668,6 +1687,17 @@ public final class AnvilRun {
                                 stop, crashed, clockHit[0],
                                 (System.nanoTime() - c0) / 1_000_000);
                         ScheduleDirective.clear(copy);
+                        if (forkObs) {
+                            int tEnd = -1;
+                            try {
+                                tEnd = copy.getPhaseHandler().getTurn();
+                            } catch (Exception ignored) {
+                            }
+                            boolean stoppedHere = stop != null && stop.stopped;
+                            int wi = (crashed || stoppedHere || clockHit[0]) ? -1 : uniqueWinner(copy);
+                            Obs.endForkGame(copy, crashed ? "crash" : (wi >= 0 ? "won" : "draw"),
+                                    wi, tEnd, (System.nanoTime() - c0) / 1_000_000);
+                        }
                         Obs.endWireGame(copy);
                         // AiCache is a GLOBAL static memo that heuristic play
                         // clears at every AI priority window — but bridged
@@ -1684,6 +1714,31 @@ public final class AnvilRun {
                 }
             }
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+        }
+
+        /** Unique-winner extraction, NOT getWinningLobbyPlayer: a forced
+         *  draw (horizon stop / rollout clock) runs Player.onGameOver, which
+         *  marks EVERY surviving player as "won" — the winning-player accessor
+         *  then returns an arbitrary map-order pick (JVM-varying; the smoke's
+         *  determinism diff caught exactly this). Exactly one won = a real
+         *  winner (registered-players index); anything else = -1. */
+        private static int uniqueWinner(Game copy) {
+            int winner = -1;
+            int nWon = 0;
+            if (copy.getOutcome() != null) {
+                for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
+                    forge.game.player.PlayerOutcome po =
+                            copy.getRegisteredPlayers().get(j).getOutcome();
+                    if (po != null && po.hasWon()) {
+                        winner = j;
+                        nWon++;
+                    }
+                }
+                if (nWon != 1) {
+                    winner = -1;
+                }
+            }
+            return winner;
         }
 
         /** One sched labels row — the schema is a CONTRACT with the Python
@@ -1734,28 +1789,7 @@ public final class AnvilRun {
                     tEnd = copy.getPhaseHandler().getTurn();
                 } catch (Exception ignored) {
                 }
-                // Unique-winner extraction, NOT getWinningLobbyPlayer: a
-                // forced draw (horizon stop / rollout clock) runs
-                // Player.onGameOver, which marks EVERY surviving player as
-                // "won" — the winning-player accessor then returns an
-                // arbitrary map-order pick (JVM-varying; the smoke's
-                // determinism diff caught exactly this). Exactly one won =
-                // a real winner; anything else = -1.
-                int winner = -1;
-                int nWon = 0;
-                if (copy.getOutcome() != null) {
-                    for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
-                        forge.game.player.PlayerOutcome po =
-                                copy.getRegisteredPlayers().get(j).getOutcome();
-                        if (po != null && po.hasWon()) {
-                            winner = j;
-                            nWon++;
-                        }
-                    }
-                    if (nWon != 1) {
-                        winner = -1;
-                    }
-                }
+                int winner = uniqueWinner(copy);
                 boolean stopped = stop != null && stop.stopped;
                 sb.append(",\"stopped\":").append(stopped)
                         .append(",\"ended\":").append(!crashed && !stopped && !clockHit
