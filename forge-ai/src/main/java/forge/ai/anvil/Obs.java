@@ -535,6 +535,53 @@ public final class Obs {
         return decPriority(g, p, null);
     }
 
+    /** M10 reset Fork 3 (inline certification): a dec-SHAPED record for the
+     *  bridge's fork-point certify ask — the window's turn/phase/seat, the
+     *  structured opts ({e, sa, kind} in the decPriority idiom, index-aligned
+     *  with the option labels the caller sends) and the obs snapshot. Pure:
+     *  no session, seq id, history ring or store frame is touched — the
+     *  mainline's own priority dec for this window is logged by the
+     *  controller's ask that follows the fork. */
+    public static String peekPriority(Game g, Player p, java.util.List<SpellAbility> options) {
+        StringBuilder sb = new StringBuilder(8192);
+        int turn = -1;
+        String phase = null;
+        try {
+            PhaseHandler ph = g.getPhaseHandler();
+            if (ph != null) {
+                turn = ph.getTurn();
+                PhaseType pt = ph.getPhase();
+                phase = pt == null ? null : pt.toString();
+            }
+        } catch (Exception ignored) {
+        }
+        int pIdx = p == null ? -1 : g.getRegisteredPlayers().indexOf(p);
+        sb.append("{\"k\":\"peek\",\"t\":").append(turn)
+                .append(",\"ph\":").append(q(phase))
+                .append(",\"p\":").append(pIdx)
+                .append(",\"m\":\"chooseSpellAbilityToPlay\",\"opts\":[");
+        for (int i = 0; i < options.size(); i++) {
+            SpellAbility sa = options.get(i);
+            Card h = sa.getHostCard();
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"e\":").append(h == null ? -1 : h.getId())
+                    .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
+                    .append(",\"kind\":\"").append(kind(sa)).append("\"}");
+        }
+        sb.append("],\"obs\":");
+        int obsStart = sb.length();
+        try {
+            ObsSnapshot.write(sb, g);
+        } catch (Exception e) {
+            sb.setLength(obsStart);
+            sb.append("null,\"err\":").append(q(e.toString()));
+        }
+        sb.append('}');
+        return sb.toString();
+    }
+
     /** Bridged variant carries provenance; both stash the scanned options so
      *  ret() can label the chosen option index ("oi" — exact SA-level labels
      *  for future corpora; the sa-string join is ambiguous for ~31% of

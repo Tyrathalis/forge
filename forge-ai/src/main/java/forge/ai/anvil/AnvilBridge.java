@@ -88,6 +88,20 @@ public interface AnvilBridge {
         return null;
     }
 
+    /**
+     * M10 reset Fork 3 (inline certification): at a quiescent MAIN1 fork
+     * point the rollout monitor asks "which schedule arms for this seat's
+     * option list?" — optionLabels in the Census.str basis (no pass entry),
+     * observation = Obs.peekPriority (the window's obs + structured opts,
+     * NOT logged). Returns ordered option-index lists (armId = position + 1;
+     * the natural line is implicit); empty or null = no rollouts here.
+     * Transports that don't serve the tag return null.
+     */
+    default List<int[]> certifyArms(String tag, List<String> optionLabels,
+            String observation) {
+        return null;
+    }
+
     /** Lifecycle notifications (no-ops for the local arm). */
     default void gameStart(String gameId, long seed) {
     }

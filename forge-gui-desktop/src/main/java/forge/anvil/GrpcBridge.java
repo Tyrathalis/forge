@@ -343,6 +343,61 @@ public final class GrpcBridge implements AnvilBridge {
                 cp.getHasX(), (int) cp.getXValue());
     }
 
+    /** M10 reset Fork 3: the fork-point certify ask (SELECT_K over the
+     *  option labels, constraints.k = the arm cap is advisory; the answer is
+     *  DecisionResponse.index_lists). Fallback / no lists = empty (no
+     *  rollouts) — never a poison: a missed label costs nothing but itself. */
+    @Override
+    public List<int[]> certifyArms(String tag, List<String> optionLabels,
+            String observation) {
+        if (!serverTags.contains(tag)) {
+            return null;
+        }
+        if (poisonReason != null) {
+            throw new BridgePoisonedException(poisonReason);
+        }
+        DecisionRequest.Builder req = DecisionRequest.newBuilder()
+                .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
+                .setShape(AnswerShape.SELECT_K).setDeadlineMs(deadlineMs);
+        if (optionLabels != null) {
+            for (int i = 0; i < optionLabels.size(); i++) {
+                String label = optionLabels.get(i);
+                req.addOptions(Option.newBuilder().setId(i).setLabel(label == null ? "" : label));
+            }
+        }
+        if (observation != null) {
+            req.setObservation(ByteString.copyFromUtf8(observation));
+        }
+        out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
+        ServerMsg msg = await();
+        if (msg == null) {
+            transportFailures++;
+            throw poison("deadline on " + tag + " seq=" + seq
+                    + " (transport failure " + transportFailures + ")");
+        }
+        if (!msg.hasResponse()) {
+            throw poison("non-response message while awaiting " + tag + " seq=" + seq);
+        }
+        if (msg.getResponse().getDecisionSeq() != seq) {
+            throw poison("decision_seq mismatch on " + tag + ": expected " + seq
+                    + ", got " + msg.getResponse().getDecisionSeq());
+        }
+        DecisionResponse resp = msg.getResponse();
+        java.util.List<int[]> arms = new java.util.ArrayList<>(resp.getIndexListsCount());
+        if (resp.getFallback()) {
+            serverFallbacks++;
+            return arms;
+        }
+        for (IndexList il : resp.getIndexListsList()) {
+            int[] a = new int[il.getIndicesCount()];
+            for (int i = 0; i < a.length; i++) {
+                a[i] = il.getIndices(i);
+            }
+            arms.add(a);
+        }
+        return arms;
+    }
+
     private static CastPlanAnswer pass() {
         return new CastPlanAnswer(0, false, java.util.Collections.emptyList(), false, 0);
     }

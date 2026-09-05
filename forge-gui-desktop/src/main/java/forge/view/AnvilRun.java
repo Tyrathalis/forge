@@ -26,7 +26,10 @@ import forge.ai.AiProfileUtil;
 import forge.ai.anvil.AnvilBridge;
 import forge.ai.simulation.GameCopier;
 import forge.ai.anvil.AnvilLobbyPlayer;
+import com.google.common.collect.Lists;
+import forge.ai.anvil.AnvilOptions;
 import forge.ai.anvil.Census;
+import forge.game.spellability.SpellAbility;
 import forge.ai.anvil.ChoiceDirective;
 import forge.ai.anvil.LocalRandomBridge;
 import forge.ai.anvil.Obs;
@@ -103,7 +106,7 @@ public final class AnvilRun {
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
                     + "[-seqarms nat|all] [-forceschedule <tsv>] [-forcechoice <tsv>] "
-                    + "[-n <games>] [-s <baseSeed>]");
+                    + "[-certify <horizon>] [-n <games>] [-s <baseSeed>]");
             return;
         }
 
@@ -301,6 +304,34 @@ public final class AnvilRun {
             drillStop = true;
         }
 
+        // M10 reset Fork 3 (m10-reset-draft §D.3): -certify <horizon> = INLINE
+        // certification. At each -points-sampled quiescent MAIN1 fork point of a
+        // bridged active seat, the monitor asks the bridge for schedule arms
+        // (anvil.certify: option labels + Obs.peekPriority); an empty answer =
+        // no rollouts (the bridge's accept rate x -points = the rate knob, the
+        // server's --certify-rate 0 = off). A non-empty answer runs the sched
+        // rollouts (NATURAL + arms x K, horizon-stopped) exactly as
+        // -forceschedule would, plus one "sched_arms" labels row carrying the
+        // arm definitions (there is no TSV). Store frames keep logging the
+        // mainline; completions are wire-only sessions (the mint's shape).
+        int certifyHorizon = -1;
+        if (params.containsKey("certify")) {
+            if (rolloutK <= 0 || !params.containsKey("labels")) {
+                System.err.println("FATAL: -certify requires -rollout <k> + -labels");
+                System.exit(2);
+            }
+            if (forkObs || forceBranch || forceSeq > 0 || drillTargets != null || schedJobs != null) {
+                System.err.println("FATAL: -certify excludes "
+                        + "-forkobs/-forcebranch/-forceseq/-drillfile/-forceschedule");
+                System.exit(2);
+            }
+            certifyHorizon = Integer.parseInt(params.get("certify").get(0));
+            if (certifyHorizon < 0) {
+                System.err.println("FATAL: -certify horizon must be >= 0 (0 = natural end)");
+                System.exit(2);
+            }
+        }
+
         // M11 choice mode (m11-routing-probes-spec.md): -forcechoice <file> =
         // per-(game, turn) forced-choice arms; NATURAL + each arm x K paired
         // completions per fork point, horizon-stopped (h > 0) or run to
@@ -317,9 +348,9 @@ public final class AnvilRun {
                 System.exit(2);
             }
             if (forkObs || forceBranch || forceSeq > 0 || drillTargets != null
-                    || schedJobs != null) {
+                    || schedJobs != null || certifyHorizon >= 0) {
                 System.err.println("FATAL: -forcechoice excludes "
-                        + "-forkobs/-forcebranch/-forceseq/-drillfile/-forceschedule");
+                        + "-forkobs/-forcebranch/-forceseq/-drillfile/-forceschedule/-certify");
                 System.exit(2);
             }
             choiceJobs = readChoiceFile(params.get("forcechoice").get(0));
@@ -574,7 +605,8 @@ public final class AnvilRun {
                             type.toString(), labels, watchdogs, drillTurns, drillStop,
                             forkObs, forceBranch, forceSeq, seqNatOnly,
                             schedJobs != null ? schedJobs.get(idx) : null,
-                            choiceJobs != null ? choiceJobs.get(idx) : null));
+                            choiceJobs != null ? choiceJobs.get(idx) : null,
+                            certifyHorizon));
                 }
                 // Rollout forks run inside the game's wall — budget the clocks
                 // for them (45 s/rollout is far above the 4.4 s median but
@@ -583,6 +615,7 @@ public final class AnvilRun {
                 // sequence mode 3xK (1xK single-natural-arm).
                 int fpBudget = drillTurns != null ? drillTurns.length : rolloutPoints;
                 int perPoint = (schedJobs != null ? (1 + schedMaxArms)
+                        : certifyHorizon >= 0 ? (1 + CERTIFY_MAX_ARMS)
                         : choiceJobs != null ? (1 + choiceMaxArms)
                         : forceSeq > 0 ? (seqNatOnly ? 1 : 3) : (forceBranch ? 2 : 1))
                         * rolloutK;
@@ -939,6 +972,9 @@ public final class AnvilRun {
     // ------------------------------------------------------------------
 
     private static final int ROLLOUT_TIMEOUT_S = 120;
+    /** Inline certification: arms per point cap (sched_pins.ARM_CAP) — the clock budget. */
+    private static final int CERTIFY_MAX_ARMS = 16;
+    static final String TAG_CERTIFY = "anvil.certify";
     // Fork-store synthetic game ids live in their own namespace above any
     // reachable mainline index: base + ns*STRIDE + (gameIdx*100 + fp)*100 + r.
     // Without the base, a drilled source game with gameIdx=0 encodes forks
@@ -973,6 +1009,8 @@ public final class AnvilRun {
         final Map<Integer, SchedPoint> sched;
         /** M11 choice mode: this game's fork points by turn; null = not choice. */
         final Map<Integer, ChoicePoint> choice;
+        /** M10 reset Fork 3 inline certification horizon; -1 = off. */
+        final int certifyHorizon;
         /** One printed stack per distinct throwable class per lane run. */
         private final Set<String> crashClassesPrinted = new HashSet<>();
         final java.util.TreeSet<Integer> targets = new java.util.TreeSet<>();
@@ -983,8 +1021,10 @@ public final class AnvilRun {
                 PrintWriter labels, ScheduledExecutorService watchdogs,
                 int[] drillTurns, boolean stopAfter, boolean forkObs,
                 boolean forceBranch, int forceSeq, boolean seqNatOnly,
-                Map<Integer, SchedPoint> sched, Map<Integer, ChoicePoint> choice) {
+                Map<Integer, SchedPoint> sched, Map<Integer, ChoicePoint> choice,
+                int certifyHorizon) {
             this.game = game;
+            this.certifyHorizon = certifyHorizon;
             this.gameIdx = gameIdx;
             this.seed = seed;
             this.k = k;
@@ -1061,7 +1101,11 @@ public final class AnvilRun {
 
         private void doRollouts(int turn, int targetTurn) {
             if (sched != null) {
-                doSchedRollouts(turn, targetTurn);
+                doSchedRollouts(turn, targetTurn, sched.get(targetTurn));
+                return;
+            }
+            if (certifyHorizon >= 0) {
+                doCertifyRollouts(turn, targetTurn);
                 return;
             }
             if (choice != null) {
@@ -1446,9 +1490,88 @@ public final class AnvilRun {
          *  Labels-only; drift / seat mismatch emits one loud skip row and no
          *  completions (the Python reader counts these against replay
          *  fidelity). */
-        private void doSchedRollouts(int turn, int targetTurn) {
+        /** M10 reset Fork 3: the inline-certification fork point. The arm set
+         *  is decided at the window by the bridge (anvil.certify); an empty
+         *  answer is a counted skip. Non-empty -> a transient SchedPoint runs
+         *  through doSchedRollouts unchanged (same rows, same directive, same
+         *  rollSeed identity keyed on the target turn). */
+        private void doCertifyRollouts(int turn, int targetTurn) {
+            PhaseHandler ph = game.getPhaseHandler();
+            Player prio = ph.getPriorityPlayer();
+            boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
+                    && ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            if (!bridgeSeat || turn != targetTurn) {
+                return; // unbridged seat / drifted target: not a certification window
+            }
+            int prioSeat = -1;
+            for (int j = 0; j < game.getRegisteredPlayers().size(); j++) {
+                if (game.getRegisteredPlayers().get(j).getName().equals(prio.getName())) {
+                    prioSeat = j;
+                }
+            }
+            List<SpellAbility> options = Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
+            List<String> optLabels = Lists.newArrayListWithCapacity(options.size());
+            for (SpellAbility sa : options) {
+                optLabels.add(Census.str(sa));
+            }
+            List<int[]> arms;
+            try {
+                arms = bridge.certifyArms(TAG_CERTIFY, optLabels, Obs.peekPriority(game, prio, options));
+            } catch (RuntimeException e) {
+                throw e; // a poisoned bridge ends the game (protocol law); nothing else throws
+            }
+            if (arms == null || arms.isEmpty()) {
+                if (labels != null) {
+                    synchronized (labels) {
+                        labels.println("{\"ev\":\"sched\",\"i\":" + gameIdx
+                                + ",\"seed\":" + seed + ",\"fp\":" + fp
+                                + ",\"t\":" + turn + ",\"tt\":" + targetTurn
+                                + ",\"skip\":\"" + (arms == null ? "certify_unserved" : "declined") + "\"}");
+                        labels.flush();
+                    }
+                }
+                return;
+            }
+            SchedPoint point = new SchedPoint(targetTurn, certifyHorizon, prioSeat);
+            StringBuilder armsJson = new StringBuilder(512);
+            for (int ai = 0; ai < arms.size() && ai < CERTIFY_MAX_ARMS; ai++) {
+                List<String> armLabels = new ArrayList<>();
+                for (int idx : arms.get(ai)) {
+                    if (idx >= 0 && idx < optLabels.size()) {
+                        armLabels.add(optLabels.get(idx));
+                    }
+                }
+                point.arms.add(new SchedArm(ai + 1, true, armLabels));
+                if (ai > 0) {
+                    armsJson.append(',');
+                }
+                armsJson.append('[');
+                for (int li = 0; li < armLabels.size(); li++) {
+                    if (li > 0) {
+                        armsJson.append(',');
+                    }
+                    armsJson.append('"').append(jstr(armLabels.get(li))).append('"');
+                }
+                armsJson.append(']');
+            }
+            if (labels != null) {
+                // the arm definitions (there is no schedfile): the Python
+                // finish step's read_sched equivalent
+                synchronized (labels) {
+                    labels.println("{\"ev\":\"sched_arms\",\"i\":" + gameIdx
+                            + ",\"seed\":" + seed + ",\"fp\":" + fp
+                            + ",\"t\":" + targetTurn + ",\"seat\":" + prioSeat
+                            + ",\"horizon\":" + certifyHorizon
+                            + ",\"n_opts\":" + optLabels.size()
+                            + ",\"arms\":[" + armsJson + "]}");
+                    labels.flush();
+                }
+            }
+            doSchedRollouts(turn, targetTurn, point);
+        }
+
+        private void doSchedRollouts(int turn, int targetTurn, SchedPoint point) {
             int myFp = fp++;
-            SchedPoint point = sched.get(targetTurn);
             PhaseHandler ph = game.getPhaseHandler();
             Player prio = ph.getPriorityPlayer();
             boolean bridgeSeat = prio.getController() instanceof PlayerControllerAnvil
