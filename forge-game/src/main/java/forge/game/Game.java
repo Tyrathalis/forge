@@ -1026,6 +1026,24 @@ public class Game {
         return rules;
     }
 
+    // Anvil M12 Build 0 (ADR-0102): priority grants this game (both seats,
+    // counted where PhaseHandler gives priority) and the cap that ended it.
+    private int anvilPriorityGrants = 0;
+    private String anvilCapReason = null;
+
+    public int getAnvilPriorityGrants() {
+        return anvilPriorityGrants;
+    }
+    public int incAnvilPriorityGrants() {
+        return ++anvilPriorityGrants;
+    }
+    public String getAnvilCapReason() {
+        return anvilCapReason;
+    }
+    public void setAnvilCapReason(final String reason) {
+        this.anvilCapReason = reason;
+    }
+
     public List<Card> getActivePlanes() {
         return activePlanes;
     }

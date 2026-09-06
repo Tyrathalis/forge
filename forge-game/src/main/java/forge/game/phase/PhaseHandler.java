@@ -175,6 +175,13 @@ public class PhaseHandler implements java.io.Serializable, IHasForgeLog {
 
             if (turnEnded) {
                 turn++;
+                // Anvil M12 Build 0 (ADR-0102): the turn cap.
+                final int turnCap = game.getRules().getAnvilTurnCap();
+                if (turnCap > 0 && turn > turnCap) {
+                    game.setAnvilCapReason("turn");
+                    game.setGameOver(GameEndReason.Draw);
+                    return;
+                }
                 extraPhases.clear();
                 game.updateTurnForView();
                 game.fireEvent(new GameEventTurnBegan(PlayerView.get(playerTurn), turn));
@@ -1040,6 +1047,13 @@ public class PhaseHandler implements java.io.Serializable, IHasForgeLog {
         if (givePriorityToPlayer) {
             if (DEBUG_PHASES) {
                 sw.start();
+            }
+            // Anvil M12 Build 0 (ADR-0102): the priority-window cap.
+            final int windowCap = game.getRules().getAnvilWindowCap();
+            if (game.incAnvilPriorityGrants() > windowCap && windowCap > 0) {
+                game.setAnvilCapReason("windows");
+                game.setGameOver(GameEndReason.Draw);
+                return;
             }
 
             game.fireEvent(new GameEventPlayerPriority(PlayerView.get(playerTurn), phase, PlayerView.get(getPriorityPlayer())));

@@ -65,7 +65,15 @@ public final class Obs {
     // ObsSnapshot.choiceState) + blesses the additive payment-window kv the
     // pay_mana_class bridge emits (goal-shaped labels, m9-payment-surface
     // spec §6). Readers gate on this — never mix sv eras in one store join.
-    public static final int SCHEMA_VERSION = 2;
+    // v3 (M12 Build 0 boundary, ADR-0102): the game header carries explicit
+    // provenance — "pool" (the pool manifest hash) and "fork_commit" — and
+    // the end record carries "cap" (turn|windows) when a deterministic cap
+    // ended the game; the mask basis is payable-by-the-executor's-predicate.
+    // Readers gate on this — never mix sv eras in one store join.
+    public static final int SCHEMA_VERSION = 3;
+    /** Provenance statics set once per JVM by the runner (null = absent). */
+    public static volatile String poolId = null;
+    public static volatile String forkCommit = null;
     private static final int ZSTD_LEVEL = 3;
     /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
     private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
@@ -422,8 +430,14 @@ public final class Obs {
         if (wireId != null) {
             sb.append(",\"wid\":").append(q(wireId));
         }
-        sb.append(",\"fmt\":").append(q(fmt))
-                .append(",\"players\":[");
+        sb.append(",\"fmt\":").append(q(fmt));
+        if (poolId != null) {
+            sb.append(",\"pool\":").append(q(poolId));
+        }
+        if (forkCommit != null) {
+            sb.append(",\"fork_commit\":").append(q(forkCommit));
+        }
+        sb.append(",\"players\":[");
         int i = 0;
         for (Player p : g.getRegisteredPlayers()) {
             if (i++ > 0) {
@@ -505,6 +519,12 @@ public final class Obs {
     }
 
     public static synchronized void endGame(String status, int winnerIdx, int turns, long ms, boolean drawClock) {
+        endGame(status, winnerIdx, turns, ms, drawClock, null);
+    }
+
+    /** cap: "turn" | "windows" when a deterministic cap (ADR-0102) ended the game. */
+    public static synchronized void endGame(String status, int winnerIdx, int turns, long ms, boolean drawClock,
+            String cap) {
         if (frame == null) {
             return;
         }
@@ -515,6 +535,9 @@ public final class Obs {
                 .append(",\"ms\":").append(ms);
         if (drawClock) {
             sb.append(",\"draw_clock\":true");
+        }
+        if (cap != null) {
+            sb.append(",\"cap\":").append(q(cap));
         }
         sb.append('}');
         write(sb);

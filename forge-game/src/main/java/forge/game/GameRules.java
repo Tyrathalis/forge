@@ -33,6 +33,27 @@ public class GameRules {
         return gameType;
     }
 
+    // Anvil M12 Build 0 (ADR-0102): deterministic, replay-stable game caps in
+    // game units — a turn cap and a priority-window cap. 0 = off (upstream
+    // behavior). A cap ends the game as a Draw; cap-aware reward is the
+    // trainer's (loss/draw/cap = 0 for both seats — a stalling leader
+    // forfeits the +1). Wall-clock clocks stay as crash guards only.
+    private int anvilTurnCap = 0;
+    private int anvilWindowCap = 0;
+
+    public int getAnvilTurnCap() {
+        return anvilTurnCap;
+    }
+    public void setAnvilTurnCap(final int cap) {
+        this.anvilTurnCap = cap;
+    }
+    public int getAnvilWindowCap() {
+        return anvilWindowCap;
+    }
+    public void setAnvilWindowCap(final int cap) {
+        this.anvilWindowCap = cap;
+    }
+
     public boolean hasManaBurn() {
         return manaBurn;
     }

@@ -3,7 +3,6 @@ package forge.ai.anvil;
 import java.util.ArrayList;
 import java.util.List;
 
-import forge.ai.ComputerUtilCost;
 import forge.game.Game;
 import forge.game.GameObject;
 import forge.game.card.Card;
@@ -88,7 +87,7 @@ public final class CastPlanRealizer {
                 }
                 String why = legality(game, player, sa);
                 if (why == null && !sa.isLandAbility()
-                        && !ComputerUtilCost.canPayCost(sa, player, false)) {
+                        && !AnvilOptions.payable(game, player, sa)) {
                     why = "unpayable";
                 }
                 if (why != null) {
@@ -105,7 +104,7 @@ public final class CastPlanRealizer {
             tryApply(sa, refs, ans); // legality/payability judged with targets+X set
             String why = legality(game, player, sa);
             if (why == null && !sa.isLandAbility()
-                    && !ComputerUtilCost.canPayCost(sa, player, false)) {
+                    && !AnvilOptions.payable(game, player, sa)) {
                 why = "unpayable";
             }
             clear(sa);

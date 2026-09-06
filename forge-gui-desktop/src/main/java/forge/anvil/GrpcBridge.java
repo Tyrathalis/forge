@@ -74,6 +74,13 @@ public final class GrpcBridge implements AnvilBridge {
     private int transportFailures;
     private int serverFallbacks;
     private String poisonReason;
+    /** GameStart.format_tag ("mtg." + the -f GameType, lower-case); the
+     *  pre-Build-0 bridge hardcoded "mtg.commander" regardless of -f. */
+    private String formatTag = "mtg.commander";
+
+    public void setFormatTag(String tag) {
+        this.formatTag = tag;
+    }
 
     public GrpcBridge(String host, int port, String workerId, String forkCommit) {
         channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
@@ -252,7 +259,7 @@ public final class GrpcBridge implements AnvilBridge {
     public void gameStart(String id, long seed, String header) {
         gameId = id;
         GameStart.Builder gs = GameStart.newBuilder()
-                .setGameId(id).setSeed(seed).setFormatTag("mtg.commander");
+                .setGameId(id).setSeed(seed).setFormatTag(formatTag);
         if (header != null) {
             gs.setHeader(ByteString.copyFromUtf8(header));
         }

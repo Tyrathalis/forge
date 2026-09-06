@@ -73,7 +73,31 @@ import forge.util.MyRandom;
  * observation game record.
  */
 public final class AnvilRun {
+    /** Exactly one registered player with hasWon() -> its index; else -1
+     *  (a forced Draw marks every survivor as won). Shared by the mainline
+     *  status and the rollout drivers (ADR-0102). */
+    static int uniqueWinner(Game g) {
+        int winner = -1;
+        int nWon = 0;
+        if (g.getOutcome() != null) {
+            for (int j = 0; j < g.getRegisteredPlayers().size(); j++) {
+                forge.game.player.PlayerOutcome po = g.getRegisteredPlayers().get(j).getOutcome();
+                if (po != null && po.hasWon()) {
+                    winner = j;
+                    nWon++;
+                }
+            }
+            if (nWon != 1) {
+                winner = -1;
+            }
+        }
+        return winner;
+    }
+
     private static final int DRAW_CLOCK_S = 300;
+    /** ADR-0102 deterministic caps (see the rules setup below). */
+    static final int DEFAULT_TURN_CAP = 52;
+    static final int DEFAULT_WINDOW_CAP = 1650;
     private static final int GAME_HARD_CAP_S = 360;
 
     private static final Set<String> DEFAULT_TAGS = new HashSet<>(Arrays.asList(
@@ -106,7 +130,8 @@ public final class AnvilRun {
                     + "[-rollout <k> -points <m> -labels <jsonl> [-noreshuffle]] "
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
                     + "[-seqarms nat|all] [-forceschedule <tsv>] [-forcechoice <tsv>] "
-                    + "[-certify <horizon>] [-n <games>] [-s <baseSeed>]");
+                    + "[-certify <horizon>] [-n <games>] [-s <baseSeed>] "
+                    + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>]");
             return;
         }
 
@@ -126,6 +151,14 @@ public final class AnvilRun {
         // D6 run-2: re-ask-on-veto (d6-vtrace-loop §6b). Per-JVM, all seats.
         boolean reask = params.containsKey("reask");
         PlayerControllerAnvil.setReaskOnVeto(reask);
+        // Provenance on the obs game header + the bridge hello (ADR-0102 item 4).
+        if (params.containsKey("pool")) {
+            Obs.poolId = params.get("pool").get(0);
+        }
+        String forkCommit = params.containsKey("forkcommit") ? params.get("forkcommit").get(0) : "";
+        if (!forkCommit.isEmpty()) {
+            Obs.forkCommit = forkCommit;
+        }
         // M9 D3 §3c: payment-surface census telemetry-only mode (enumeration +
         // flag telemetry on every in-scope payManaCost, no bridging —
         // m9-payment-surface-spec.md §8). Trajectory-perturbing like -obs;
@@ -385,7 +418,8 @@ public final class AnvilRun {
         } else if (bridgeMode.startsWith("grpc:")) {
             String[] hp = bridgeMode.substring(5).split(":");
             forge.anvil.GrpcBridge grpc = new forge.anvil.GrpcBridge(
-                    hp[0], Integer.parseInt(hp[1]), "anvil-worker-r" + rangeStart, "");
+                    hp[0], Integer.parseInt(hp[1]), "anvil-worker-r" + rangeStart, forkCommit);
+            grpc.setFormatTag("mtg." + type.name().toLowerCase());
             if (!grpc.serverBridgedTags().isEmpty()) {
                 tags = grpc.serverBridgedTags(); // server-driven coverage
             }
@@ -397,6 +431,13 @@ public final class AnvilRun {
 
         GameRules rules = new GameRules(type);
         rules.setAppliedVariants(java.util.EnumSet.of(type));
+        // M12 Build 0 (ADR-0102): deterministic caps, defaults pinned from the
+        // m9-rebaseline distribution at the 99.5th percentile (priority windows
+        // per game p99.5 = 1,614; turns p99.5 = 51); 0 disables.
+        rules.setAnvilTurnCap(params.containsKey("turncap")
+                ? Integer.parseInt(params.get("turncap").get(0)) : DEFAULT_TURN_CAP);
+        rules.setAnvilWindowCap(params.containsKey("windowcap")
+                ? Integer.parseInt(params.get("windowcap").get(0)) : DEFAULT_WINDOW_CAP);
 
         // Deck schedule: fixed pair (-d) or index-mapped pairs file (-pairs).
         List<String[]> pairNames = new ArrayList<>();
@@ -633,8 +674,15 @@ public final class AnvilRun {
                 try {
                     TimeLimitedCodeBlock.runWithTimeout(() -> mc.startGame(game),
                             GAME_HARD_CAP_S + extraS, TimeUnit.SECONDS);
+                    // ADR-0102: a Draw end reason (cap, draw clock) marks
+                    // every survivor as "won" in GameOutcome, so isDraw() is
+                    // false and the clocked game was recorded as a win with
+                    // an arbitrary winner (found at the Build 0 sanity run;
+                    // the 300 s clock had this bug since M0 — ~1 game per
+                    // 2,000). The mainline now uses the rollout code's
+                    // unique-winner rule: exactly one winner or it is a draw.
                     status = game.getOutcome() == null ? "no_outcome"
-                            : game.getOutcome().isDraw() ? "draw" : "won";
+                            : uniqueWinner(game) < 0 ? "draw" : "won";
                 } catch (Throwable e) {
                     // Throwable, not Exception|StackOverflowError: any Error
                     // class escaping here reaches the uncaught handler and
@@ -650,8 +698,8 @@ public final class AnvilRun {
                     drawClock.cancel(false);
                 }
                 long wallMs = System.currentTimeMillis() - gameT0;
-                String winner = game.getOutcome() != null && !game.getOutcome().isDraw()
-                        ? game.getOutcome().getWinningLobbyPlayer().getName() : null;
+                final int uw = uniqueWinner(game);
+                String winner = uw >= 0 ? game.getRegisteredPlayers().get(uw).getName() : null;
                 int turns = game.getOutcome() != null ? game.getOutcome().getLastTurnNumber() : -1;
                 Census.endGame(winner, turns);
                 int winnerIdx = -1;
@@ -667,7 +715,8 @@ public final class AnvilRun {
                         }
                     }
                 }
-                Obs.endGame(status, winnerIdx, turns, wallMs, drawClockHit[0]);
+                final String capReason = game.getAnvilCapReason();
+                Obs.endGame(status, winnerIdx, turns, wallMs, drawClockHit[0], capReason);
                 bridge.gameEnd("g" + idx, winner, turns, wallMs);
                 // Between mainline games, same rationale as the sched-mode
                 // per-completion clear above: bridged seats never run the
@@ -681,6 +730,8 @@ public final class AnvilRun {
                             + ",\"winner\":" + (winner == null ? "null" : "\"" + winner.replace("\"", "'") + "\"")
                             + ",\"turns\":" + turns + ",\"ms\":" + wallMs
                             + ",\"draw_clock\":" + drawClockHit[0]
+                            + ",\"cap\":" + (capReason == null ? "null" : "\"" + capReason + "\"")
+                            + ",\"windows\":" + game.getAnvilPriorityGrants()
                             + ",\"decks\":[\"" + jstr(pair[0]) + "\",\"" + jstr(pair[1]) + "\"]"
                             + ",\"profiles\":[\"" + jstr(seatProfiles[0]) + "\",\"" + jstr(seatProfiles[1]) + "\"]}");
                     results.flush();
@@ -1723,22 +1774,7 @@ public final class AnvilRun {
          *  determinism diff caught exactly this). Exactly one won = a real
          *  winner (registered-players index); anything else = -1. */
         private static int uniqueWinner(Game copy) {
-            int winner = -1;
-            int nWon = 0;
-            if (copy.getOutcome() != null) {
-                for (int j = 0; j < copy.getRegisteredPlayers().size(); j++) {
-                    forge.game.player.PlayerOutcome po =
-                            copy.getRegisteredPlayers().get(j).getOutcome();
-                    if (po != null && po.hasWon()) {
-                        winner = j;
-                        nWon++;
-                    }
-                }
-                if (nWon != 1) {
-                    winner = -1;
-                }
-            }
-            return winner;
+            return AnvilRun.uniqueWinner(copy);
         }
 
         /** One sched labels row — the schema is a CONTRACT with the Python

@@ -4,7 +4,6 @@ import com.google.common.collect.Lists;
 
 import forge.ai.ComputerUtilAbility;
 import forge.ai.ComputerUtilCard;
-import forge.ai.ComputerUtilCost;
 import forge.game.Game;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
@@ -19,7 +18,7 @@ import java.util.List;
  * legal-actions-only invariant, ADR-0001). Shared by the bridged path
  * (PlayerControllerAnvil, M0) and the corpus label path (Obs.decPriority,
  * M1 D2) so both log the same basis: timing-legal spell abilities (see
- * PAYCHECK note — payability is deliberately NOT filtered) plus legal land
+ * PAYCHECK note — payable by the executor's own predicate since M12 Build 0) plus legal land
  * drops. Pass is not an option here — callers represent it themselves
  * (index 0 on the bridge; a null answer in the log).
  */
@@ -28,22 +27,103 @@ public final class AnvilOptions {
     }
 
     /**
-     * The logged option set is TIMING-LEGAL CANDIDATES, not payable actions
-     * (M1 D3 decision). Exact payability is not cheaply computable at scan
-     * time: cost reductions/additional costs are priced only after the AI's
-     * canPlaySa sets up targets and X ("can only be checked late" —
-     * AiController.canPlayAndPayForFace), which is why the old canPayCost
-     * filter both diverged from the expert's own picks (Mystical Dispute,
-     * Dargo, X spells — D3's 320-game validation, 11 errors) and duplicated
-     * the AI's most expensive work per window. canPlay() is the same
-     * predicate the AI itself requires (Spell.canPlay == canPlayFromHost
-     * != null), so the set is a superset of the expert's castable actions
-     * by construction; affordability is the model's to learn (it must price
-     * costs anyway to emit CastPlans). -Danvil.scan.paycheck=on restores the
-     * old filter for comparison runs only.
+     * M12 Build 0 (ADR-0102): the logged option set is TIMING-LEGAL AND
+     * PAYABLE candidates — the mask's legality predicate is the executor's
+     * own apply-time predicate ({@link #payable}), so filter and adjudicator
+     * agree by construction and the apply-time veto falls to the late-pricing
+     * residual (cost reductions/additional costs that price only after
+     * targets and X are set — the M1 D3 finding that turned the old filter
+     * off: 11 expert picks excluded in 320 games; the residual is COUNTED,
+     * never absorbed). -Danvil.scan.paycheck=off restores the M1–M11
+     * timing-only basis for comparison runs. History: the pre-M12 doc said
+     * "affordability is the model's to learn"; ADR-0101 finding 3 traced
+     * 18–30% of cast attempts vetoed at apply to that choice.
      */
     private static final boolean PAYCHECK =
-            "on".equals(System.getProperty("anvil.scan.paycheck", "off"));
+            !"off".equals(System.getProperty("anvil.scan.paycheck", "on"));
+
+    /**
+     * Shadow measurement for the Build 0 smoke (-Danvil.scan.payshadow=on):
+     * every option the filter rejects is re-tested with the M9 legality-
+     * derived enumerator; a rejected option the enumerator can pay is the
+     * RESCUE class (chained-activation mana the auto-payer cannot see,
+     * ADR-0065). One census row per window: n / rej / rescue. Census-only,
+     * never a game-path change; off in production.
+     */
+    private static final boolean PAYSHADOW =
+            "on".equals(System.getProperty("anvil.scan.payshadow", "off"));
+
+    /**
+     * The legality subset of ComputerUtilCost.canPayCost (ADR-0102 item 1):
+     * the extra-mana taxes (Nether Void class, command-zone effects), ward
+     * mana when targets are set, ComputerUtilMana.canPayManaCost and the
+     * additional-cost parts — and NONE of canPayCost's judgment calls: the
+     * planeswalker-ultimate coin flip (an RNG draw — trajectory-perturbing
+     * on the scan path), the ward willPayCosts, the Casualty
+     * AIDontSacToCasualty filter. Shared by the scan (pre-targets, X unset
+     * → X=0, optimistic) and the realizer (post-targets). Auto-payer-derived
+     * by construction — chained-activation payability is the enumerator's
+     * (the shadow counter above measures the gap).
+     */
+    public static boolean payable(Game game, Player player, SpellAbility sa) {
+        if (sa.isLandAbility()) {
+            return true;
+        }
+        if (sa.getActivatingPlayer() == null) {
+            sa.setActivatingPlayer(player);
+        }
+        final forge.game.cost.Cost cost = sa.getPayCosts();
+        if (cost == null) {
+            return true;
+        }
+        int extraMana = 0;
+        final boolean cannotBeCountered = !sa.isCounterableBy(null);
+        if (sa instanceof forge.game.spellability.Spell) {
+            for (Card c : game.getCardsIn(forge.game.zone.ZoneType.Battlefield)) {
+                final String snem = c.getSVar("AI_SpellsNeedExtraMana");
+                if (snem == null || snem.isEmpty()) {
+                    continue;
+                }
+                if (cannotBeCountered && c.getName().equals("Nether Void")) {
+                    continue;
+                }
+                String[] parts = snem.split(" ");
+                boolean meets = parts.length == 1
+                        || player.isValid(parts[1], c.getController(), c, sa);
+                if (meets && parts[0].chars().allMatch(Character::isDigit)) {
+                    extraMana += Integer.parseInt(parts[0]);
+                }
+            }
+            for (Card c : player.getCardsIn(forge.game.zone.ZoneType.Command)) {
+                if (cannotBeCountered) {
+                    continue;
+                }
+                final String snem = c.getSVar("SpellsNeedExtraManaEffect");
+                if (snem != null && !snem.isEmpty() && snem.chars().allMatch(Character::isDigit)) {
+                    extraMana += Integer.parseInt(snem);
+                }
+            }
+        }
+        if (!sa.isTrigger() && !cannotBeCountered) {
+            java.util.Set<forge.game.GameObject> seen = new java.util.HashSet<>();
+            for (forge.game.spellability.TargetChoices tc : sa.getAllTargetChoices()) {
+                for (Card tgt : tc.getTargetCards()) {
+                    if (!seen.add(tgt)) {
+                        continue;
+                    }
+                    if (tgt.hasKeyword(forge.game.keyword.Keyword.WARD) && tgt.isInPlay()
+                            && tgt.getController().isOpponentOf(sa.getHostCard().getController())) {
+                        forge.game.cost.Cost ward = ComputerUtilCard.getTotalWardCost(tgt);
+                        if (ward.hasManaCost()) {
+                            extraMana += ward.getTotalMana().getCMC();
+                        }
+                    }
+                }
+            }
+        }
+        return forge.ai.ComputerUtilMana.canPayManaCost(cost, sa, player, extraMana, false)
+                && forge.game.cost.CostPayment.canPayAdditionalCosts(cost, sa, false, player);
+    }
 
     /**
      * Mask cache (2026-08-11): priorityOptions dominated bridged-generation
@@ -82,8 +162,29 @@ public final class AnvilOptions {
      * the tutor-to-hand staleness), and tapped state (mana-ability options).
      * ~50 card reads vs a 55%-of-engine-time rebuild.
      */
+    /** Shadow-only: can the M9 enumerator pay what the auto-payer cannot?
+     *  Cost-modified spells are out of the enumerator's scope (spec §12b)
+     *  and count as no-rescue; enumeration errors likewise (never throws). */
+    private static boolean shadowRescue(Player player, SpellAbility sa) {
+        try {
+            final forge.game.cost.Cost cost = sa.getPayCosts();
+            if (cost == null || !cost.hasManaCost() || PaymentEnumerator.costModified(sa)) {
+                return false;
+            }
+            PaymentEnumerator.Result r = PaymentEnumerator.enumerate(player, sa, cost.getTotalMana());
+            return r.planCount >= 1;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private static long seatStateHash(Player player) {
         long h = 1469598103934665603L;
+        // Build 0 (ADR-0102): payability joined the mask, so its inputs the
+        // timestamp does not version join the key — floating mana and life
+        // (phyrexian shards, life-payment alt costs).
+        h = h * 1099511628211L + player.getManaPool().totalMana();
+        h = h * 1099511628211L + player.getLife();
         for (forge.game.zone.ZoneType zt : STATE_ZONES) {
             for (Card c : player.getZone(zt)) {
                 h = h * 1099511628211L
@@ -154,12 +255,24 @@ public final class AnvilOptions {
         // payable ONLY via its alternative cost (e.g. Snuff Out's 4 life)
         // must appear as an option or the logged legality mask would forbid
         // the heuristic's own pick (found by the D2 smoke validator).
+        int scanned = 0, rejected = 0, rescue = 0;
         for (SpellAbility sa : ComputerUtilAbility.getOriginalAndAltCostAbilities(
                 ComputerUtilAbility.getSpellAbilities(cards, player), player)) {
-            if (!sa.isLandAbility() && sa.canPlay()
-                    && (!PAYCHECK || ComputerUtilCost.canPayCost(sa, player, false))) {
-                options.add(sa);
+            if (sa.isLandAbility() || !sa.canPlay()) {
+                continue;
             }
+            scanned++;
+            if (!PAYCHECK || payable(game, player, sa)) {
+                options.add(sa);
+                continue;
+            }
+            rejected++;
+            if (PAYSHADOW && shadowRescue(player, sa)) {
+                rescue++;
+            }
+        }
+        if (PAYSHADOW) {
+            Census.rec(game, player, "paymask", "n", scanned, "rej", rejected, "rescue", rescue);
         }
         CardCollectionView lands = ComputerUtilAbility.getAvailableLandsToPlay(game, player);
         if (lands != null) {
