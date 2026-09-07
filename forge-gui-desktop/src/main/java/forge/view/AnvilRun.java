@@ -269,8 +269,9 @@ public final class AnvilRun {
         // the option from the leaf-value softmax at -searchtemp <T> (0 =
         // argmax; default 0.025 — an option one 0.05-bar below the best keeps
         // ~13% weight), below the bar the natural pick stands. Absent = the
-        // Build 0 telemetry-only instrument. -searchseats <csv> restricts the
-        // searched seats (default: every bridged seat).
+        // Build 0 telemetry-only instrument. -searchseats <csv> names the
+        // searched seats explicitly (default: every bridged seat); a heuristic
+        // seat named there is searched and acted for — the control arm.
         final double searchAct = params.containsKey("searchact")
                 ? Double.parseDouble(params.get("searchact").get(0)) : Double.NaN;
         final double searchTemp = params.containsKey("searchtemp")
@@ -1151,11 +1152,19 @@ public final class AnvilRun {
                 return;
             }
             Player prio = ph.getPriorityPlayer();
-            if (!(prio.getController() instanceof PlayerControllerAnvil)
-                    || !((PlayerControllerAnvil) prio.getController()).bridgesPriority()) {
+            if (!(prio.getController() instanceof PlayerControllerAnvil)) {
                 return;
             }
-            if (seats != null && !seats.contains(game.getRegisteredPlayers().indexOf(prio))) {
+            // Default: every seat that bridges priority. An explicit -searchseats
+            // list overrides the bridged requirement: a HEURISTIC seat named
+            // there is searched too — the day-zero read's heuristic + lookahead
+            // control arm (ADR-0104 item 5): the heuristic plays the mainline
+            // and every intermediate decision on the copies, the masked head
+            // values the leaves, the acting rule forces its pick on the
+            // heuristic's own realization (no network plan).
+            boolean bridgedPrio = ((PlayerControllerAnvil) prio.getController()).bridgesPriority();
+            int seatIdx = game.getRegisteredPlayers().indexOf(prio);
+            if (seats == null ? !bridgedPrio : !seats.contains(seatIdx)) {
                 return;
             }
             java.util.Set<Card> affected = new HashSet<>();

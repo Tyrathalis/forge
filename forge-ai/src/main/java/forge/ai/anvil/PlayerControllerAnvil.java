@@ -277,6 +277,9 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         if (target == null) {
             return null;
         }
+        if (!bridged(TAG_PRIORITY)) {
+            return heuristicRealize(target); // the control arm: no network plan
+        }
         List<SpellAbility> options = Lists.newArrayList(target);
         List<String> labels = Lists.newArrayList("pass", label);
         long obsSeq = Obs.decPriority(getGame(), getPlayer(), "search", options);
@@ -293,6 +296,37 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
     private List<SpellAbility> chooseSpellAbilityToPlayInner() {
         if (!bridged(TAG_PRIORITY)) {
+            // M12 Build 2 control arm (ADR-0104 item 5): a HEURISTIC seat on a
+            // search copy honours the directive with the heuristic's own
+            // realization — the forced option is played if the AI can set it
+            // up (canPlaySa), the leaf / void / pass rules are the bridged
+            // seat's. Unarmed = the heuristic as ever.
+            SearchDirective sr = SearchDirective.active(getGame(), player);
+            if (sr == null) {
+                return super.chooseSpellAbilityToPlay();
+            }
+            List<SpellAbility> options = Lists.newArrayList(AnvilOptions.priorityOptions(getGame(), player));
+            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty());
+            if (w.kind == SearchDirective.W_PASS) {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "search", "pick", "pass");
+                return null;
+            }
+            if (w.kind == SearchDirective.W_LEAF || w.kind == SearchDirective.W_VOID) {
+                if (w.kind == SearchDirective.W_LEAF) {
+                    sr.leafPeek = Obs.peekPriority(getGame(), player, options, true);
+                }
+                getGame().setAnvilCapReason(w.kind == SearchDirective.W_LEAF ? "leaf" : "search_void");
+                getGame().setGameOver(forge.game.GameEndReason.Draw);
+                return null;
+            }
+            if (w.kind == SearchDirective.W_FORCE) {
+                List<SpellAbility> r = heuristicRealize(w.ask.get(0));
+                if (r == null) {
+                    searchVoid(sr);
+                }
+                return r;
+            }
             return super.chooseSpellAbilityToPlay();
         }
         // Mutable copy: re-ask removes vetoed candidates between attempts.
@@ -512,6 +546,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             }
             return selectOnePick(options, labels, obsSeq);
         }
+    }
+
+    /** M12 Build 2 control arm: the heuristic's own realization of one option
+     *  (the M0 selectOne rule — canPlaySa sets targets / X, a veto = null). */
+    private List<SpellAbility> heuristicRealize(SpellAbility sa) {
+        AnvilOptions.invalidate(getGame(), player);
+        if (!sa.isLandAbility() && getAi().canPlaySa(sa) != AiPlayDecision.WillPlay) {
+            return null;
+        }
+        return Lists.newArrayList(sa);
     }
 
     /** Search copy (M12 Build 0): the forced option could not be applied
