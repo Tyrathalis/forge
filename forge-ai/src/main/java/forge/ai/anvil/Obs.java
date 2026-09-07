@@ -159,6 +159,10 @@ public final class Obs {
         String lastDecRecord;
         String lastHistJson;
         String headerRecord;
+        /** M12 Build 3 (ADR-0105): ability keys whose canonical text this
+         *  session has emitted, and the entries waiting for the next dec. */
+        final java.util.HashSet<String> abilSeen = new java.util.HashSet<>();
+        final java.util.ArrayList<String> pendingAbil = new java.util.ArrayList<>();
 
         Session(boolean store, String wireId) {
             this(store, wireId, false);
@@ -628,7 +632,9 @@ public final class Obs {
             }
             sb.append("{\"e\":").append(h == null ? -1 : h.getId())
                     .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
-                    .append(",\"kind\":\"").append(kind(sa)).append("\"}");
+                    .append(",\"kind\":\"").append(kind(sa)).append('"');
+            ak(sb, sa);
+            sb.append('}');
         }
         sb.append("],\"obs\":");
         int obsStart = sb.length();
@@ -674,7 +680,9 @@ public final class Obs {
                 Card h = sa.getHostCard();
                 ob.append("{\"e\":").append(h == null ? -1 : h.getId())
                         .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
-                        .append(",\"kind\":\"").append(kind(sa)).append("\"}");
+                        .append(",\"kind\":\"").append(kind(sa)).append('"');
+                ak(ob, sa);
+                ob.append('}');
                 opts.add(ob.toString());
                 // Hosts castable from an unwalked zone (library top): the
                 // snapshot must contain them or the label references nothing.
@@ -703,6 +711,19 @@ public final class Obs {
             }
         }
         return s;
+    }
+
+    /** M12 Build 3 (ADR-0105): register an ability key's canonical text with
+     *  the game's session; the text rides the next dec record once per game.
+     *  No session (an unlogged game, a search copy without a wire session) =
+     *  nothing to record. */
+    static synchronized void noteAbility(Game g, String key, String host, String kind, String canon) {
+        Session ses = g == null ? null : sessions.get(g);
+        if (ses == null || key == null || !ses.abilSeen.add(key)) {
+            return;
+        }
+        ses.pendingAbil.add("{\"h\":\"" + key + "\",\"host\":" + q(host) + ",\"kind\":\"" + kind
+                + "\",\"txt\":" + q(canon) + "}");
     }
 
     private static synchronized long decInternal(Game g, Player p, String m, String by,
@@ -761,6 +782,20 @@ public final class Obs {
                 sb.append(optsRaw ? opts.get(i) : q(opts.get(i)));
             }
             sb.append(']');
+        }
+        // M12 Build 3 (ADR-0105): the ability side table — canonical texts of
+        // the keys first used in this game, emitted once, on the dec that
+        // introduced them (the reader collects "abil" lists per frame).
+        if (!ses.pendingAbil.isEmpty()) {
+            sb.append(",\"abil\":[");
+            for (int i = 0; i < ses.pendingAbil.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(ses.pendingAbil.get(i));
+            }
+            sb.append(']');
+            ses.pendingAbil.clear();
         }
         sb.append(",\"obs\":");
         int obsStart = sb.length();
@@ -1023,6 +1058,7 @@ public final class Obs {
         }
         sb.append("\"sa\":").append(q(trunc(String.valueOf(sa))))
                 .append(",\"kind\":\"").append(kind(sa)).append('"');
+        ak(sb, sa);
         targets(sb, sa);
         Integer x = sa.getXManaCostPaid();
         if (x != null) {
@@ -1142,6 +1178,15 @@ public final class Obs {
 
     private static String trunc(String s) {
         return s.length() > 120 ? s.substring(0, 120) : s;
+    }
+
+    /** M12 Build 3 (ADR-0105): the ability key on an option / answer entry
+     *  (",\"ak\":\"<16 hex>\"" — absent for a hostless ability). */
+    static void ak(StringBuilder sb, SpellAbility sa) {
+        String k = AbilityKey.note(sa);
+        if (k != null) {
+            sb.append(",\"ak\":\"").append(k).append('"');
+        }
     }
 
     // ---------- frame plumbing ----------

@@ -85,7 +85,9 @@ public final class Surfaces {
         if (o instanceof SpellAbility) {
             SpellAbility sa = (SpellAbility) o;
             Card h = sa.getHostCard();
-            return "{\"e\":" + (h == null ? -1 : h.getId()) + ",\"sa\":" + Obs.q(Census.str(sa)) + "}";
+            String k = AbilityKey.note(sa); // ADR-0105: the ability's identity beside the render
+            return "{\"e\":" + (h == null ? -1 : h.getId()) + ",\"sa\":" + Obs.q(Census.str(sa))
+                    + (k == null ? "" : ",\"ak\":\"" + k + "\"") + "}";
         }
         if (o instanceof ICardFace) {
             return Obs.q(((ICardFace) o).getName());

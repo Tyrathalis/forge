@@ -123,6 +123,13 @@ public final class AnvilRun {
         FModel.initialize(null, null);
 
         Map<String, List<String>> params = parseParams(args);
+        // M12 Build 3 (ADR-0105): -abilities <names.txt> <out.jsonl> — every
+        // pool card's abilities as {h, host, kind, txt} through AbilityKey
+        // (the same canonical text the observation keys), no game played.
+        if (params != null && params.containsKey("abilities") && params.get("abilities").size() == 2) {
+            dumpAbilities(params.get("abilities").get(0), params.get("abilities").get(1));
+            return;
+        }
         boolean fixedPair = params != null && params.containsKey("d") && params.get("d").size() == 2;
         boolean pairFile = params != null && params.containsKey("pairs");
         if (params == null || fixedPair == pairFile) {
@@ -862,6 +869,87 @@ public final class AnvilRun {
             }
         }
         return b.toString();
+    }
+
+    /** ADR-0105: the offline ability dump. Names one per line (the pool
+     *  manifest's canonical names); unknown names are reported, not fatal. */
+    static void dumpAbilities(String namesFile, String outFile) {
+        int cards = 0, missing = 0, entries = 0;
+        // A throwaway game: CardFactory builds a card's abilities against a
+        // Game (AbilityFactory needs one); the null-owner path used by the
+        // UI leaves spells and keyword traits out (1,424 abilities for
+        // 1,701 cards, 484 cards empty — measured 09-07).
+        java.util.List<forge.game.player.RegisteredPlayer> rps = new java.util.ArrayList<>();
+        forge.deck.Deck empty = new forge.deck.Deck();
+        rps.add(new forge.game.player.RegisteredPlayer(empty).setPlayer(new forge.ai.LobbyPlayerAi("a", null)));
+        rps.add(new forge.game.player.RegisteredPlayer(empty).setPlayer(new forge.ai.LobbyPlayerAi("b", null)));
+        GameRules dumpRules = new GameRules(GameType.Commander);
+        Match dumpMatch = new Match(dumpRules, rps, "AbilityDump");
+        Game dumpGame = new Game(rps, dumpRules, dumpMatch);
+        forge.game.player.Player owner = dumpGame.getPlayers().get(0);
+        forge.ai.anvil.AbilityKey.enumerateErrors = 0;
+        try (java.io.BufferedReader in = java.nio.file.Files.newBufferedReader(
+                java.nio.file.Paths.get(namesFile), java.nio.charset.StandardCharsets.UTF_8);
+             java.io.PrintWriter out = new java.io.PrintWriter(java.nio.file.Files.newBufferedWriter(
+                java.nio.file.Paths.get(outFile), java.nio.charset.StandardCharsets.UTF_8))) {
+            String name;
+            while ((name = in.readLine()) != null) {
+                name = name.trim();
+                if (name.isEmpty() || name.startsWith("#")) {
+                    continue;
+                }
+                forge.item.PaperCard pc = forge.StaticData.instance().getCommonCards().getCard(name);
+                if (pc == null) {
+                    pc = forge.StaticData.instance().getVariantCards().getCard(name);
+                }
+                if (pc == null) {
+                    missing++;
+                    out.println("{\"miss\":" + jq(name) + "}");
+                    continue;
+                }
+                cards++;
+                try {
+                    forge.game.card.Card c = forge.game.card.Card.fromPaperCard(pc, owner);
+                    for (forge.ai.anvil.AbilityKey.Entry e : forge.ai.anvil.AbilityKey.enumerate(c)) {
+                        entries++;
+                        out.println("{\"h\":\"" + e.key + "\",\"host\":" + jq(e.host) + ",\"kind\":\"" + e.kind
+                                + "\",\"txt\":" + jq(e.text) + "}");
+                    }
+                } catch (Exception ex) {
+                    out.println("{\"err\":" + jq(name) + ",\"msg\":" + jq(String.valueOf(ex)) + "}");
+                }
+            }
+        } catch (java.io.IOException e) {
+            System.out.println("[AnvilRun] -abilities failed: " + e);
+            return;
+        }
+        System.out.println("[AnvilRun] -abilities: " + cards + " cards, " + entries + " abilities, "
+                + missing + " missing, " + forge.ai.anvil.AbilityKey.enumerateErrors
+                + " enumeration errors -> " + outFile);
+    }
+
+    private static String jq(String s) {
+        if (s == null) {
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder(s.length() + 8).append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"': sb.append("\\\""); break;
+                case '\\': sb.append("\\\\"); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default:
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+            }
+        }
+        return sb.append('"').toString();
     }
 
     private static Map<String, List<String>> parseParams(String[] args) {
