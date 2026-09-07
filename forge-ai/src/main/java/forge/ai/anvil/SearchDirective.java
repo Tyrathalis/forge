@@ -45,6 +45,42 @@ public final class SearchDirective {
     public volatile String outcome = null;
     public volatile int seatWindows = 0;
 
+    /** M12 Build 3: one traced surface callback of the seat on this copy
+     *  (after the forced option applied) — what the monitor may expand. */
+    public static final class Surface {
+        public final int kind;
+        public final int ordinal;
+        public final String label;
+        public final int n;
+        public final int min;
+        public final int max;
+        public final int[] natural;
+        public final int[] aux;
+
+        Surface(int kind, int ordinal, String label, int n, int min, int max, int[] natural, int[] aux) {
+            this.kind = kind;
+            this.ordinal = ordinal;
+            this.label = label;
+            this.n = n;
+            this.min = min;
+            this.max = max;
+            this.natural = natural;
+            this.aux = aux;
+        }
+    }
+
+    /** Surface callbacks traced on the path from the forced option to the
+     *  leaf, in order (Surfaces.trace); read by the monitor after the copy. */
+    public final List<Surface> surfaces = Collections.synchronizedList(new java.util.ArrayList<>());
+    private final int[] seenOfKind = new int[Surfaces.KIND_NAMES.length];
+
+    void noteSurface(int kind, String label, int n, int min, int max, int[] natural, int[] aux) {
+        int ord = seenOfKind[kind]++;
+        if (surfaces.size() < 64) {
+            surfaces.add(new Surface(kind, ord, label, n, min, max, natural, aux));
+        }
+    }
+
     private SearchDirective(String playerName, String optionLabel) {
         this.playerName = playerName;
         this.optionLabel = optionLabel;

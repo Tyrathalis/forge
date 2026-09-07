@@ -33,6 +33,8 @@ import forge.game.spellability.SpellAbility;
 import forge.ai.anvil.ChoiceDirective;
 import forge.ai.anvil.LocalRandomBridge;
 import forge.ai.anvil.Obs;
+import forge.ai.anvil.SurfaceDirective;
+import forge.ai.anvil.Surfaces;
 import forge.ai.anvil.PlayerControllerAnvil;
 import forge.ai.anvil.ScheduleDirective;
 import forge.ai.anvil.SearchDirective;
@@ -251,6 +253,14 @@ public final class AnvilRun {
         // pass leaf with the seat tapped down (13% void). -searchmana restores
         // them for comparison.
         final boolean searchMana = params.containsKey("searchmana");
+        // M12 Build 3 (Surfaces): -searchsurf B expands the FIRST traced
+        // surface callback (tutor/discard/order/scry/mode/name/damage) on the
+        // top-B first-ply candidates' paths — one copy per enumerated answer
+        // (the natural answer is the first-ply copy under CRN). 0 = off.
+        final int searchSurf = params.containsKey("searchsurf")
+                ? Integer.parseInt(params.get("searchsurf").get(0)) : 0;
+        final int searchSurfCap = params.containsKey("searchsurfcap")
+                ? Integer.parseInt(params.get("searchsurfcap").get(0)) : Surfaces.DEFAULT_CAP;
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
         // records to <obs>-forks.zst as a store frame of its own (synthetic
@@ -694,7 +704,7 @@ public final class AnvilRun {
                 if (search) {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
-                            searchMana));
+                            searchMana, searchSurf, searchSurfCap));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     extraS += 3600;
@@ -1062,13 +1072,17 @@ public final class AnvilRun {
         final int rolls;
         final int optCap;
         final boolean includeMana;
+        final int surfTop;
+        final int surfCap;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
 
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
-                int optCap, boolean includeMana) {
+                int optCap, boolean includeMana, int surfTop, int surfCap) {
+            this.surfTop = Math.max(0, surfTop);
+            this.surfCap = Math.max(1, surfCap);
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -1119,6 +1133,123 @@ public final class AnvilRun {
             doSearch(prio, ph.getTurn(), String.valueOf(ev.phase()), mySw);
         }
 
+        /** One candidate copy's outcome. */
+        static final class CopyResult {
+            double v = Double.NaN;
+            String kind;
+            long asks;
+            long ms;
+            long copyMs;
+            List<SearchDirective.Surface> surfaces = Collections.emptyList();
+            /** SurfaceDirective outcome: null = fired clean / unarmed; else unfired | idx | sum | neg. */
+            String surfMiss = null;
+        }
+
+        /** One candidate copy: the forced option (label; null = pass) at the
+         *  seat's first window, optionally a SurfaceDirective answer at the
+         *  ordinal-th surface callback of surfKind on the path, natural play
+         *  to the leaf, valued by anvil.value. Never throws except for a
+         *  poisoned bridge (protocol law). */
+        private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
+                byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer) {
+            CopyResult res = new CopyResult();
+            long c0 = System.nanoTime();
+            Game copy;
+            try {
+                copy = new GameCopier(game).makeCopy();
+            } catch (Throwable t) {
+                MyRandom.setRandom(restoreRng(rngState));
+                res.kind = "copy_crash";
+                return res;
+            }
+            res.copyMs = (System.nanoTime() - c0) / 1_000_000;
+            Random rollRng = new Random(rollSeed);
+            determinize(copy, seatName, rollRng);
+            copy.getPhaseHandler().devResumeAtPriority();
+            copy.copyLastState();
+            Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+            bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+            SearchDirective dir = SearchDirective.arm(copy, seatName, label);
+            SurfaceDirective sdir = surfAnswer == null ? null
+                    : SurfaceDirective.arm(copy, seatName, surfKind, surfOrd, surfAnswer);
+            long asks0 = bridge.asksSoFar();
+            MyRandom.setRandom(rollRng);
+            boolean crashed = false;
+            final boolean[] clockHit = {false};
+            ScheduledFuture<?> clock = watchdogs.schedule(() -> {
+                clockHit[0] = true;
+                copy.setGameOver(GameEndReason.Draw);
+            }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+            try {
+                copy.getPhaseHandler().mainGameLoop();
+            } catch (Throwable t) {
+                crashed = true;
+                // One printed stack per throwable class per JVM: a silent
+                // crash class is unattributable (the M11 choice-mode finding).
+                if (crashClassesPrinted.add(t.getClass().getName())) {
+                    System.err.println("[search] copy crash " + wid + " (" + label + "): " + t);
+                    t.printStackTrace();
+                }
+            } finally {
+                clock.cancel(false);
+                if (!copy.isGameOver()) {
+                    copy.setGameOver(GameEndReason.Draw);
+                }
+            }
+            try {
+                if (crashed) {
+                    res.kind = "crash";
+                } else if (clockHit[0]) {
+                    res.kind = "timeout";
+                } else if ("leaf".equals(dir.outcome) && dir.leafPeek != null) {
+                    res.kind = "leaf";
+                    res.v = bridge.value(TAG_VALUE, dir.leafPeek);
+                    if (Double.isNaN(res.v)) {
+                        res.kind = "unserved";
+                    }
+                } else if ("void".equals(dir.outcome)) {
+                    res.kind = "void";
+                } else {
+                    int wi = uniqueWinner(copy);
+                    res.kind = wi >= 0 ? "end" : "draw";
+                    res.v = wi < 0 ? 0.5 : (wi == prioSeat ? 1.0 : 0.0);
+                }
+                res.surfaces = new ArrayList<>(dir.surfaces);
+                if (sdir != null) {
+                    res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
+                }
+            } catch (RuntimeException e) {
+                throw e; // a poisoned bridge ends the game (protocol law)
+            } finally {
+                res.asks = bridge.asksSoFar() - asks0;
+                MyRandom.setRandom(restoreRng(rngState));
+                SearchDirective.clear(copy);
+                SurfaceDirective.clear(copy);
+                Obs.endWireGame(copy);
+                forge.ai.AiCache.clear();
+                res.ms = (System.nanoTime() - c0) / 1_000_000;
+            }
+            return res;
+        }
+
+        private long rollSeedOf(int turn, int mySw, int r) {
+            return splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+                    ^ (mySw * 0xBF58476D1CE4E5B9L) ^ (r * 0x94D049BB133111EBL));
+        }
+
+        private static void appendInts(StringBuilder sb, int[] a) {
+            sb.append('[');
+            if (a != null) {
+                for (int i = 0; i < a.length; i++) {
+                    if (i > 0) {
+                        sb.append(',');
+                    }
+                    sb.append(a[i]);
+                }
+            }
+            sb.append(']');
+        }
+
         private void doSearch(Player prio, int turn, String phase, int mySw) {
             final long block0 = System.nanoTime();
             int prioSeat = game.getRegisteredPlayers().indexOf(prio);
@@ -1148,6 +1279,12 @@ public final class AnvilRun {
                     .append(",\"rolls\":").append(rolls)
                     .append(",\"opts\":[");
             long copyMsTotal = 0;
+            // ---- first ply: every candidate on its own determinized copy per roll
+            double[] meanV = new double[nCand];
+            int[] nV = new int[nCand];
+            String[][] firstKind = new String[nCand][rolls];
+            double[][] firstV = new double[nCand][rolls];
+            List<List<SearchDirective.Surface>> firstSurf = new ArrayList<>(nCand);
             for (int c = 0; c < nCand; c++) {
                 final String label = cands.get(c);
                 if (c > 0) {
@@ -1158,98 +1295,115 @@ public final class AnvilRun {
                 StringBuilder kinds = new StringBuilder();
                 StringBuilder calls = new StringBuilder();
                 long optMs = 0;
+                List<SearchDirective.Surface> surf0 = Collections.emptyList();
                 for (int r = 0; r < rolls; r++) {
                     // PAIRED across candidates: same determinization per roll.
-                    long rollSeed = splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
-                            ^ (mySw * 0xBF58476D1CE4E5B9L) ^ (r * 0x94D049BB133111EBL));
+                    long rollSeed = rollSeedOf(turn, mySw, r);
                     if (r > 0) {
                         sb.append(',');
                         kinds.append(',');
                         calls.append(',');
                     }
-                    long c0 = System.nanoTime();
-                    Game copy;
-                    try {
-                        copy = new GameCopier(game).makeCopy();
-                    } catch (Throwable t) {
-                        MyRandom.setRandom(restoreRng(rngState));
-                        sb.append("null");
-                        kinds.append("\"copy_crash\"");
-                        calls.append('0');
-                        continue;
-                    }
-                    copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
-                    Random rollRng = new Random(rollSeed);
-                    determinize(copy, seatName, rollRng);
-                    copy.getPhaseHandler().devResumeAtPriority();
-                    copy.copyLastState();
                     String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c;
-                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
-                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
-                    SearchDirective dir = SearchDirective.arm(copy, seatName, label);
-                    long asks0 = bridge.asksSoFar();
-                    MyRandom.setRandom(rollRng);
-                    boolean crashed = false;
-                    final boolean[] clockHit = {false};
-                    ScheduledFuture<?> clock = watchdogs.schedule(() -> {
-                        clockHit[0] = true;
-                        copy.setGameOver(GameEndReason.Draw);
-                    }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
-                    double v = Double.NaN;
-                    String kind;
-                    try {
-                        copy.getPhaseHandler().mainGameLoop();
-                    } catch (Throwable t) {
-                        crashed = true;
-                        // One printed stack per throwable class per JVM: a
-                        // silent crash class is unattributable (the M11
-                        // choice-mode finding).
-                        if (crashClassesPrinted.add(t.getClass().getName())) {
-                            System.err.println("[search] copy crash " + wid + " (" + label + "): " + t);
-                            t.printStackTrace();
-                        }
-                    } finally {
-                        clock.cancel(false);
-                        if (!copy.isGameOver()) {
-                            copy.setGameOver(GameEndReason.Draw);
-                        }
+                    CopyResult cr = runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, -1, -1, null);
+                    copyMsTotal += cr.copyMs;
+                    optMs += cr.ms;
+                    firstKind[c][r] = cr.kind;
+                    firstV[c][r] = cr.v;
+                    if (r == 0) {
+                        surf0 = cr.surfaces;
                     }
-                    try {
-                        if (crashed) {
-                            kind = "crash";
-                        } else if (clockHit[0]) {
-                            kind = "timeout";
-                        } else if ("leaf".equals(dir.outcome) && dir.leafPeek != null) {
-                            kind = "leaf";
-                            v = bridge.value(TAG_VALUE, dir.leafPeek);
-                            if (Double.isNaN(v)) {
-                                kind = "unserved";
-                            }
-                        } else if ("void".equals(dir.outcome)) {
-                            kind = "void";
-                        } else {
-                            int wi = uniqueWinner(copy);
-                            kind = wi >= 0 ? "end" : "draw";
-                            v = wi < 0 ? 0.5 : (wi == prioSeat ? 1.0 : 0.0);
-                        }
-                    } catch (RuntimeException e) {
-                        throw e; // a poisoned bridge ends the game (protocol law)
-                    } finally {
-                        long asks = bridge.asksSoFar() - asks0;
-                        MyRandom.setRandom(restoreRng(rngState));
-                        SearchDirective.clear(copy);
-                        Obs.endWireGame(copy);
-                        forge.ai.AiCache.clear();
-                        calls.append(asks);
-                        optMs += (System.nanoTime() - c0) / 1_000_000;
+                    if (!Double.isNaN(cr.v)) {
+                        meanV[c] += cr.v;
+                        nV[c]++;
                     }
-                    sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
-                    kinds.append('"').append(kind).append('"');
+                    sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
+                    kinds.append('"').append(cr.kind).append('"');
+                    calls.append(cr.asks);
                 }
+                firstSurf.add(surf0);
                 sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
-                        .append("],\"ms\":").append(optMs).append('}');
+                        .append("],\"ms\":").append(optMs).append(",\"n_surf\":").append(surf0.size()).append('}');
             }
-            sb.append("],\"copy_ms\":").append(copyMsTotal)
+            sb.append(']');
+            // ---- expansion round (-searchsurf B): the first traced surface
+            // callback on the top-B candidates' paths, one copy per answer
+            if (surfTop > 0) {
+                List<Integer> order = new ArrayList<>();
+                for (int c = 0; c < nCand; c++) {
+                    if (nV[c] > 0 && !firstSurf.get(c).isEmpty()) {
+                        order.add(c);
+                    }
+                }
+                order.sort((a, b) -> Double.compare(meanV[b] / nV[b], meanV[a] / nV[a]));
+                sb.append(",\"sub\":[");
+                int nSub = Math.min(surfTop, order.size());
+                for (int si = 0; si < nSub; si++) {
+                    int c = order.get(si);
+                    SearchDirective.Surface sf = firstSurf.get(c).get(0);
+                    Random erng = new Random(splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+                            ^ (mySw * 0xBF58476D1CE4E5B9L) ^ ((sf.kind + 1) * 0xD1B54A32D192ED03L)));
+                    List<int[]> answers = Surfaces.enumerate(sf.kind, sf.n, sf.min, sf.max, sf.natural, sf.aux,
+                            surfCap, erng);
+                    if (si > 0) {
+                        sb.append(',');
+                    }
+                    sb.append("{\"o\":").append(c)
+                            .append(",\"kind\":\"").append(Surfaces.KIND_NAMES[sf.kind]).append('"')
+                            .append(",\"ord\":").append(sf.ordinal)
+                            .append(",\"label\":\"").append(jstr(sf.label)).append('"')
+                            .append(",\"n\":").append(sf.n)
+                            .append(",\"min\":").append(sf.min)
+                            .append(",\"max\":").append(sf.max)
+                            .append(",\"nat\":");
+                    appendInts(sb, sf.natural);
+                    sb.append(",\"ans\":[");
+                    for (int ai = 0; ai < answers.size(); ai++) {
+                        int[] a = answers.get(ai);
+                        if (ai > 0) {
+                            sb.append(',');
+                        }
+                        sb.append("{\"a\":");
+                        appendInts(sb, a);
+                        sb.append(",\"v\":[");
+                        StringBuilder kinds = new StringBuilder();
+                        StringBuilder calls = new StringBuilder();
+                        StringBuilder miss = new StringBuilder();
+                        boolean natural = sf.natural != null && Arrays.equals(a, sf.natural);
+                        for (int r = 0; r < rolls; r++) {
+                            if (r > 0) {
+                                sb.append(',');
+                                kinds.append(',');
+                                calls.append(',');
+                                miss.append(',');
+                            }
+                            if (natural) {
+                                // the natural answer IS the first-ply copy under CRN
+                                double v = firstV[c][r];
+                                sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
+                                kinds.append('"').append(firstKind[c][r]).append('"');
+                                calls.append('0');
+                                miss.append("null");
+                                continue;
+                            }
+                            long rollSeed = rollSeedOf(turn, mySw, r);
+                            String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c + "a" + ai;
+                            CopyResult cr = runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState,
+                                    sf.kind, sf.ordinal, a);
+                            copyMsTotal += cr.copyMs;
+                            sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
+                            kinds.append('"').append(cr.kind).append('"');
+                            calls.append(cr.asks);
+                            miss.append(cr.surfMiss == null ? "null" : "\"" + cr.surfMiss + "\"");
+                        }
+                        sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
+                                .append("],\"miss\":[").append(miss).append("]}");
+                    }
+                    sb.append("]}");
+                }
+                sb.append(']');
+            }
+            sb.append(",\"copy_ms\":").append(copyMsTotal)
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
             final PrintWriter out = labels;
