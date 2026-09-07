@@ -214,6 +214,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
+        List<SpellAbility> picked = chooseSpellAbilityToPlayInner();
+        // M12 Build 0: a searched mainline window's row waits for the natural
+        // pick (what the policy did here); complete it once, after the answer.
+        SearchDirective.Pending pend = SearchDirective.takePending(getGame());
+        if (pend != null) {
+            pend.complete(picked == null || picked.isEmpty() ? "pass" : Census.str(picked.get(0)));
+        }
+        return picked;
+    }
+
+    private List<SpellAbility> chooseSpellAbilityToPlayInner() {
         if (!bridged(TAG_PRIORITY)) {
             return super.chooseSpellAbilityToPlay();
         }
@@ -277,6 +288,34 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             }
         }
 
+        // M12 Build 0 search copy (SearchDirective): one genre per copy, so
+        // this only ever fires when nothing above is armed. Forces the
+        // searched option at the copy's first window of this seat, ends the
+        // copy at the seat's next quiescent window (the leaf — fork A) with
+        // the leaf's peek captured, natural play in between.
+        SearchDirective sr = (fd == null && sd == null && sc == null)
+                ? SearchDirective.active(getGame(), player) : null;
+        if (sr != null) {
+            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty());
+            if (w.kind == SearchDirective.W_PASS) {
+                Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                        "by", "search", "pick", "pass");
+                return null;
+            }
+            if (w.kind == SearchDirective.W_LEAF || w.kind == SearchDirective.W_VOID) {
+                if (w.kind == SearchDirective.W_LEAF) {
+                    sr.leafPeek = Obs.peekPriority(getGame(), player, options, true);
+                }
+                getGame().setAnvilCapReason(w.kind == SearchDirective.W_LEAF ? "leaf" : "search_void");
+                getGame().setGameOver(forge.game.GameEndReason.Draw);
+                return null;
+            }
+            if (w.kind == SearchDirective.W_FORCE) {
+                options = w.ask; // single-option forbid-decline ask
+                schedForce = true;
+            }
+        }
+
         for (int attempt = 0;; attempt++) {
             // Index 0 = pass; one round-trip per attempt.
             List<String> labels = Lists.newArrayListWithCapacity(options.size() + 1);
@@ -319,10 +358,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         } else {
                             sd.exhausts++; // server passed despite the mask
                         }
-                    } else if (schedForce) {
+                    } else if (schedForce && sc != null) {
                         // realized cast advances the schedule (or settles the
                         // land question); a pass despite the mask degrades.
                         sc.onCast(r.sas != null && !r.sas.isEmpty() ? r.sas.get(0) : null);
+                    } else if (schedForce && sr != null && (r.sas == null || r.sas.isEmpty())) {
+                        // search copy: the server passed despite the single-
+                        // option forbid-decline mask — the option is VOID here.
+                        sr.outcome = "void";
+                        getGame().setAnvilCapReason("search_void");
+                        getGame().setGameOver(forge.game.GameEndReason.Draw);
                     } else if (sd != null && sd.mode == SeqMode.OBSERVE
                             && r.sas != null) {
                         // M8 D1: pure recording — the ask above ran exactly
@@ -353,8 +398,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                             fd.result = ForcedResult.SKIP_EXHAUSTED;
                         } else if (seqAct) {
                             sd.exhausts++;
-                        } else {
+                        } else if (sc != null) {
                             sc.onExhaust("veto_cap");
+                        } else if (sr != null) {
+                            searchVoid(sr);
                         }
                         return null;
                     }
@@ -374,8 +421,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         fd.result = ForcedResult.SKIP_EXHAUSTED;
                     } else if (seqAct) {
                         sd.exhausts++;
-                    } else if (schedForce) {
+                    } else if (schedForce && sc != null) {
                         sc.onExhaust("veto");
+                    } else if (schedForce && sr != null) {
+                        searchVoid(sr); // the forced option vetoed at apply
                     }
                     return null; // only pass remains; nothing left to ask
                 }
@@ -387,12 +436,24 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             } else if (seqAct) {
                 sd.exhausts++; // M0-shape bridge can't honor the mask
                 return null;
-            } else if (schedForce) {
+            } else if (schedForce && sc != null) {
                 sc.onExhaust("no_oneshot"); // M0-shape bridge can't honor the mask
+                return null;
+            } else if (schedForce && sr != null) {
+                searchVoid(sr);
                 return null;
             }
             return selectOnePick(options, labels, obsSeq);
         }
+    }
+
+    /** Search copy (M12 Build 0): the forced option could not be applied
+     *  (vetoed at apply / unhonored mask) — the candidate is VOID and the
+     *  copy ends; a pass here would mislabel the pass leaf as this option. */
+    private void searchVoid(SearchDirective sr) {
+        sr.outcome = "void";
+        getGame().setAnvilCapReason("search_void");
+        getGame().setGameOver(forge.game.GameEndReason.Draw);
     }
 
     /** M0 selectOne path (never re-asks; heuristic canPlaySa veto = pass). */

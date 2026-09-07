@@ -579,6 +579,14 @@ public final class Obs {
      *  mainline's own priority dec for this window is logged by the
      *  controller's ask that follows the fork. */
     public static String peekPriority(Game g, Player p, java.util.List<SpellAbility> options) {
+        return peekPriority(g, p, options, false);
+    }
+
+    /** includeHist (M12 Build 0, the search leaf): append the game session's
+     *  history ring as "hist" (read-only — the serve featurizer's wire
+     *  history), so a leaf value sees the same context a live window would. */
+    public static synchronized String peekPriority(Game g, Player p, java.util.List<SpellAbility> options,
+            boolean includeHist) {
         StringBuilder sb = new StringBuilder(8192);
         int turn = -1;
         String phase = null;
@@ -613,6 +621,12 @@ public final class Obs {
         } catch (Exception e) {
             sb.setLength(obsStart);
             sb.append("null,\"err\":").append(q(e.toString()));
+        }
+        if (includeHist) {
+            Session ses = sessions.get(g);
+            if (ses != null) {
+                sb.append(",\"hist\":").append(histJson(ses));
+            }
         }
         sb.append('}');
         return sb.toString();

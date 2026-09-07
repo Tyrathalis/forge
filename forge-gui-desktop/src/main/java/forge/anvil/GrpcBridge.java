@@ -350,6 +350,51 @@ public final class GrpcBridge implements AnvilBridge {
                 cp.getHasX(), (int) cp.getXValue());
     }
 
+    /** M12 Build 0: the search-leaf value ask. INT_IN_RANGE over
+     *  [0, 1e6] — the server answers the masked head's win probability in
+     *  micro-units (no proto change); fallback = NaN. */
+    @Override
+    public double value(String tag, String observation) {
+        if (!serverTags.contains(tag)) {
+            return Double.NaN;
+        }
+        if (poisonReason != null) {
+            throw new BridgePoisonedException(poisonReason);
+        }
+        DecisionRequest.Builder req = DecisionRequest.newBuilder()
+                .setGameId(gameId).setDecisionSeq(++seq).setDecisionTag(tag)
+                .setShape(AnswerShape.INT_IN_RANGE).setDeadlineMs(deadlineMs)
+                .setConstraints(Constraints.newBuilder().setMin(0).setMax(1_000_000));
+        if (observation != null) {
+            req.setObservation(ByteString.copyFromUtf8(observation));
+        }
+        out.onNext(WorkerMsg.newBuilder().setRequest(req).build());
+        ServerMsg msg = await();
+        if (msg == null) {
+            transportFailures++;
+            throw poison("deadline on " + tag + " seq=" + seq
+                    + " (transport failure " + transportFailures + ")");
+        }
+        if (!msg.hasResponse()) {
+            throw poison("non-response message while awaiting " + tag + " seq=" + seq);
+        }
+        if (msg.getResponse().getDecisionSeq() != seq) {
+            throw poison("decision_seq mismatch on " + tag + ": expected " + seq
+                    + ", got " + msg.getResponse().getDecisionSeq());
+        }
+        DecisionResponse resp = msg.getResponse();
+        if (resp.getFallback()) {
+            serverFallbacks++;
+            return Double.NaN;
+        }
+        return resp.getValue() / 1_000_000.0;
+    }
+
+    @Override
+    public long asksSoFar() {
+        return seq;
+    }
+
     /** M10 reset Fork 3: the fork-point certify ask (SELECT_K over the
      *  option labels, constraints.k = the arm cap is advisory; the answer is
      *  DecisionResponse.index_lists). Fallback / no lists = empty (no

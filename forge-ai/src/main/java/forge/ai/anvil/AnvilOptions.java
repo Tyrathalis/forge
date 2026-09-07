@@ -66,6 +66,10 @@ public final class AnvilOptions {
      * (the shadow counter above measures the gap).
      */
     public static boolean payable(Game game, Player player, SpellAbility sa) {
+        return withScratchRng(() -> payableInner(game, player, sa));
+    }
+
+    private static boolean payableInner(Game game, Player player, SpellAbility sa) {
         if (sa.isLandAbility()) {
             return true;
         }
@@ -212,7 +216,35 @@ public final class AnvilOptions {
         }
     }
 
+    /**
+     * The scan runs on a THROWAWAY RNG (M12 Build 0, ADR-0102 consequences,
+     * found by the mask-cache obs-diff gate 2026-09-06): the payability test
+     * walks ComputerUtilMana.isManaSourceReserved, whose MyRandom.percentTrue
+     * draws from the game RNG on every shard × source it examines — so a
+     * scan perturbed the trajectory a seed plays (the D2 "-obs perturbs"
+     * finding, now explained) and any skipped scan (a cache hit) shifted the
+     * stream. With the game's Random swapped out for the scan's duration
+     * the scan is RNG-neutral by construction: obs logging, the mask cache,
+     * the realizer's apply-time check and the search copies' scans all leave
+     * the game's randomness exactly where they found it.
+     */
+    private static final long SCRATCH_SEED = 0x5CA4A11CEL;
+
+    public static <T> T withScratchRng(java.util.function.Supplier<T> body) {
+        final java.util.Random saved = forge.util.MyRandom.getRandom();
+        forge.util.MyRandom.setRandom(new java.util.Random(SCRATCH_SEED));
+        try {
+            return body.get();
+        } finally {
+            forge.util.MyRandom.setRandom(saved);
+        }
+    }
+
     public static List<SpellAbility> priorityOptions(Game game, Player player) {
+        return withScratchRng(() -> priorityOptionsInner(game, player));
+    }
+
+    private static List<SpellAbility> priorityOptionsInner(Game game, Player player) {
         if (!MASK_CACHE) {
             return buildPriorityOptions(game, player);
         }

@@ -102,6 +102,21 @@ public interface AnvilBridge {
         return null;
     }
 
+    /**
+     * M12 Build 0 (ADR-0101 §1): the masked value head's win probability for
+     * the peek record's seat at a search leaf (tag "anvil.value";
+     * observation = Obs.peekPriority with hist). NaN = unserved / declined.
+     */
+    default double value(String tag, String observation) {
+        return Double.NaN;
+    }
+
+    /** Requests sent so far on this bridge — the forward-call budget unit
+     *  (fork A); a search copy's cost = the delta across its completion. */
+    default long asksSoFar() {
+        return 0L;
+    }
+
     /** Lifecycle notifications (no-ops for the local arm). */
     default void gameStart(String gameId, long seed) {
     }

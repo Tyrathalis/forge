@@ -35,6 +35,7 @@ import forge.ai.anvil.LocalRandomBridge;
 import forge.ai.anvil.Obs;
 import forge.ai.anvil.PlayerControllerAnvil;
 import forge.ai.anvil.ScheduleDirective;
+import forge.ai.anvil.SearchDirective;
 import forge.deck.Deck;
 import forge.game.Game;
 import forge.game.GameEndReason;
@@ -131,7 +132,8 @@ public final class AnvilRun {
                     + "[-drillfile <txt> [-drillstop]] [-forkobs] [-forcebranch] [-forceseq <n>] "
                     + "[-seqarms nat|all] [-forceschedule <tsv>] [-forcechoice <tsv>] "
                     + "[-certify <horizon>] [-n <games>] [-s <baseSeed>] "
-                    + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>]");
+                    + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
+                    + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana]]");
             return;
         }
 
@@ -229,6 +231,26 @@ public final class AnvilRun {
             }
         }
         boolean drillStop = params.containsKey("drillstop");
+        // M12 Build 0 (ADR-0101 §1 / ADR-0102): the one-ply search instrument.
+        // At the active bridged seat's quiescent MAIN1/MAIN2 windows (rate-
+        // sampled, seeded), every option incl. pass is applied on a
+        // determinized copy, played by the network to the seat's next
+        // quiescent window and valued by anvil.value; one labels row per
+        // searched window (per-option leaf values, forward calls, leaf kind)
+        // completed with the natural pick. Telemetry only — never acts.
+        final boolean search = params.containsKey("search");
+        final double searchRate = params.containsKey("searchrate")
+                ? Double.parseDouble(params.get("searchrate").get(0)) : 1.0;
+        final int searchRolls = params.containsKey("searchrolls")
+                ? Integer.parseInt(params.get("searchrolls").get(0)) : 1;
+        final int searchOpts = params.containsKey("searchopts")
+                ? Integer.parseInt(params.get("searchopts").get(0)) : 0;
+        // Pure mana abilities stay in the MASK (legal actions) but are not
+        // search candidates by default: the first smoke (09-06) spent 58% of
+        // its candidates on "{T}: Add {B}"-class activations whose leaf is the
+        // pass leaf with the seat tapped down (13% void). -searchmana restores
+        // them for comparison.
+        final boolean searchMana = params.containsKey("searchmana");
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
         // records to <obs>-forks.zst as a store frame of its own (synthetic
@@ -541,6 +563,10 @@ public final class AnvilRun {
                 System.err.println("FATAL: -rollout requires -labels <out.jsonl>");
                 System.exit(2);
             }
+            if (search && labels == null) {
+                System.err.println("FATAL: -search requires -labels <out.jsonl>");
+                System.exit(2);
+            }
             if (params.containsKey("obs")) {
                 try {
                     Obs.open(params.get("obs").get(0));
@@ -665,6 +691,14 @@ public final class AnvilRun {
                         : forceSeq > 0 ? (seqNatOnly ? 1 : 3) : (forceBranch ? 2 : 1))
                         * rolloutK;
                 int extraS = rolloutK > 0 ? fpBudget * perPoint * 45 : 0;
+                if (search) {
+                    game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
+                            type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
+                            searchMana));
+                    // The deterministic caps bound the game; the wall clock is
+                    // a crash guard only under search (copies run inside it).
+                    extraS += 3600;
+                }
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
                     drawClockHit[0] = true;
@@ -999,6 +1033,263 @@ public final class AnvilRun {
      *  the first TurnBegan with a higher number; forced end is a Draw so
      *  the row stays obviously non-decisive (the CensusRun/certify
      *  convention). */
+
+    /**
+     * M12 Build 0 (ADR-0101 §1, ADR-0102 fork J): the one-ply search
+     * instrument. Listens for the active bridged seat's priority at a
+     * quiescent MAIN1/MAIN2 window (GameCopier resumes copies at the active
+     * player's priority, so only those windows fork faithfully); with
+     * probability rate (seeded on (game seed, window ordinal)) evaluates every
+     * candidate — pass + each mask option — on its own determinized copy
+     * (fork J: libraries reshuffled, the opponent's hand resampled from its
+     * unknown set; rollSeed PAIRED across candidates per roll = CRN), the
+     * network playing every intermediate decision on the copy's wire session,
+     * to the seat's next quiescent window (fork A), valued by anvil.value.
+     * One labels row per searched window: {ev:"search", i, seed, t, ph, sw,
+     * seat, n_opts, opts:[{o, label, v:[per roll], kind:[...], calls:[...],
+     * ms}], copy_ms, ms, nat} — nat = the mainline's natural pick, completed
+     * by the controller after its own ask. Never acts (Build 2).
+     */
+    static final class SearchMonitor {
+        final Game game;
+        final int gameIdx;
+        final long seed;
+        final AnvilBridge bridge;
+        final String fmt;
+        final PrintWriter labels;
+        final ScheduledExecutorService watchdogs;
+        final double rate;
+        final int rolls;
+        final int optCap;
+        final boolean includeMana;
+        int sw = 0;
+        private static final java.util.Set<String> crashClassesPrinted =
+                java.util.Collections.synchronizedSet(new HashSet<>());
+
+        SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
+                PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
+                int optCap, boolean includeMana) {
+            this.game = game;
+            this.gameIdx = gameIdx;
+            this.seed = seed;
+            this.bridge = bridge;
+            this.fmt = fmt;
+            this.labels = labels;
+            this.watchdogs = watchdogs;
+            this.rate = rate;
+            this.rolls = Math.max(1, rolls);
+            this.optCap = optCap;
+            this.includeMana = includeMana;
+        }
+
+        @Subscribe
+        public void onPriority(GameEventPlayerPriority ev) {
+            if (game.isGameOver()) {
+                return;
+            }
+            if (ev.phase() != PhaseType.MAIN1 && ev.phase() != PhaseType.MAIN2) {
+                return;
+            }
+            PhaseHandler ph = game.getPhaseHandler();
+            if (!game.getStack().isEmpty() || ph.getPriorityPlayer() != ph.getPlayerTurn()) {
+                return;
+            }
+            Player prio = ph.getPriorityPlayer();
+            if (!(prio.getController() instanceof PlayerControllerAnvil)
+                    || !((PlayerControllerAnvil) prio.getController()).bridgesPriority()) {
+                return;
+            }
+            java.util.Set<Card> affected = new HashSet<>();
+            do {
+                game.getAction().checkStateEffects(false, affected);
+                if (game.isGameOver()) {
+                    return;
+                }
+            } while (game.getStack().addAllTriggeredAbilitiesToStack());
+            if (!game.getStack().isEmpty()) {
+                return;
+            }
+            int mySw = sw++;
+            if (rate < 1.0) {
+                long h = splitmix64(seed ^ (mySw * 0x9E3779B97F4A7C15L) ^ 0x5EA4C4L);
+                if (((h >>> 11) * 0x1.0p-53) >= rate) {
+                    return;
+                }
+            }
+            doSearch(prio, ph.getTurn(), String.valueOf(ev.phase()), mySw);
+        }
+
+        private void doSearch(Player prio, int turn, String phase, int mySw) {
+            final long block0 = System.nanoTime();
+            int prioSeat = game.getRegisteredPlayers().indexOf(prio);
+            List<SpellAbility> options = Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
+            List<String> cands = new ArrayList<>(options.size() + 1);
+            cands.add(null); // pass
+            int manaSkipped = 0;
+            for (SpellAbility sa : options) {
+                if (!includeMana && sa.isManaAbility()) {
+                    manaSkipped++;
+                    continue;
+                }
+                cands.add(Census.str(sa));
+            }
+            int nCand = optCap > 0 ? Math.min(cands.size(), optCap + 1) : cands.size();
+            byte[] rngState = snapshotRng();
+            String seatName = prio.getName();
+            StringBuilder sb = new StringBuilder(2048);
+            sb.append("{\"ev\":\"search\",\"i\":").append(gameIdx)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"t\":").append(turn)
+                    .append(",\"ph\":\"").append(phase).append('"')
+                    .append(",\"sw\":").append(mySw)
+                    .append(",\"seat\":").append(prioSeat)
+                    .append(",\"n_opts\":").append(options.size())
+                    .append(",\"mana_skipped\":").append(manaSkipped)
+                    .append(",\"rolls\":").append(rolls)
+                    .append(",\"opts\":[");
+            long copyMsTotal = 0;
+            for (int c = 0; c < nCand; c++) {
+                final String label = cands.get(c);
+                if (c > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"o\":").append(c).append(",\"label\":\"").append(jstr(label == null ? "pass" : label)).append('"')
+                        .append(",\"v\":[");
+                StringBuilder kinds = new StringBuilder();
+                StringBuilder calls = new StringBuilder();
+                long optMs = 0;
+                for (int r = 0; r < rolls; r++) {
+                    // PAIRED across candidates: same determinization per roll.
+                    long rollSeed = splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+                            ^ (mySw * 0xBF58476D1CE4E5B9L) ^ (r * 0x94D049BB133111EBL));
+                    if (r > 0) {
+                        sb.append(',');
+                        kinds.append(',');
+                        calls.append(',');
+                    }
+                    long c0 = System.nanoTime();
+                    Game copy;
+                    try {
+                        copy = new GameCopier(game).makeCopy();
+                    } catch (Throwable t) {
+                        MyRandom.setRandom(restoreRng(rngState));
+                        sb.append("null");
+                        kinds.append("\"copy_crash\"");
+                        calls.append('0');
+                        continue;
+                    }
+                    copyMsTotal += (System.nanoTime() - c0) / 1_000_000;
+                    Random rollRng = new Random(rollSeed);
+                    determinize(copy, seatName, rollRng);
+                    copy.getPhaseHandler().devResumeAtPriority();
+                    copy.copyLastState();
+                    String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c;
+                    Obs.startWireGame(copy, wid, rollSeed, fmt, game);
+                    bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+                    SearchDirective dir = SearchDirective.arm(copy, seatName, label);
+                    long asks0 = bridge.asksSoFar();
+                    MyRandom.setRandom(rollRng);
+                    boolean crashed = false;
+                    final boolean[] clockHit = {false};
+                    ScheduledFuture<?> clock = watchdogs.schedule(() -> {
+                        clockHit[0] = true;
+                        copy.setGameOver(GameEndReason.Draw);
+                    }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+                    double v = Double.NaN;
+                    String kind;
+                    try {
+                        copy.getPhaseHandler().mainGameLoop();
+                    } catch (Throwable t) {
+                        crashed = true;
+                        // One printed stack per throwable class per JVM: a
+                        // silent crash class is unattributable (the M11
+                        // choice-mode finding).
+                        if (crashClassesPrinted.add(t.getClass().getName())) {
+                            System.err.println("[search] copy crash " + wid + " (" + label + "): " + t);
+                            t.printStackTrace();
+                        }
+                    } finally {
+                        clock.cancel(false);
+                        if (!copy.isGameOver()) {
+                            copy.setGameOver(GameEndReason.Draw);
+                        }
+                    }
+                    try {
+                        if (crashed) {
+                            kind = "crash";
+                        } else if (clockHit[0]) {
+                            kind = "timeout";
+                        } else if ("leaf".equals(dir.outcome) && dir.leafPeek != null) {
+                            kind = "leaf";
+                            v = bridge.value(TAG_VALUE, dir.leafPeek);
+                            if (Double.isNaN(v)) {
+                                kind = "unserved";
+                            }
+                        } else if ("void".equals(dir.outcome)) {
+                            kind = "void";
+                        } else {
+                            int wi = uniqueWinner(copy);
+                            kind = wi >= 0 ? "end" : "draw";
+                            v = wi < 0 ? 0.5 : (wi == prioSeat ? 1.0 : 0.0);
+                        }
+                    } catch (RuntimeException e) {
+                        throw e; // a poisoned bridge ends the game (protocol law)
+                    } finally {
+                        long asks = bridge.asksSoFar() - asks0;
+                        MyRandom.setRandom(restoreRng(rngState));
+                        SearchDirective.clear(copy);
+                        Obs.endWireGame(copy);
+                        forge.ai.AiCache.clear();
+                        calls.append(asks);
+                        optMs += (System.nanoTime() - c0) / 1_000_000;
+                    }
+                    sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
+                    kinds.append('"').append(kind).append('"');
+                }
+                sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
+                        .append("],\"ms\":").append(optMs).append('}');
+            }
+            sb.append("],\"copy_ms\":").append(copyMsTotal)
+                    .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+            final PrintWriter out = labels;
+            SearchDirective.expectNatural(game, new SearchDirective.Pending(sb.toString(), row -> {
+                synchronized (out) {
+                    out.println(row);
+                    out.flush();
+                }
+            }));
+        }
+    }
+
+    /** Fork J (ADR-0102): determinize a copy to the acting seat's information
+     *  set — every library reshuffled (the pre-existing rollout default) and
+     *  each OTHER seat's hand resampled uniformly from hand ∪ library (the
+     *  decklist is public in this pool; revealed-from-hand cards are
+     *  approximated as unknown). Zone.setCards: no shuffle events/triggers. */
+    static void determinize(Game copy, String actingName, Random rng) {
+        for (Player p : copy.getPlayers()) {
+            List<Card> lib = new ArrayList<>();
+            for (Card c : p.getZone(ZoneType.Library)) {
+                lib.add(c);
+            }
+            if (!p.getName().equals(actingName)) {
+                List<Card> hand = new ArrayList<>();
+                for (Card c : p.getZone(ZoneType.Hand)) {
+                    hand.add(c);
+                }
+                int n = hand.size();
+                List<Card> pool = new ArrayList<>(hand);
+                pool.addAll(lib);
+                Collections.shuffle(pool, rng);
+                p.getZone(ZoneType.Hand).setCards(new ArrayList<>(pool.subList(0, n)));
+                lib = new ArrayList<>(pool.subList(n, pool.size()));
+            }
+            Collections.shuffle(lib, rng);
+            p.getZone(ZoneType.Library).setCards(lib);
+        }
+    }
+
     static final class HorizonStop {
         final Game game;
         final int stopTurn;
@@ -1030,6 +1321,8 @@ public final class AnvilRun {
     /** Inline certification: arms per point cap (sched_pins.ARM_CAP) — the clock budget. */
     private static final int CERTIFY_MAX_ARMS = 16;
     static final String TAG_CERTIFY = "anvil.certify";
+    /** M12 Build 0: the search-leaf value ask (AnvilBridge.value). */
+    static final String TAG_VALUE = "anvil.value";
     // Fork-store synthetic game ids live in their own namespace above any
     // reachable mainline index: base + ns*STRIDE + (gameIdx*100 + fp)*100 + r.
     // Without the base, a drilled source game with gameIdx=0 encodes forks
