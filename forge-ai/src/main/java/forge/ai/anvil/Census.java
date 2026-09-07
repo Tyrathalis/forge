@@ -8,6 +8,8 @@ import forge.util.collect.FCollectionView;
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.WeakHashMap;
+import java.util.Collections;
 import java.io.PrintWriter;
 import java.util.Collection;
 import java.util.Map;
@@ -73,7 +75,62 @@ public final class Census {
         }
     }
 
+    // ---- M12 Build 2 loop tripwire (ADR-0104 addendum, 09-07): an engine re-ask
+    // loop (ChooseSourceEffect's do/while on a null controller answer — game 989
+    // of the dzla10 arm asked "choose a source" 150K times in one window) is the
+    // same controller callback with the same arguments, consecutively, without
+    // end. Count consecutive identical callbacks per Game; past LOOP_TRIP the
+    // game is capped as a Draw with reason "loop:<method>" and the Surfaces
+    // force hooks answer the first option so the engine's loop can exit. Runs
+    // whether or not a census file is open (the guard is not telemetry).
+    private static final int LOOP_TRIP = Integer.getInteger("anvil.loop.trip", 256);
+
+    private static final class LoopState {
+        String lastKey;
+        int n;
+        boolean tripped;
+    }
+
+    private static final Map<Game, LoopState> loops = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final java.util.Set<String> loopClassesPrinted =
+            Collections.synchronizedSet(new java.util.HashSet<>());
+
+    public static boolean loopTripped(Game g) {
+        LoopState st = g == null ? null : loops.get(g);
+        return st != null && st.tripped;
+    }
+
+    private static void loopCheck(Game g, Player p, String method, Object... kv) {
+        if (g == null || g.isGameOver()) {
+            return;
+        }
+        StringBuilder k = new StringBuilder(96).append(method).append('|').append(p == null ? "" : p.getName());
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            Object v = kv[i + 1];
+            if (v instanceof Number || v instanceof Boolean || v instanceof String) {
+                k.append('|').append(v);
+            }
+        }
+        String key = k.toString();
+        LoopState st = loops.computeIfAbsent(g, x -> new LoopState());
+        if (key.equals(st.lastKey)) {
+            st.n++;
+        } else {
+            st.lastKey = key;
+            st.n = 1;
+        }
+        if (st.n >= LOOP_TRIP && !st.tripped) {
+            st.tripped = true;
+            g.setAnvilCapReason("loop:" + method);
+            g.setGameOver(forge.game.GameEndReason.Draw);
+            if (loopClassesPrinted.add(method)) {
+                System.err.println("[anvil] LOOP TRIP after " + st.n + " identical " + method + " callbacks: " + key);
+            }
+        }
+    }
+
     public static synchronized void rec(Game g, Player p, String method, Object... kv) {
+        loopCheck(g, p, method, kv);
         if (out == null || capped) {
             return;
         }

@@ -565,6 +565,9 @@ public final class Surfaces {
             SpellAbility sa) {
         try {
             List<T> opts = asList(optionList);
+            if (Census.loopTripped(g)) {
+                return opts.isEmpty() ? null : opts.get(0); // loop tripwire: let the engine's re-ask exit
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, opts.size(), 1);
             if (d == null) {
                 return null;
@@ -588,6 +591,9 @@ public final class Surfaces {
 
     public static SpellAbility forceSpellOne(Game g, Player p, List<SpellAbility> spells, SpellAbility sa) {
         try {
+            if (Census.loopTripped(g)) {
+                return spells.isEmpty() ? null : spells.get(0);
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, spells.size(), 1);
             if (d == null) {
                 return null;
@@ -605,6 +611,9 @@ public final class Surfaces {
 
     public static Card forceZoneChange(Game g, Player p, CardCollection fetchList, SpellAbility sa) {
         try {
+            if (Census.loopTripped(g)) {
+                return fetchList.isEmpty() ? null : fetchList.get(0);
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, fetchList.size(), 1);
             if (d == null) {
                 return null;
@@ -626,6 +635,9 @@ public final class Surfaces {
             int min, int max, SpellAbility sa) {
         try {
             List<T> opts = asList(optionList);
+            if (Census.loopTripped(g)) {
+                return new java.util.ArrayList<>(opts.subList(0, Math.min(opts.size(), Math.max(0, min))));
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
             if (d == null) {
                 return null;
@@ -649,6 +661,9 @@ public final class Surfaces {
             SpellAbility sa) {
         try {
             List<Card> opts = asList(options);
+            if (Census.loopTripped(g)) {
+                return new CardCollection(opts.subList(0, Math.min(opts.size(), Math.max(0, min))));
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
             if (d == null) {
                 return null;
@@ -788,6 +803,9 @@ public final class Surfaces {
     public static List<AbilitySub> forceMode(Game g, Player p, SpellAbility sa, List<AbilitySub> possible,
             int min, int num, boolean allowRepeat) {
         try {
+            if (Census.loopTripped(g)) {
+                return new java.util.ArrayList<>(possible.subList(0, Math.min(possible.size(), Math.max(0, min))));
+            }
             SurfaceDirective d = SurfaceDirective.match(g, p, MODE, possible.size(), num);
             if (d == null) {
                 return null;

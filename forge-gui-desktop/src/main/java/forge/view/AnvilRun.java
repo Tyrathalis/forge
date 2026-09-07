@@ -739,7 +739,10 @@ public final class AnvilRun {
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
-                    extraS += 3600;
+                    // 900 s (was 3,600): the widest boards the smokes showed
+                    // sit under 15 s per window; the hour-long allowance let
+                    // the dzla10 arm's loop game run 65 min (09-07).
+                    extraS += 900;
                 }
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {

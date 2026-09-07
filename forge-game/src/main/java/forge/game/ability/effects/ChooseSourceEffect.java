@@ -128,9 +128,25 @@ public class ChooseSourceEffect extends SpellAbilityEffect {
             for (int i = 0; i < validAmount; i++) {
                 final String choiceTitle = sa.hasParam("ChoiceTitle") ? sa.getParam("ChoiceTitle") : Localizer.getInstance().getMessage("lblChooseSource") + " ";
                 Card o = null;
-                do {
+                // Bounded re-ask: a controller that cannot answer (the AI's
+                // NeedsPrevention chooser outside combat / with an empty stack)
+                // returns null forever; after one retry take the first real
+                // source rather than loop the game.
+                for (int ask = 0; ask < 2 && (o == null || o.getName().startsWith("--")); ask++) {
                     o = p.getController().chooseSingleEntityForEffect(sourcesToChooseFrom, sa, choiceTitle, null);
-                } while (o == null || o.getName().startsWith("--"));
+                }
+                if (o == null || o.getName().startsWith("--")) {
+                    o = null;
+                    for (Card c : sourcesToChooseFrom) {
+                        if (!c.getName().startsWith("--")) {
+                            o = c;
+                            break;
+                        }
+                    }
+                    if (o == null) {
+                        break;
+                    }
+                }
                 chosen.add(o);
                 sourcesToChooseFrom.remove(o);
             }
