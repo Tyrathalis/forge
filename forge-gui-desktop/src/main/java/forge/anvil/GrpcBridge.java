@@ -209,6 +209,20 @@ public final class GrpcBridge implements AnvilBridge {
     }
 
     @Override
+    public int[] selectSet(String tag, List<String> optionLabels, int min, int max) {
+        int n = optionLabels.size();
+        int k = Math.max(0, Math.min(min, n));
+        IndexList.Builder local = IndexList.newBuilder();
+        for (int i = 0; i < k; i++) {
+            local.addIndices(i);
+        }
+        DecisionResponse resp = roundTrip(tag, AnswerShape.SELECT_K, optionLabels,
+                Constraints.newBuilder().setMin(min).setMax(max).setK(0).build(),
+                DecisionResponse.newBuilder().setIndices(local).build());
+        return resp.getIndices().getIndicesList().stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    @Override
     public int[] selectK(String tag, int n, int k) {
         int[] all = new int[n];
         for (int i = 0; i < n; i++) {

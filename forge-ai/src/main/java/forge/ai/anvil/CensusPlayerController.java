@@ -157,7 +157,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public CardCollectionView choosePermanentsToSacrifice(SpellAbility sa, int min, int max, CardCollectionView validTargets, String message) {
         Census.rec(getGame(), getPlayer(), "choosePermanentsToSacrifice", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "choosePermanentsToSacrifice", Surfaces.ENTITY_SET, validTargets, "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "choosePermanentsToSacrifice", Surfaces.ENTITY_SET, validTargets, "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message, "sak", sa);
         CardCollectionView __f = Surfaces.forceCardSet(getGame(), getPlayer(), validTargets, min, max, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -172,7 +172,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public CardCollectionView choosePermanentsToDestroy(SpellAbility sa, int min, int max, CardCollectionView validTargets, String message) {
         Census.rec(getGame(), getPlayer(), "choosePermanentsToDestroy", "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "choosePermanentsToDestroy", Surfaces.ENTITY_SET, validTargets, "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "choosePermanentsToDestroy", Surfaces.ENTITY_SET, validTargets, "sa", Census.str(sa), "min", min, "max", max, "validTargets", Census.sz(validTargets), "message", message, "sak", sa);
         CardCollectionView __f = Surfaces.forceCardSet(getGame(), getPlayer(), validTargets, min, max, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -241,7 +241,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public CardCollectionView chooseCardsForEffect(CardCollectionView sourceList, SpellAbility sa, String title, int min, int max, boolean isOptional, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseCardsForEffect", "sourceList", Census.sz(sourceList), "sa", Census.str(sa), "title", title, "min", min, "max", max, "isOptional", isOptional, "params", Census.sz(params));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardsForEffect", Surfaces.ENTITY_SET, sourceList, "sourceList", Census.sz(sourceList), "sa", Census.str(sa), "title", title, "min", min, "max", max, "isOptional", isOptional, "params", Census.sz(params));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardsForEffect", Surfaces.ENTITY_SET, sourceList, "sourceList", Census.sz(sourceList), "sa", Census.str(sa), "title", title, "min", min, "max", max, "isOptional", isOptional, "params", Census.sz(params), "sak", sa);
         CardCollectionView __f = Surfaces.forceCardSet(getGame(), getPlayer(), sourceList, min, max, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -265,7 +265,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public <T extends GameEntity> T chooseSingleEntityForEffect(FCollectionView<T> optionList, DelayedReveal delayedReveal, SpellAbility sa, String title, boolean isOptional, Player relatedPlayer, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleEntityForEffect", "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleEntityForEffect", Surfaces.ENTITY_ONE, optionList, "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleEntityForEffect", Surfaces.ENTITY_ONE, optionList, "optionList", Census.sz(optionList), "sa", Census.str(sa), "title", title, "isOptional", isOptional, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params), "sak", sa);
         T __f = ChoiceDirective.forceEntity(getGame(), getPlayer(), optionList, sa, title);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -285,7 +285,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public <T extends GameEntity> List<T> chooseEntitiesForEffect(FCollectionView<T> optionList, int min, int max, DelayedReveal delayedReveal, SpellAbility sa, String title, Player relatedPlayer, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseEntitiesForEffect", "optionList", Census.sz(optionList), "min", min, "max", max, "sa", Census.str(sa), "title", title, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseEntitiesForEffect", Surfaces.ENTITY_SET, optionList, "optionList", Census.sz(optionList), "min", min, "max", max, "sa", Census.str(sa), "title", title, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseEntitiesForEffect", Surfaces.ENTITY_SET, optionList, "optionList", Census.sz(optionList), "min", min, "max", max, "sa", Census.str(sa), "title", title, "relatedPlayer", Census.str(relatedPlayer), "params", Census.sz(params), "sak", sa);
         List<T> __f = Surfaces.forceEntitySet(getGame(), getPlayer(), optionList, min, max, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -300,7 +300,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public List<SpellAbility> chooseSpellAbilitiesForEffect(List<SpellAbility> spells, SpellAbility sa, String title, int num, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilitiesForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "num", num, "params", Census.sz(params));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSpellAbilitiesForEffect", Surfaces.ENTITY_SET, spells, "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "num", num, "params", Census.sz(params));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSpellAbilitiesForEffect", Surfaces.ENTITY_SET, spells, "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "num", num, "params", Census.sz(params), "sak", sa);
         List<SpellAbility> __f = Surfaces.forceSpellSet(getGame(), getPlayer(), spells, num, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -315,7 +315,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public SpellAbility chooseSingleSpellForEffect(List<SpellAbility> spells, SpellAbility sa, String title, Map<String, Object> params) {
         Census.rec(getGame(), getPlayer(), "chooseSingleSpellForEffect", "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "params", Census.sz(params));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleSpellForEffect", Surfaces.ENTITY_ONE, spells, "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "params", Census.sz(params));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleSpellForEffect", Surfaces.ENTITY_ONE, spells, "spells", Census.sz(spells), "sa", Census.str(sa), "title", title, "params", Census.sz(params), "sak", sa);
         SpellAbility __f = Surfaces.forceSpellOne(getGame(), getPlayer(), spells, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -521,7 +521,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public CardCollection chooseCardsToDiscardFrom(Player playerDiscard, SpellAbility sa, CardCollection validCards, int min, int max, CardCollectionView visibleToChooser) {
         Census.rec(getGame(), getPlayer(), "chooseCardsToDiscardFrom", "playerDiscard", Census.str(playerDiscard), "sa", Census.str(sa), "validCards", Census.sz(validCards), "min", min, "max", max, "visibleToChooser", Census.sz(visibleToChooser));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardsToDiscardFrom", Surfaces.ENTITY_SET, validCards, "playerDiscard", Census.str(playerDiscard), "sa", Census.str(sa), "validCards", Census.sz(validCards), "min", min, "max", max, "visibleToChooser", Census.sz(visibleToChooser));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardsToDiscardFrom", Surfaces.ENTITY_SET, validCards, "playerDiscard", Census.str(playerDiscard), "sa", Census.str(sa), "validCards", Census.sz(validCards), "min", min, "max", max, "visibleToChooser", Census.sz(visibleToChooser), "sak", sa);
         CardCollection __f = Surfaces.forceCardSet(getGame(), getPlayer(), validCards, min, max, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -642,7 +642,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public String chooseSomeType(String kindOfType, SpellAbility sa, Collection<String> validTypes, boolean isOptional) {
         Census.rec(getGame(), getPlayer(), "chooseSomeType", "kindOfType", kindOfType, "sa", Census.str(sa), "validTypes", Census.sz(validTypes), "isOptional", isOptional);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSomeType", Surfaces.NAME, validTypes, "kindOfType", kindOfType, "sa", Census.str(sa), "validTypes", Census.sz(validTypes), "isOptional", isOptional);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSomeType", Surfaces.NAME, validTypes, "kindOfType", kindOfType, "sa", Census.str(sa), "validTypes", Census.sz(validTypes), "isOptional", isOptional, "sak", sa);
         String __f = Surfaces.forceName(getGame(), getPlayer(), validTypes, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -783,7 +783,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public List<AbilitySub> chooseModeForAbility(SpellAbility sa, List<AbilitySub> possible, int min, int num, boolean allowRepeat) {
         Census.rec(getGame(), getPlayer(), "chooseModeForAbility", "sa", Census.str(sa), "possible", Census.sz(possible), "min", min, "num", num, "allowRepeat", allowRepeat);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseModeForAbility", Surfaces.MODE, possible, "sa", Census.str(sa), "possible", Census.sz(possible), "min", min, "num", num, "allowRepeat", allowRepeat);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseModeForAbility", Surfaces.MODE, possible, "sa", Census.str(sa), "possible", Census.sz(possible), "min", min, "num", num, "allowRepeat", allowRepeat, "sak", sa);
         List<AbilitySub> __f = Surfaces.forceMode(getGame(), getPlayer(), sa, possible, min, num, allowRepeat);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -1085,7 +1085,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public String chooseCardName(SpellAbility sa, List<ICardFace> faces, String message) {
         Census.rec(getGame(), getPlayer(), "chooseCardName", "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardName", Surfaces.NAME, faces, "sa", Census.str(sa), "faces", Census.sz(faces), "message", message);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseCardName", Surfaces.NAME, faces, "sa", Census.str(sa), "faces", Census.sz(faces), "message", message, "sak", sa);
         String __f = Surfaces.forceName(getGame(), getPlayer(), faces, sa);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -1100,7 +1100,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
         Census.rec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
-        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", Surfaces.ENTITY_ONE, fetchList, "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider));
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseSingleCardForZoneChange", Surfaces.ENTITY_ONE, fetchList, "origin", Census.sz(origin), "sa", Census.str(sa), "fetchList", Census.sz(fetchList), "selectPrompt", selectPrompt, "isOptional", isOptional, "decider", Census.str(decider), "sak", sa);
         Card __f = ChoiceDirective.forceZoneChange(getGame(), getPlayer(), fetchList, sa, selectPrompt);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);

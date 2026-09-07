@@ -144,10 +144,77 @@ public final class Surfaces {
             Object[] kv2 = Arrays.copyOf(kv, kv.length + 2);
             kv2[kv.length] = "surf";
             kv2[kv.length + 1] = KIND_NAMES[kind];
-            return Obs.decSurface(g, p, m, optList(options), extras(options), kv2);
+            // ADR-0105: a SpellAbility value ("sak", the resolving ability) becomes
+            // its ability key (its canonical text registered with the session)
+            for (int i = 1; i < kv2.length; i += 2) {
+                if (kv2[i] instanceof SpellAbility) {
+                    String k = AbilityKey.note((SpellAbility) kv2[i]);
+                    kv2[i] = k == null ? "" : k;
+                }
+            }
+            String by = bridgeFor(p, kind) != null ? "bridge" : null;
+            return Obs.decSurface(g, p, m, by, optList(options), extras(options), kv2);
         } catch (Exception e) {
             return Obs.dec(g, p, m, kv);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // ADR-0105: the bridged answer (the model serving a surface)
+
+    static String tagOf(int kind) {
+        switch (kind) {
+            case ENTITY_ONE: return PlayerControllerAnvil.TAG_SURFACE_ONE;
+            case ENTITY_SET: return PlayerControllerAnvil.TAG_SURFACE_SET;
+            default: return null;
+        }
+    }
+
+    /** The seat's bridge when it bridges this kind's tag; null = the natural line. */
+    static AnvilBridge bridgeFor(Player p, int kind) {
+        try {
+            String tag = tagOf(kind);
+            if (tag == null || p == null) {
+                return null;
+            }
+            forge.game.player.PlayerController pc = p.getController();
+            return pc instanceof PlayerControllerAnvil ? ((PlayerControllerAnvil) pc).bridgeFor(tag) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    static List<String> labels(List<?> opts) {
+        List<String> out = new ArrayList<>(opts.size());
+        for (Object o : opts) {
+            out.add(o instanceof SpellAbility ? labelOf((SpellAbility) o) : Census.str(o) == null ? "" : Census.str(o));
+        }
+        return out;
+    }
+
+    /** ENTITY_ONE over the bridge: the option index, or -1 (not bridged, a
+     *  trivial window, an out-of-range answer — the natural line stands). */
+    static int askOne(Game g, Player p, List<?> opts, String m) {
+        AnvilBridge b = bridgeFor(p, ENTITY_ONE);
+        if (b == null || !nontrivial(ENTITY_ONE, opts.size(), 1)) {
+            return -1;
+        }
+        int i = b.selectOne(PlayerControllerAnvil.TAG_SURFACE_ONE, labels(opts));
+        boolean ok = i >= 0 && i < opts.size();
+        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "i", i, "ok", ok);
+        return ok ? i : -1;
+    }
+
+    /** ENTITY_SET over the bridge: distinct indices within [min, max], or null. */
+    static int[] askSet(Game g, Player p, List<?> opts, int min, int max, String m) {
+        AnvilBridge b = bridgeFor(p, ENTITY_SET);
+        if (b == null || !nontrivial(ENTITY_SET, opts.size(), max) || (min >= opts.size() && max >= opts.size())) {
+            return null;
+        }
+        int[] a = b.selectSet(PlayerControllerAnvil.TAG_SURFACE_SET, labels(opts), min, max);
+        boolean ok = a != null && validIndices(a, opts.size(), min, max, true);
+        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
+        return ok ? a : null;
     }
 
     // ------------------------------------------------------------------
@@ -572,7 +639,8 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, opts.size(), 1);
             if (d == null) {
-                return null;
+                int i = askOne(g, p, opts, "chooseSingleEntityForEffect");
+                return i < 0 ? null : opts.get(i);
             }
             if (!validIndices(d.answer, opts.size(), 1, 1, true)) {
                 d.miss("idx");
@@ -598,7 +666,8 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, spells.size(), 1);
             if (d == null) {
-                return null;
+                int i = askOne(g, p, spells, "chooseSingleSpellForEffect");
+                return i < 0 ? null : spells.get(i);
             }
             if (!validIndices(d.answer, spells.size(), 1, 1, true)) {
                 d.miss("idx");
@@ -618,7 +687,8 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, fetchList.size(), 1);
             if (d == null) {
-                return null;
+                int i = askOne(g, p, fetchList, "chooseSingleCardForZoneChange");
+                return i < 0 ? null : fetchList.get(i);
             }
             if (!validIndices(d.answer, fetchList.size(), 1, 1, true)) {
                 d.miss("idx");
@@ -642,7 +712,15 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
             if (d == null) {
-                return null;
+                int[] a = askSet(g, p, opts, min, max, "chooseEntitiesForEffect");
+                if (a == null) {
+                    return null;
+                }
+                List<T> out = new ArrayList<>(a.length);
+                for (int i : a) {
+                    out.add(opts.get(i));
+                }
+                return out;
             }
             if (!validIndices(d.answer, opts.size(), min, max, true)) {
                 d.miss("idx");
@@ -668,7 +746,15 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
             if (d == null) {
-                return null;
+                int[] a = askSet(g, p, opts, min, max, "chooseCardsForEffect");
+                if (a == null) {
+                    return null;
+                }
+                CardCollection out = new CardCollection();
+                for (int i : a) {
+                    out.add(opts.get(i));
+                }
+                return out;
             }
             if (!validIndices(d.answer, opts.size(), min, max, true)) {
                 d.miss("idx");

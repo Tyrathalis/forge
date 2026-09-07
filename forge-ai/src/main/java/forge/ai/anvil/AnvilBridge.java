@@ -32,6 +32,12 @@ public interface AnvilBridge {
     /** SELECT_K: pick k distinct indices from [0, n); returned ascending. */
     int[] selectK(String tag, int n, int k);
 
+    /** SELECT_K with a variable size (ADR-0105 surfaces): min..max distinct
+     *  indices over labelled options; the local echo picks min. */
+    default int[] selectSet(String tag, List<String> optionLabels, int min, int max) {
+        return selectK(tag, optionLabels.size(), Math.max(0, Math.min(min, optionLabels.size())));
+    }
+
     /** BOOL. */
     boolean bool(String tag);
 

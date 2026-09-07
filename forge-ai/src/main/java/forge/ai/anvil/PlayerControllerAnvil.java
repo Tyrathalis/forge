@@ -43,6 +43,10 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     public static final String TAG_ATTACK = "mtg.attack";   // M2 D5
     public static final String TAG_BLOCK = "mtg.block";     // M2 D5
     public static final String TAG_PAY_CLASS = "mtg.pay_mana_class"; // M9 D3 §3c
+    // M12 Build 3 (ADR-0105): the decision surfaces, one tag per answer shape;
+    // answered through the Surfaces force hooks when the seat bridges the tag
+    public static final String TAG_SURFACE_ONE = "mtg.surface.entity_one";
+    public static final String TAG_SURFACE_SET = "mtg.surface.entity_set";
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;
@@ -55,6 +59,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
     private boolean bridged(String tag) {
         return bridgedTags.contains(tag);
+    }
+
+    /** ADR-0105: the bridge for a surface tag this seat bridges, else null. */
+    public AnvilBridge bridgeFor(String tag) {
+        return bridged(tag) && bridge != null && !bridge.poisoned() ? bridge : null;
     }
 
     /** Does this seat answer priority over the bridge? (M7 forced-branch

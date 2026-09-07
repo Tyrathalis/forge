@@ -578,6 +578,12 @@ public final class Obs {
         return decInternal(g, p, m, null, rawOpts, true, extraEnts, kv);
     }
 
+    /** ADR-0105: a surface window the bridge answers (by = "bridge"). */
+    public static long decSurface(Game g, Player p, String m, String by, java.util.List<String> rawOpts,
+            java.util.List<Card> extraEnts, Object... kv) {
+        return decInternal(g, p, m, by, rawOpts, true, extraEnts, kv);
+    }
+
     /**
      * Priority-window dec (M1 D2): materializes the engine-legal option set
      * (same scan as the bridged path — legal-actions-only invariant) into

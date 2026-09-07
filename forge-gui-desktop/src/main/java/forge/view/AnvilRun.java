@@ -106,7 +106,8 @@ public final class AnvilRun {
     private static final Set<String> DEFAULT_TAGS = new HashSet<>(Arrays.asList(
             PlayerControllerAnvil.TAG_PRIORITY, PlayerControllerAnvil.TAG_MULLIGAN,
             PlayerControllerAnvil.TAG_TUCK, PlayerControllerAnvil.TAG_TRIGGER,
-            PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER));
+            PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER,
+            PlayerControllerAnvil.TAG_SURFACE_ONE, PlayerControllerAnvil.TAG_SURFACE_SET));
 
     private AnvilRun() {
     }
