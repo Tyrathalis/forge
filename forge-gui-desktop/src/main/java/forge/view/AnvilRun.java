@@ -135,7 +135,9 @@ public final class AnvilRun {
                     + "[-seqarms nat|all] [-forceschedule <tsv>] [-forcechoice <tsv>] "
                     + "[-certify <horizon>] [-n <games>] [-s <baseSeed>] "
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
-                    + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana]]");
+                    + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
+                    + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
+                    + "[-searchseats <csv>]]");
             return;
         }
 
@@ -261,6 +263,35 @@ public final class AnvilRun {
                 ? Integer.parseInt(params.get("searchsurf").get(0)) : 0;
         final int searchSurfCap = params.containsKey("searchsurfcap")
                 ? Integer.parseInt(params.get("searchsurfcap").get(0)) : Surfaces.DEFAULT_CAP;
+        // M12 Build 2 (m12-plan canonical shape §2): the ACTING rule. -searchact
+        // <bar> turns the instrument into the behavior policy: at a searched
+        // window with margin = max V − V(natural) ≥ bar the controller samples
+        // the option from the leaf-value softmax at -searchtemp <T> (0 =
+        // argmax; default 0.025 — an option one 0.05-bar below the best keeps
+        // ~13% weight), below the bar the natural pick stands. Absent = the
+        // Build 0 telemetry-only instrument. -searchseats <csv> restricts the
+        // searched seats (default: every bridged seat).
+        final double searchAct = params.containsKey("searchact")
+                ? Double.parseDouble(params.get("searchact").get(0)) : Double.NaN;
+        final double searchTemp = params.containsKey("searchtemp")
+                ? Double.parseDouble(params.get("searchtemp").get(0)) : 0.025;
+        Set<Integer> searchSeats = null;
+        if (params.containsKey("searchseats")) {
+            searchSeats = new HashSet<>();
+            for (String sIdx : params.get("searchseats").get(0).split(",")) {
+                searchSeats.add(Integer.parseInt(sIdx.trim()));
+            }
+        }
+        if (search) {
+            // The behavior policy's pins on every game header (provenance).
+            Obs.searchPins = String.format(java.util.Locale.ROOT,
+                    "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
+                    + "\"bar\":%s,\"temp\":%s,\"seats\":%s}",
+                    searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
+                    Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
+                    String.valueOf(searchTemp),
+                    searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"");
+        }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
         // records to <obs>-forks.zst as a store frame of its own (synthetic
@@ -704,7 +735,7 @@ public final class AnvilRun {
                 if (search) {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
-                            searchMana, searchSurf, searchSurfCap));
+                            searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     extraS += 3600;
@@ -1058,7 +1089,9 @@ public final class AnvilRun {
      * One labels row per searched window: {ev:"search", i, seed, t, ph, sw,
      * seat, n_opts, opts:[{o, label, v:[per roll], kind:[...], calls:[...],
      * ms}], copy_ms, ms, nat} — nat = the mainline's natural pick, completed
-     * by the controller after its own ask. Never acts (Build 2).
+     * by the controller after its own ask. M12 Build 2: with -searchact the
+     * row also carries the acting rule's verdict (by, margin, act, act_o,
+     * logp, p, applied) and the controller ACTS on it (SearchDirective.Pending).
      */
     static final class SearchMonitor {
         final Game game;
@@ -1074,15 +1107,24 @@ public final class AnvilRun {
         final boolean includeMana;
         final int surfTop;
         final int surfCap;
+        /** M12 Build 2: the acting bar (NaN = telemetry only), the softmax
+         *  temperature and the searched seats (null = every bridged seat). */
+        final double actBar;
+        final double actTemp;
+        final Set<Integer> seats;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
 
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
-                int optCap, boolean includeMana, int surfTop, int surfCap) {
+                int optCap, boolean includeMana, int surfTop, int surfCap,
+                double actBar, double actTemp, Set<Integer> seats) {
             this.surfTop = Math.max(0, surfTop);
             this.surfCap = Math.max(1, surfCap);
+            this.actBar = actBar;
+            this.actTemp = actTemp;
+            this.seats = seats;
             this.game = game;
             this.gameIdx = gameIdx;
             this.seed = seed;
@@ -1111,6 +1153,9 @@ public final class AnvilRun {
             Player prio = ph.getPriorityPlayer();
             if (!(prio.getController() instanceof PlayerControllerAnvil)
                     || !((PlayerControllerAnvil) prio.getController()).bridgesPriority()) {
+                return;
+            }
+            if (seats != null && !seats.contains(game.getRegisteredPlayers().indexOf(prio))) {
                 return;
             }
             java.util.Set<Card> affected = new HashSet<>();
@@ -1407,12 +1452,26 @@ public final class AnvilRun {
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
             final PrintWriter out = labels;
-            SearchDirective.expectNatural(game, new SearchDirective.Pending(sb.toString(), row -> {
+            final java.util.function.Consumer<String> sink = out == null ? null : row -> {
                 synchronized (out) {
                     out.println(row);
                     out.flush();
                 }
-            }));
+            };
+            // M12 Build 2: the acting rule's inputs — first-ply candidate
+            // labels and mean leaf values (NaN = unvalued), the bar, the
+            // temperature and a private sample seed keyed on (game seed,
+            // turn, window) so a replay samples the same option.
+            String[] candArr = new String[nCand];
+            double[] valArr = new double[nCand];
+            for (int c = 0; c < nCand; c++) {
+                candArr[c] = cands.get(c);
+                valArr[c] = nV[c] > 0 ? meanV[c] / nV[c] : Double.NaN;
+            }
+            long sampleSeed = splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+                    ^ (mySw * 0xBF58476D1CE4E5B9L) ^ 0xAC71A6L);
+            SearchDirective.expectNatural(game, new SearchDirective.Pending(sb.toString(), sink,
+                    candArr, valArr, actBar, actTemp, sampleSeed));
         }
     }
 

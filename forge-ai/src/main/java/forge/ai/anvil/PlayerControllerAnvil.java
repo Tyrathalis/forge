@@ -218,10 +218,77 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         // M12 Build 0: a searched mainline window's row waits for the natural
         // pick (what the policy did here); complete it once, after the answer.
         SearchDirective.Pending pend = SearchDirective.takePending(getGame());
-        if (pend != null) {
-            pend.complete(picked == null || picked.isEmpty() ? "pass" : Census.str(picked.get(0)));
+        if (pend == null) {
+            return picked;
         }
-        return picked;
+        final String natural = picked == null || picked.isEmpty() ? "pass" : Census.str(picked.get(0));
+        if (!pend.acts()) {
+            pend.complete(natural);
+            return picked;
+        }
+        // M12 Build 2 (m12-plan canonical shape §2, the acting rule): margin =
+        // max V − V(natural); at or above the bar the behavior policy samples
+        // from the leaf-value softmax — the natural line stays in the
+        // distribution (exploration + a behavior logp for PG); below the bar
+        // the natural pick stands. Never worse than the fallback by
+        // construction: a sampled option that cannot be applied here (the
+        // shape-fit class the copies did not see) falls back to the natural
+        // line, counted.
+        SearchDirective.Pending.Decision d = pend.decide(natural);
+        if (d.actIdx < 0 || d.actIdx == d.natIdx) {
+            pend.complete(natural, d, "natural");
+            return picked;
+        }
+        final String label = pend.cands[d.actIdx];
+        if (label == null) {
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "search", "pick", "pass", "nat", natural, "margin", d.margin);
+            pend.complete(natural, d, "pass");
+            return null;
+        }
+        List<SpellAbility> forced = searchForcedAsk(label);
+        if (forced == null || forced.isEmpty()) {
+            Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                    "by", "search", "pick", label, "nat", natural, "margin", d.margin, "void", true);
+            pend.complete(natural, d, "act_void");
+            return picked;
+        }
+        Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                "by", "search", "pick", Census.str(forced.get(0)), "nat", natural, "margin", d.margin);
+        pend.complete(natural, d, "act");
+        return forced;
+    }
+
+    /** M12 Build 2: realize the search's sampled option on the mainline — a
+     *  single-option forbid-decline ask (the search copy's W_FORCE shape) so
+     *  the network fills the plan (targets, X, modes, payment). One attempt:
+     *  a veto at apply, a pass despite the mask or an absent option is null
+     *  (the caller plays the natural line and counts it). The dec is logged
+     *  under by="search" so the store can tell the forced re-ask from the
+     *  window's natural ask that precedes it. */
+    private List<SpellAbility> searchForcedAsk(String label) {
+        SpellAbility target = null;
+        for (SpellAbility sa : AnvilOptions.priorityOptions(getGame(), player)) {
+            if (label.equals(Census.str(sa))) {
+                target = sa;
+                break;
+            }
+        }
+        if (target == null) {
+            return null;
+        }
+        List<SpellAbility> options = Lists.newArrayList(target);
+        List<String> labels = Lists.newArrayList("pass", label);
+        long obsSeq = Obs.decPriority(getGame(), getPlayer(), "search", options);
+        CastPlanAnswer plan = bridge.priorityCastPlan(TAG_PRIORITY, labels,
+                Obs.lastDecForBridge(getGame()), 0, true);
+        if (plan == null) {
+            Obs.ret(getGame(), obsSeq, null);
+            return null;
+        }
+        OneShot r = oneShotCast(options, plan, obsSeq, 0);
+        AnvilOptions.invalidate(getGame(), player);
+        return r.vetoedOption > 0 ? null : r.sas;
     }
 
     private List<SpellAbility> chooseSpellAbilityToPlayInner() {

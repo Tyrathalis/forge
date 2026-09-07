@@ -74,6 +74,11 @@ public final class Obs {
     /** Provenance statics set once per JVM by the runner (null = absent). */
     public static volatile String poolId = null;
     public static volatile String forkCommit = null;
+    /** M12 Build 2: the search directive's pins as a JSON object (rate,
+     *  rolls, opts, mana, surf, bar, temp, seats) — the behavior policy's
+     *  provenance on every game header (m12-plan "Boundary discipline");
+     *  null = search off. */
+    public static volatile String searchPins = null;
     private static final int ZSTD_LEVEL = 3;
     /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
     private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
@@ -436,6 +441,9 @@ public final class Obs {
         }
         if (forkCommit != null) {
             sb.append(",\"fork_commit\":").append(q(forkCommit));
+        }
+        if (searchPins != null) {
+            sb.append(",\"search\":").append(searchPins);
         }
         sb.append(",\"players\":[");
         int i = 0;

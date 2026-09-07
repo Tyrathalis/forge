@@ -21,6 +21,9 @@ import java.util.function.Consumer;
  * window (empty stack) — the leaf (fork A) — where the window's peek record
  * (with the copy session's history ring) is captured and the copy ends. Other
  * seats play naturally throughout. Inert unless armed; never on a mainline.
+ * Mainline side (Pending): the searched window's row waits for the natural
+ * pick, and — M12 Build 2 — carries the acting rule (margin bar, softmax
+ * temperature) the controller applies after its own ask.
  */
 public final class SearchDirective {
     public static final int W_PASS = 0, W_NATURAL = 1, W_FORCE = 2, W_LEAF = 3, W_VOID = 4;
@@ -139,14 +142,160 @@ public final class SearchDirective {
     public static final class Pending {
         final String rowPrefix;
         final Consumer<String> sink;
+        /** M12 Build 2 acting rule (m12-plan canonical shape §2): the
+         *  candidate labels (index 0 = pass, null) and their mean leaf values
+         *  (NaN = unvalued: every roll void / crash / unserved); bar NaN =
+         *  telemetry only (Build 0 behaviour). */
+        public final String[] cands;
+        public final double[] values;
+        public final double bar;
+        public final double temp;
+        public final long sampleSeed;
 
         public Pending(String rowPrefix, Consumer<String> sink) {
+            this(rowPrefix, sink, null, null, Double.NaN, 1.0, 0L);
+        }
+
+        public Pending(String rowPrefix, Consumer<String> sink, String[] cands, double[] values,
+                double bar, double temp, long sampleSeed) {
             this.rowPrefix = rowPrefix;
             this.sink = sink;
+            this.cands = cands;
+            this.values = values;
+            this.bar = bar;
+            this.temp = temp;
+            this.sampleSeed = sampleSeed;
+        }
+
+        public boolean acts() {
+            return cands != null && values != null && !Double.isNaN(bar);
+        }
+
+        /** The acting rule's verdict at one window. by: natural (margin below
+         *  the bar) | nat_unsearched (the natural pick is not a candidate —
+         *  a mana ability or beyond the cap) | nat_unvalued (the natural's
+         *  copies were all void) | search (a different candidate sampled) |
+         *  search_nat (the natural itself sampled). */
+        public static final class Decision {
+            public int natIdx = -1;
+            public int actIdx = -1;
+            public double margin = Double.NaN;
+            public double[] p = null;
+            public double logp = Double.NaN;
+            public String by = "natural";
+        }
+
+        /** margin = max V − V(natural); margin ≥ bar → sample from the
+         *  softmax of the valued candidates' leaf values at temp (temp ≤ 0 =
+         *  argmax) with a private seeded RNG (never the game's stream). */
+        public Decision decide(String natural) {
+            Decision d = new Decision();
+            for (int i = 0; i < cands.length; i++) {
+                boolean hit = cands[i] == null ? "pass".equals(natural) : cands[i].equals(natural);
+                if (hit) {
+                    d.natIdx = i;
+                    break;
+                }
+            }
+            if (d.natIdx < 0) {
+                d.by = "nat_unsearched";
+                return d;
+            }
+            if (Double.isNaN(values[d.natIdx])) {
+                d.by = "nat_unvalued";
+                return d;
+            }
+            double max = Double.NEGATIVE_INFINITY;
+            int argmax = -1;
+            for (int i = 0; i < values.length; i++) {
+                if (!Double.isNaN(values[i]) && values[i] > max) {
+                    max = values[i];
+                    argmax = i;
+                }
+            }
+            d.margin = max - values[d.natIdx];
+            if (d.margin < bar) {
+                return d;
+            }
+            d.p = new double[values.length];
+            if (temp <= 0) {
+                java.util.Arrays.fill(d.p, 0.0);
+                d.p[argmax] = 1.0;
+                d.actIdx = argmax;
+            } else {
+                double z = 0;
+                for (int i = 0; i < values.length; i++) {
+                    d.p[i] = Double.isNaN(values[i]) ? 0.0 : Math.exp((values[i] - max) / temp);
+                    z += d.p[i];
+                }
+                for (int i = 0; i < values.length; i++) {
+                    d.p[i] /= z;
+                }
+                // One splitmix64 step → a uniform in [0, 1): java.util.Random's
+                // first output is poorly distributed over nearby seeds.
+                double u = (mix64(sampleSeed) >>> 11) * 0x1.0p-53;
+                double acc = 0;
+                d.actIdx = argmax;
+                for (int i = 0; i < values.length; i++) {
+                    if (d.p[i] <= 0) {
+                        continue;
+                    }
+                    acc += d.p[i];
+                    if (u < acc) {
+                        d.actIdx = i;
+                        break;
+                    }
+                }
+            }
+            d.logp = Math.log(d.p[d.actIdx]);
+            d.by = d.actIdx == d.natIdx ? "search_nat" : "search";
+            return d;
+        }
+
+        private static long mix64(long z) {
+            z += 0x9E3779B97F4A7C15L;
+            z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+            z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+            return z ^ (z >>> 31);
         }
 
         public void complete(String natural) {
-            sink.accept(rowPrefix + ",\"nat\":" + Obs.q(natural) + "}");
+            complete(natural, null, null);
+        }
+
+        /** applied: what the mainline did with the verdict — natural | act
+         *  (the sampled option realized) | pass (the sampled pass) |
+         *  act_void (the sampled option could not be applied; the natural
+         *  line played). */
+        public void complete(String natural, Decision d, String applied) {
+            StringBuilder sb = new StringBuilder(rowPrefix.length() + 256);
+            sb.append(rowPrefix).append(",\"nat\":").append(Obs.q(natural));
+            if (d != null) {
+                sb.append(",\"by\":\"").append(d.by).append('"');
+                if (!Double.isNaN(d.margin)) {
+                    sb.append(",\"margin\":").append(String.format(java.util.Locale.ROOT, "%.5f", d.margin));
+                }
+                if (d.actIdx >= 0) {
+                    sb.append(",\"act_o\":").append(d.actIdx)
+                            .append(",\"act\":").append(Obs.q(cands[d.actIdx] == null ? "pass" : cands[d.actIdx]))
+                            .append(",\"logp\":").append(String.format(java.util.Locale.ROOT, "%.4f", d.logp))
+                            .append(",\"p\":[");
+                    for (int i = 0; i < d.p.length; i++) {
+                        if (i > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(String.format(java.util.Locale.ROOT, "%.4f", d.p[i]));
+                    }
+                    sb.append(']');
+                }
+                if (applied != null) {
+                    sb.append(",\"applied\":\"").append(applied).append('"');
+                }
+            }
+            sb.append('}');
+            if (sink != null) {
+                sink.accept(sb.toString());
+            }
         }
     }
 
