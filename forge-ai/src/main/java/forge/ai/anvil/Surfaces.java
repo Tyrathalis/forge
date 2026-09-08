@@ -1008,11 +1008,67 @@ public final class Surfaces {
         }
         int[] a = b.selectSet(PlayerControllerAnvil.TAG_SURFACE_MODE, labels(opts), min, max, repeat);
         boolean ok = a != null && validIndices(a, opts.size(), min, max, !repeat);
-        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
+        // The playability gate (09-08, ADR-0105 addendum): the heuristic's
+        // mode choice is a joint mode + target choice (CharmAi picks a mode
+        // only when its play test passes), the head's is mode-only, and a
+        // mode the engine's AI would not play gets the mandatory chooser's
+        // targets at setupTargets — the −7pp on choose-one windows. When any
+        // mode passes the play test the head's answer stands only if every
+        // pick is a playable mode (else the natural line); when none passes
+        // (the heuristic would decline — the Confluences) the head answers
+        // freely. A stopgap until the model aims its own modes (targets as a
+        // surface) or mainline surface acting values the answers.
+        String gate = "free";
+        if (ok) {
+            Set<Integer> playable = playableModes(p, opts);
+            // the gate applies only where the heuristic could fill the window's
+            // minimum with playable modes (its own answer); below that it would
+            // decline or force-fill — "choose two" with one playable mode fizzles
+            // under the heuristic (the first smoke deferred 10 of 14 such windows)
+            if (playable.size() >= Math.max(0, min)) {
+                boolean within = true;
+                for (int i : a) {
+                    if (!playable.contains(i)) {
+                        within = false;
+                        break;
+                    }
+                }
+                gate = within ? "pass" : "defer";
+                ok = within;
+            }
+        }
+        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok, "gate", gate);
         if (ok) {
             trace(g, p, MODE, m, opts.size(), min, max, a, null, repeat); // the served answer = the natural line
         }
         return ok ? a : null;
+    }
+
+    /** The modes the engine's own AI would play (CharmAi's first pass:
+     *  canPlaySa per mode, targets chosen as a side effect exactly as when
+     *  the heuristic answers; setupTargets re-targets the chosen chain). */
+    static Set<Integer> playableModes(Player p, List<?> opts) {
+        Set<Integer> ok = new HashSet<>();
+        try {
+            forge.game.player.PlayerController pc = p.getController();
+            if (!(pc instanceof forge.ai.PlayerControllerAi)) {
+                return ok;
+            }
+            forge.ai.AiController aic = ((forge.ai.PlayerControllerAi) pc).getAi();
+            for (int i = 0; i < opts.size(); i++) {
+                Object o = opts.get(i);
+                if (!(o instanceof AbilitySub)) {
+                    continue;
+                }
+                AbilitySub sub = (AbilitySub) o;
+                sub.setActivatingPlayer(p);
+                if (forge.ai.AiPlayDecision.WillPlay == aic.canPlaySa(sub)) {
+                    ok.add(i);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return ok;
     }
 
     // ---- NAME (chooseCardName over faces; chooseSomeType over validTypes)
