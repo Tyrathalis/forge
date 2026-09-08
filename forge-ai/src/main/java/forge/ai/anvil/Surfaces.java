@@ -202,6 +202,12 @@ public final class Surfaces {
         int i = b.selectOne(PlayerControllerAnvil.TAG_SURFACE_ONE, labels(opts));
         boolean ok = i >= 0 && i < opts.size();
         Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "i", i, "ok", ok);
+        if (ok) {
+            // the served answer IS the natural line: trace it on search copies so the
+            // expansion round still enumerates this surface (a bridged hook returns
+            // before the wrapper's after-hook — found on the first served smoke, 09-07)
+            trace(g, p, ENTITY_ONE, m, opts.size(), 1, 1, new int[] {i}, null);
+        }
         return ok ? i : -1;
     }
 
@@ -214,6 +220,9 @@ public final class Surfaces {
         int[] a = b.selectSet(PlayerControllerAnvil.TAG_SURFACE_SET, labels(opts), min, max);
         boolean ok = a != null && validIndices(a, opts.size(), min, max, true);
         Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
+        if (ok) {
+            trace(g, p, ENTITY_SET, m, opts.size(), min, max, a, null); // the served answer = the natural line
+        }
         return ok ? a : null;
     }
 
