@@ -75,4 +75,20 @@ public class AbilityKeyTest extends SimulationTest {
         AssertJUnit.assertEquals(dump.size(), keys.size());
         AssertJUnit.assertTrue("modes enumerated: " + subs, subs >= 2);
     }
+
+    @Test
+    public void runtimeSuffixesStripped() {
+        String trig = "Whenever a creature deals combat damage to you, its controller becomes the monarch."
+                + " [Damage Source: Warrior Token (208), Damaged: Anvil(2)-dc-863942, Amount: 1]";
+        AssertJUnit.assertEquals("Whenever a creature deals combat damage to you, its controller becomes the monarch.",
+                AbilityKey.stripRuntime(trig));
+        String nested = "Whenever you attack, do X. [Number Attackers: [Benevolent Bodyguard (4), Cloud, Midgar Mercenary (100)]]";
+        AssertJUnit.assertEquals("Whenever you attack, do X.", AbilityKey.stripRuntime(nested));
+        String by = "Choose one \u2014\n\u2022 Surveil 2.  by Laelia, the Blade Reforged (53) by Laelia, the Blade Reforged (53)";
+        AssertJUnit.assertEquals("Choose one \u2014\n\u2022 Surveil 2.", AbilityKey.stripRuntime(by));
+        AssertJUnit.assertEquals("", AbilityKey.stripRuntime("by Cori Mountain Monastery (116)"));
+        // static brackets stay: no "Key: value" inside
+        AssertJUnit.assertEquals("Prototype {1}{W}{W} [3/3]", AbilityKey.stripRuntime("Prototype {1}{W}{W} [3/3]"));
+        AssertJUnit.assertEquals("{T}: Add {U}.", AbilityKey.stripRuntime("{T}: Add {U}."));
+    }
 }

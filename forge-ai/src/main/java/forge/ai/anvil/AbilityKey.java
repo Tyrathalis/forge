@@ -139,8 +139,43 @@ public final class AbilityKey {
         if (d == null || d.isEmpty()) {
             d = String.valueOf(sa);
         }
-        sb.append("D:").append(d.replace("\r\n", "\n").trim());
+        sb.append("D:").append(stripRuntime(d));
         return sb.toString();
+    }
+
+    /** Evening 2 (09-07): the description of an ability IN PLAY carries
+     *  runtime state the static text never has — a triggered ability on the
+     *  stack appends its run parameters as a bracketed "Key: value" list
+     *  ("[Damage Source: Warrior Token (208), Amount: 1]", nested for
+     *  attacker lists), a granted or copied ability appends " by <source>
+     *  (<id>)" — so every instance hashed to a new key (10,325 store-only
+     *  keys in 1,000 games, 7 of 10 of them this class). Strip exactly those
+     *  shapes; static brackets ("Prototype {1}{W}{W} [3/3]") carry no ": "
+     *  and stay, so every pool-dump key is byte-identical (verified by
+     *  re-dumping the pool). */
+    public static String stripRuntime(String d) {
+        String s = d.replace("\r\n", "\n").trim();
+        while (s.endsWith("]")) {
+            int depth = 0;
+            int i = s.length() - 1;
+            for (; i >= 0; i--) {
+                char c = s.charAt(i);
+                if (c == ']') {
+                    depth++;
+                } else if (c == '[') {
+                    depth--;
+                    if (depth == 0) {
+                        break;
+                    }
+                }
+            }
+            if (i < 0 || !s.substring(i).contains(": ")) {
+                break;
+            }
+            s = s.substring(0, i).trim();
+        }
+        s = s.replaceAll("(\\s*\\bby\\s+[^()\\[\\]\\n]{1,80}\\(\\d+\\))+$", "").trim();
+        return s;
     }
 
     /** A static ability or replacement effect (the dump's S:/R: lines; not
