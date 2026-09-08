@@ -33,6 +33,13 @@ public final class SurfaceDirective {
     public volatile int seen = 0;
     /** Option count at the fired window; -1 = never fired. */
     public volatile int ncand = -1;
+    /** Evening 2 (ADR-0105): the fired callback's dec record — options, obs
+     *  snapshot, history, the wire shape — captured on the copy by
+     *  Surfaces.dec just before the answer applies: the sub row's frame, so
+     *  the distillation term sees the state the answer was chosen in. Null
+     *  until fired (a miss still carries it). */
+    public volatile String frame = null;
+    volatile String pendingFrame = null;
 
     private SurfaceDirective(String playerName, int kind, int ordinal, int[] answer) {
         this.playerName = playerName;
@@ -77,6 +84,19 @@ public final class SurfaceDirective {
         }
         int k = d.seen++;
         if (d.fired || k != d.ordinal) {
+            return null;
+        }
+        d.frame = d.pendingFrame;
+        d.pendingFrame = null;
+        return d;
+    }
+
+    /** The directive whose next matching callback of this kind fires (seat +
+     *  kind, the ordinal reached, not yet fired); null otherwise. Read by
+     *  Surfaces.dec, which runs before the force hook, to stash the frame. */
+    static SurfaceDirective pending(Game g, Player p, int kind) {
+        final SurfaceDirective d = armed.get(g);
+        if (d == null || d.kind != kind || d.fired || d.seen != d.ordinal || !d.playerName.equals(p.getName())) {
             return null;
         }
         return d;

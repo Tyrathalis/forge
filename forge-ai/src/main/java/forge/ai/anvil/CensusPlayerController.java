@@ -790,7 +790,7 @@ public class CensusPlayerController extends PlayerControllerAi {
             return __f;
         }
         List<AbilitySub> __r = super.chooseModeForAbility(sa, possible, min, num, allowRepeat);
-        Surfaces.afterMode(getGame(), getPlayer(), sa, possible, min, num, __r);
+        Surfaces.afterMode(getGame(), getPlayer(), sa, possible, min, num, allowRepeat, __r);
         Obs.ret(getGame(), __s, __r);
         return __r;
     }

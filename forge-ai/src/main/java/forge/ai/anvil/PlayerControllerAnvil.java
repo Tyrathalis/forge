@@ -47,6 +47,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     // answered through the Surfaces force hooks when the seat bridges the tag
     public static final String TAG_SURFACE_ONE = "mtg.surface.entity_one";
     public static final String TAG_SURFACE_SET = "mtg.surface.entity_set";
+    public static final String TAG_SURFACE_MODE = "mtg.surface.mode";
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;

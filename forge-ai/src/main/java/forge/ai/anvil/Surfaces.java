@@ -153,7 +153,15 @@ public final class Surfaces {
                 }
             }
             String by = bridgeFor(p, kind) != null ? "bridge" : null;
-            return Obs.decSurface(g, p, m, by, optList(options), extras(options), kv2);
+            long s = Obs.decSurface(g, p, m, by, optList(options), extras(options), kv2);
+            // evening 2: the frame of the surface window a SurfaceDirective is
+            // about to answer (the copy's wire-session dec record, already
+            // built for the bridge) — the sub row's state for distillation
+            SurfaceDirective sd = SurfaceDirective.pending(g, p, kind);
+            if (sd != null) {
+                sd.pendingFrame = Obs.lastDecForBridge(g);
+            }
+            return s;
         } catch (Exception e) {
             return Obs.dec(g, p, m, kv);
         }
@@ -166,6 +174,7 @@ public final class Surfaces {
         switch (kind) {
             case ENTITY_ONE: return PlayerControllerAnvil.TAG_SURFACE_ONE;
             case ENTITY_SET: return PlayerControllerAnvil.TAG_SURFACE_SET;
+            case MODE: return PlayerControllerAnvil.TAG_SURFACE_MODE;
             default: return null;
         }
     }
@@ -320,6 +329,13 @@ public final class Surfaces {
      */
     public static List<int[]> enumerate(int kind, int n, int min, int max, int[] natural,
             int[] aux, int cap, Random rng) {
+        return enumerate(kind, n, min, max, natural, aux, cap, rng, false);
+    }
+
+    /** @param repeat ENTITY_SET / MODE: an option may be picked more than
+     *                once (answers are sorted multisets); ignored otherwise */
+    public static List<int[]> enumerate(int kind, int n, int min, int max, int[] natural,
+            int[] aux, int cap, Random rng, boolean repeat) {
         List<int[]> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         cap = Math.max(1, cap);
@@ -340,78 +356,9 @@ public final class Surfaces {
                 }
                 break;
             case ENTITY_SET:
-            case MODE: {
-                int k = natural == null ? Math.max(min, 0) : natural.length;
-                k = Math.max(min, Math.min(k, max));
-                long total = choose(n, k);
-                if (total > 0 && total <= cap) {
-                    for (int[] c : combinations(n, k)) {
-                        add(out, seen, c, cap);
-                    }
-                } else if (natural != null) {
-                    // single swaps around the natural set, then seeded k-subsets
-                    List<Integer> in = new ArrayList<>();
-                    List<Integer> outside = new ArrayList<>();
-                    Set<Integer> ns = new HashSet<>();
-                    for (int i : natural) {
-                        ns.add(i);
-                        in.add(i);
-                    }
-                    for (int i = 0; i < n; i++) {
-                        if (!ns.contains(i)) {
-                            outside.add(i);
-                        }
-                    }
-                    List<int[]> swaps = new ArrayList<>();
-                    for (int a : in) {
-                        for (int b : outside) {
-                            int[] s = natural.clone();
-                            for (int j = 0; j < s.length; j++) {
-                                if (s[j] == a) {
-                                    s[j] = b;
-                                }
-                            }
-                            Arrays.sort(s);
-                            swaps.add(s);
-                        }
-                    }
-                    shuffle(swaps, rng);
-                    for (int[] s : swaps) {
-                        add(out, seen, s, cap);
-                    }
-                    while (out.size() < cap) {
-                        int[] s = sample(n, k, rng);
-                        Arrays.sort(s);
-                        if (!seen.add(key(s))) {
-                            break;
-                        }
-                        out.add(s);
-                    }
-                }
-                // size-neighbours inside [min, max]: drop one / add one
-                if (natural != null && out.size() < cap) {
-                    if (natural.length > min && natural.length > 0) {
-                        int[] s = Arrays.copyOf(natural, natural.length - 1);
-                        add(out, seen, s, cap);
-                    }
-                    if (natural.length < max && natural.length < n) {
-                        Set<Integer> ns = new HashSet<>();
-                        for (int i : natural) {
-                            ns.add(i);
-                        }
-                        for (int i = 0; i < n && out.size() < cap; i++) {
-                            if (!ns.contains(i)) {
-                                int[] s = Arrays.copyOf(natural, natural.length + 1);
-                                s[natural.length] = i;
-                                Arrays.sort(s);
-                                add(out, seen, s, cap);
-                                break;
-                            }
-                        }
-                    }
-                }
+            case MODE:
+                enumerateSet(n, min, max, natural, cap, rng, repeat, out, seen);
                 break;
-            }
             case ORDER: {
                 long total = factorial(n);
                 if (total > 0 && total <= cap) {
@@ -513,6 +460,113 @@ public final class Surfaces {
         return a;
     }
 
+    /** ENTITY_SET / MODE (evening 2 fix): the natural's size k clamped into
+     *  [min, max]; every k-subset (k-multiset under repeat) when they fit the
+     *  cap, else single swaps around the natural then seeded draws; then the
+     *  natural's size neighbours. Every non-natural answer sits inside
+     *  [min, max] — the label run's mode misses were a size-1 neighbour under
+     *  "choose two" and distinct subsets under "choose three, repeats
+     *  allowed" (2,519 of 12,881 mode answers rejected at apply). */
+    private static void enumerateSet(int n, int min, int max, int[] natural, int cap, Random rng,
+            boolean repeat, List<int[]> out, Set<String> seen) {
+        int k = natural == null ? Math.max(min, 0) : natural.length;
+        k = Math.max(min, Math.min(k, max));
+        if (!repeat) {
+            k = Math.min(k, n);
+        }
+        if (k < min) {
+            return; // unanswerable without repeats (min > n): the natural alone
+        }
+        long total = repeat ? choose(n + k - 1, k) : choose(n, k);
+        if (total > 0 && total <= cap) {
+            for (int[] c : repeat ? multisets(n, k) : combinations(n, k)) {
+                add(out, seen, c, cap);
+            }
+        } else {
+            if (natural != null && natural.length == k) {
+                // single swaps around the natural (one position at a time)
+                List<int[]> swaps = new ArrayList<>();
+                for (int j = 0; j < natural.length; j++) {
+                    for (int b = 0; b < n; b++) {
+                        if (b == natural[j] || (!repeat && contains(natural, b))) {
+                            continue;
+                        }
+                        int[] s = natural.clone();
+                        s[j] = b;
+                        Arrays.sort(s);
+                        swaps.add(s);
+                    }
+                }
+                shuffle(swaps, rng);
+                for (int[] s : swaps) {
+                    add(out, seen, s, cap);
+                }
+            }
+            // seeded draws fill the cap (bounded tries: the space may be smaller than the cap)
+            for (int tries = 0; out.size() < cap && tries < 4 * cap; tries++) {
+                int[] s = repeat ? draw(n, k, rng) : sample(n, k, rng);
+                Arrays.sort(s);
+                add(out, seen, s, cap);
+            }
+        }
+        // size-neighbours of the natural inside [min, max]: drop one / add one
+        if (natural != null && out.size() < cap) {
+            int drop = natural.length - 1;
+            if (natural.length > 0 && drop >= min && drop <= max) {
+                add(out, seen, Arrays.copyOf(natural, drop), cap);
+            }
+            int grow = natural.length + 1;
+            if (grow >= min && grow <= max) {
+                for (int i = 0; i < n && out.size() < cap; i++) {
+                    if (repeat || !contains(natural, i)) {
+                        int[] s = Arrays.copyOf(natural, grow);
+                        s[natural.length] = i;
+                        Arrays.sort(s);
+                        add(out, seen, s, cap);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    static boolean contains(int[] a, int v) {
+        for (int x : a) {
+            if (x == v) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** k independent draws from [0, n) (a multiset sample; the caller sorts). */
+    static int[] draw(int n, int k, Random rng) {
+        int[] a = new int[Math.max(0, k)];
+        for (int i = 0; i < a.length; i++) {
+            a[i] = rng.nextInt(n);
+        }
+        return a;
+    }
+
+    /** Every k-multiset of [0, n) as a nondecreasing index sequence
+     *  (C(n + k - 1, k) of them). */
+    static List<int[]> multisets(int n, int k) {
+        List<int[]> out = new ArrayList<>();
+        multi(out, new int[Math.max(0, k)], 0, 0, n);
+        return out;
+    }
+
+    private static void multi(List<int[]> out, int[] c, int pos, int start, int n) {
+        if (pos == c.length) {
+            out.add(c.clone());
+            return;
+        }
+        for (int i = start; i < n; i++) {
+            c[pos] = i;
+            multi(out, c, pos + 1, i, n);
+        }
+    }
+
     static int[] sample(int n, int k, Random rng) {
         int[] a = identity(n);
         shuffleInts(a, rng);
@@ -606,6 +660,13 @@ public final class Surfaces {
 
     static void trace(Game g, Player p, int kind, String label, int n, int min, int max,
             int[] natural, int[] aux) {
+        trace(g, p, kind, label, n, min, max, natural, aux, false);
+    }
+
+    /** repeat (evening 2): the callback allows an option more than once
+     *  (chooseModeForAbility allowRepeat) — the enumerator emits multisets. */
+    static void trace(Game g, Player p, int kind, String label, int n, int min, int max,
+            int[] natural, int[] aux, boolean repeat) {
         try {
             // Trivial surfaces (one option, or nothing to pick) are not
             // decisions: never traced, so the expansion round never spends
@@ -617,7 +678,7 @@ public final class Surfaces {
             if (sr == null || !sr.applied) {
                 return;
             }
-            sr.noteSurface(kind, label, n, min, max, natural, aux);
+            sr.noteSurface(kind, label, n, min, max, natural, aux, repeat);
         } catch (Exception ignored) {
         }
     }
@@ -905,7 +966,15 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, MODE, possible.size(), num);
             if (d == null) {
-                return null;
+                int[] a = askMode(g, p, possible, min, num, allowRepeat, "chooseModeForAbility");
+                if (a == null) {
+                    return null;
+                }
+                List<AbilitySub> out = new ArrayList<>(a.length);
+                for (int i : a) {
+                    out.add(possible.get(i)); // a repeat is the same sub twice: CharmEffect clones each
+                }
+                return out;
             }
             if (!validIndices(d.answer, possible.size(), min, num, !allowRepeat)) {
                 d.miss("idx");
@@ -923,9 +992,27 @@ public final class Surfaces {
     }
 
     public static void afterMode(Game g, Player p, SpellAbility sa, List<AbilitySub> possible, int min, int num,
-            List<AbilitySub> chosen) {
+            boolean allowRepeat, List<AbilitySub> chosen) {
         trace(g, p, MODE, labelOf(sa), possible == null ? 0 : possible.size(), min, num,
-                indicesOf(asList(possible), chosen), null);
+                indicesOf(asList(possible), chosen), null, allowRepeat);
+    }
+
+    /** MODE over the bridge (mtg.surface.mode): min..num option indices, a
+     *  repeat allowed when the callback allows one; null = the natural line
+     *  (not bridged, a trivial window, an invalid answer). */
+    static int[] askMode(Game g, Player p, List<?> opts, int min, int max, boolean repeat, String m) {
+        AnvilBridge b = bridgeFor(p, MODE);
+        if (b == null || !nontrivial(MODE, opts.size(), max)
+                || (!repeat && min >= opts.size() && max >= opts.size())) {
+            return null;
+        }
+        int[] a = b.selectSet(PlayerControllerAnvil.TAG_SURFACE_MODE, labels(opts), min, max, repeat);
+        boolean ok = a != null && validIndices(a, opts.size(), min, max, !repeat);
+        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
+        if (ok) {
+            trace(g, p, MODE, m, opts.size(), min, max, a, null, repeat); // the served answer = the natural line
+        }
+        return ok ? a : null;
     }
 
     // ---- NAME (chooseCardName over faces; chooseSomeType over validTypes)

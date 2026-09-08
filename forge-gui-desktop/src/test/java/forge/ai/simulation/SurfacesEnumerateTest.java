@@ -145,4 +145,63 @@ public class SurfacesEnumerateTest {
         List<int[]> s = Surfaces.enumerate(Surfaces.ENTITY_SET, 4, 2, 2, null, null, 12, new Random(1));
         AssertJUnit.assertEquals(6, s.size());
     }
+
+    // ---- evening 2 (the label run's mode misses)
+
+    @Test
+    public void modeEmptyNaturalNeverEmitsBelowMin() {
+        // "choose two" (n 3), the heuristic declined: every non-natural answer has size 2
+        List<int[]> r = Surfaces.enumerate(Surfaces.MODE, 3, 2, 2, a(), null, 8, new Random(1), false);
+        AssertJUnit.assertEquals(0, r.get(0).length);
+        for (int i = 1; i < r.size(); i++) {
+            AssertJUnit.assertEquals(2, r.get(i).length);
+        }
+        Set<String> k = keys(r);
+        AssertJUnit.assertTrue(k.contains("[0, 1]") && k.contains("[0, 2]") && k.contains("[1, 2]"));
+        AssertJUnit.assertEquals(4, r.size());
+    }
+
+    @Test
+    public void modeRepeatEnumeratesMultisets() {
+        // "choose three, repeats allowed" with two available modes: the four 3-multisets
+        List<int[]> r = Surfaces.enumerate(Surfaces.MODE, 2, 3, 3, a(), null, 8, new Random(1), true);
+        Set<String> k = keys(r);
+        AssertJUnit.assertTrue(k.contains("[0, 0, 0]") && k.contains("[0, 0, 1]")
+                && k.contains("[0, 1, 1]") && k.contains("[1, 1, 1]"));
+        AssertJUnit.assertEquals(5, r.size()); // the empty natural + 4
+        for (int i = 1; i < r.size(); i++) {
+            AssertJUnit.assertEquals(3, r.get(i).length);
+        }
+    }
+
+    @Test
+    public void modeRepeatOverCapSamplesMultisetsInRange() {
+        // three modes, choose three with repeats = 10 multisets > cap 6: natural first, all size 3, sorted
+        List<int[]> r = Surfaces.enumerate(Surfaces.MODE, 3, 3, 3, a(0, 1, 2), null, 6, new Random(3), true);
+        AssertJUnit.assertEquals("[0, 1, 2]", java.util.Arrays.toString(r.get(0)));
+        AssertJUnit.assertEquals(6, r.size());
+        for (int[] x : r) {
+            AssertJUnit.assertEquals(3, x.length);
+            for (int j = 1; j < x.length; j++) {
+                AssertJUnit.assertTrue(x[j - 1] <= x[j]);
+            }
+        }
+        AssertJUnit.assertEquals(6, keys(r).size());
+    }
+
+    @Test
+    public void modeWithoutRepeatNeverRepeats() {
+        List<int[]> r = Surfaces.enumerate(Surfaces.MODE, 3, 3, 3, a(), null, 8, new Random(1), false);
+        AssertJUnit.assertEquals(2, r.size()); // the empty natural + [0, 1, 2]
+        AssertJUnit.assertEquals("[0, 1, 2]", java.util.Arrays.toString(r.get(1)));
+    }
+
+    @Test
+    public void setNeighboursStayInsideRange() {
+        // choose 1..2 of 4, natural of size 1 over cap: sizes 1 and 2 only
+        List<int[]> r = Surfaces.enumerate(Surfaces.ENTITY_SET, 30, 1, 2, a(7), null, 6, new Random(2), false);
+        for (int[] x : r) {
+            AssertJUnit.assertTrue(x.length >= 1 && x.length <= 2);
+        }
+    }
 }

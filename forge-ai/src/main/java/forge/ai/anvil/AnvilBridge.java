@@ -38,6 +38,13 @@ public interface AnvilBridge {
         return selectK(tag, optionLabels.size(), Math.max(0, Math.min(min, optionLabels.size())));
     }
 
+    /** SELECT_K, an option allowed more than once when repeat (mode
+     *  allowRepeat; Constraints.repeat on the wire); the local echo picks
+     *  the first min, cycling under repeat. */
+    default int[] selectSet(String tag, List<String> optionLabels, int min, int max, boolean repeat) {
+        return selectSet(tag, optionLabels, min, max);
+    }
+
     /** BOOL. */
     boolean bool(String tag);
 

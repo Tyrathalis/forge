@@ -59,8 +59,11 @@ public final class SearchDirective {
         public final int max;
         public final int[] natural;
         public final int[] aux;
+        /** The callback allows an option more than once (mode allowRepeat). */
+        public final boolean repeat;
 
-        Surface(int kind, int ordinal, String label, int n, int min, int max, int[] natural, int[] aux) {
+        Surface(int kind, int ordinal, String label, int n, int min, int max, int[] natural, int[] aux,
+                boolean repeat) {
             this.kind = kind;
             this.ordinal = ordinal;
             this.label = label;
@@ -69,6 +72,7 @@ public final class SearchDirective {
             this.max = max;
             this.natural = natural;
             this.aux = aux;
+            this.repeat = repeat;
         }
     }
 
@@ -77,10 +81,11 @@ public final class SearchDirective {
     public final List<Surface> surfaces = Collections.synchronizedList(new java.util.ArrayList<>());
     private final int[] seenOfKind = new int[Surfaces.KIND_NAMES.length];
 
-    void noteSurface(int kind, String label, int n, int min, int max, int[] natural, int[] aux) {
+    void noteSurface(int kind, String label, int n, int min, int max, int[] natural, int[] aux,
+            boolean repeat) {
         int ord = seenOfKind[kind]++;
         if (surfaces.size() < 64) {
-            surfaces.add(new Surface(kind, ord, label, n, min, max, natural, aux));
+            surfaces.add(new Surface(kind, ord, label, n, min, max, natural, aux, repeat));
         }
     }
 

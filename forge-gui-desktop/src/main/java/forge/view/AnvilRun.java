@@ -107,7 +107,8 @@ public final class AnvilRun {
             PlayerControllerAnvil.TAG_PRIORITY, PlayerControllerAnvil.TAG_MULLIGAN,
             PlayerControllerAnvil.TAG_TUCK, PlayerControllerAnvil.TAG_TRIGGER,
             PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER,
-            PlayerControllerAnvil.TAG_SURFACE_ONE, PlayerControllerAnvil.TAG_SURFACE_SET));
+            PlayerControllerAnvil.TAG_SURFACE_ONE, PlayerControllerAnvil.TAG_SURFACE_SET,
+            PlayerControllerAnvil.TAG_SURFACE_MODE));
 
     private AnvilRun() {
     }
@@ -1289,6 +1290,8 @@ public final class AnvilRun {
             List<SearchDirective.Surface> surfaces = Collections.emptyList();
             /** SurfaceDirective outcome: null = fired clean / unarmed; else unfired | idx | sum | neg. */
             String surfMiss = null;
+            /** The fired surface window's dec record (SurfaceDirective.frame); null = unarmed / unfired. */
+            String surfFrame = null;
         }
 
         /** One candidate copy: the forced option (label; null = pass) at the
@@ -1363,6 +1366,7 @@ public final class AnvilRun {
                 res.surfaces = new ArrayList<>(dir.surfaces);
                 if (sdir != null) {
                     res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
+                    res.surfFrame = sdir.frame;
                 }
             } catch (RuntimeException e) {
                 throw e; // a poisoned bridge ends the game (protocol law)
@@ -1490,7 +1494,8 @@ public final class AnvilRun {
                     Random erng = new Random(splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
                             ^ (mySw * 0xBF58476D1CE4E5B9L) ^ ((sf.kind + 1) * 0xD1B54A32D192ED03L)));
                     List<int[]> answers = Surfaces.enumerate(sf.kind, sf.n, sf.min, sf.max, sf.natural, sf.aux,
-                            surfCap, erng);
+                            surfCap, erng, sf.repeat);
+                    String frame = null; // the surface window's dec record, from the first answer copy that fired
                     if (si > 0) {
                         sb.append(',');
                     }
@@ -1501,6 +1506,7 @@ public final class AnvilRun {
                             .append(",\"n\":").append(sf.n)
                             .append(",\"min\":").append(sf.min)
                             .append(",\"max\":").append(sf.max)
+                            .append(",\"rep\":").append(sf.repeat)
                             .append(",\"nat\":");
                     appendInts(sb, sf.natural);
                     sb.append(",\"ans\":[");
@@ -1537,6 +1543,9 @@ public final class AnvilRun {
                             CopyResult cr = runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState,
                                     sf.kind, sf.ordinal, a);
                             copyMsTotal += cr.copyMs;
+                            if (frame == null && cr.surfFrame != null) {
+                                frame = cr.surfFrame;
+                            }
                             sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
                             kinds.append('"').append(cr.kind).append('"');
                             calls.append(cr.asks);
@@ -1545,7 +1554,13 @@ public final class AnvilRun {
                         sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
                                 .append("],\"miss\":[").append(miss).append("]}");
                     }
-                    sb.append("]}");
+                    sb.append(']');
+                    if (frame != null) {
+                        // evening 2: the state the answers were chosen in (a dec
+                        // record: opts + obs + hist), the distillation loader's frame
+                        sb.append(",\"frame\":").append(frame);
+                    }
+                    sb.append('}');
                 }
                 sb.append(']');
             }
