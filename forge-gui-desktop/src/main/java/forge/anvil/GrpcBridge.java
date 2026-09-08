@@ -248,6 +248,24 @@ public final class GrpcBridge implements AnvilBridge {
     }
 
     @Override
+    public int[] order(String tag, List<String> optionLabels) {
+        // ORDER_N: the echo is the identity order; a server fallback returns
+        // the echo object itself (roundTrip) and reads as "not answered" so
+        // the caller runs the natural line instead of an identity ordering.
+        IndexList.Builder local = IndexList.newBuilder();
+        for (int i = 0; i < optionLabels.size(); i++) {
+            local.addIndices(i);
+        }
+        DecisionResponse echo = DecisionResponse.newBuilder().setOrdering(local).build();
+        DecisionResponse resp = roundTrip(tag, AnswerShape.ORDER_N, optionLabels,
+                Constraints.newBuilder().setMin(1).setMax(optionLabels.size()).build(), echo);
+        if (resp == echo || !resp.hasOrdering()) {
+            return null;
+        }
+        return resp.getOrdering().getIndicesList().stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    @Override
     public boolean bool(String tag) {
         boolean local = MyRandom.getRandom().nextBoolean();
         DecisionResponse resp = roundTrip(tag, AnswerShape.BOOL, null, null,

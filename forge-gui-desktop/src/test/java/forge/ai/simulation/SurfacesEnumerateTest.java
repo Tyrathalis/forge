@@ -117,13 +117,17 @@ public class SurfacesEnumerateTest {
     }
 
     @Test
-    public void damageLethalInOrderThenRemainder() {
-        // 6 damage, two blockers needing 2 and 3, trample allowed
+    public void damageKillOrdersUnderTheModernRule() {
+        // 6 damage, two blockers needing 2 and 3, trample: the family is every
+        // kill order (evening 3; no damage assignment order in force), the
+        // remainder trampling over by rule
         List<int[]> r = Surfaces.enumerate(Surfaces.DAMAGE, 2, 6, 6, a(2, 3, 1), a(2, 3, 1), 12, new Random(1));
         AssertJUnit.assertEquals("[2, 3, 1]", java.util.Arrays.toString(r.get(0)));
         Set<String> k = keys(r);
-        AssertJUnit.assertTrue(k.contains("[6, 0, 0]")); // everything on the first
-        AssertJUnit.assertTrue(k.contains("[2, 4, 0]")); // lethal to the first, the rest on the second
+        AssertJUnit.assertTrue(k.contains("[3, 2, 1]")); // the second killed first
+        AssertJUnit.assertTrue(k.contains("[2, 0, 4]")); // lethal to the first, the rest tramples over
+        AssertJUnit.assertTrue(k.contains("[0, 3, 3]")); // lethal to the second, the rest tramples over
+        AssertJUnit.assertTrue(k.contains("[0, 0, 6]")); // all of it tramples over
         for (int[] x : r) {
             int sum = 0;
             for (int v : x) {
@@ -132,10 +136,37 @@ public class SurfacesEnumerateTest {
             }
             AssertJUnit.assertEquals(6, sum);
         }
-        // no trample: the defender slot stays 0 and the natural (which tramples) is only the seed
-        for (int[] x : Surfaces.enumerate(Surfaces.DAMAGE, 2, 6, 6, a(2, 4, 0), a(2, 3, 0), 12, new Random(1))) {
+        // no trample: the remainder lands on the last blocker killed; the
+        // defender slot stays 0 (the natural, which tramples, is only the seed)
+        List<int[]> r2 = Surfaces.enumerate(Surfaces.DAMAGE, 2, 6, 6, a(2, 4, 0), a(2, 3, 0), 12, new Random(1));
+        Set<String> k2 = keys(r2);
+        AssertJUnit.assertTrue(k2.contains("[6, 0, 0]")); // everything on the first
+        AssertJUnit.assertTrue(k2.contains("[0, 6, 0]")); // everything on the second
+        AssertJUnit.assertTrue(k2.contains("[3, 3, 0]")); // lethal to the second, the rest on the first
+        for (int[] x : r2) {
             AssertJUnit.assertEquals(0, x[2]);
         }
+    }
+
+    @Test
+    public void damageFromSequenceRealizesKillOrders() {
+        int[] aux = a(2, 3, 1); // lethal 2 / 3, trample
+        AssertJUnit.assertEquals("[2, 3, 1]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0, 1), 2, 6, aux)));
+        AssertJUnit.assertEquals("[3, 2, 1]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(1, 0), 2, 6, aux)));
+        AssertJUnit.assertEquals("[2, 0, 4]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0), 2, 6, aux)));
+        AssertJUnit.assertEquals("[2, 0, 4]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0, 2), 2, 6, aux)));
+        AssertJUnit.assertEquals("[0, 0, 6]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(2), 2, 6, aux)));
+        // damage runs out inside the sequence: lethal to the first, the rest (1) on the second
+        AssertJUnit.assertEquals("[2, 1, 0]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0, 1), 2, 3, aux)));
+        int[] noTrample = a(2, 3, 0);
+        AssertJUnit.assertEquals("[6, 0, 0]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0), 2, 6, noTrample)));
+        AssertJUnit.assertEquals("[3, 3, 0]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(1, 0), 2, 6, noTrample)));
+        // invalid: empty, a repeat, out of range, the defender not last, the defender without trample
+        AssertJUnit.assertNull(Surfaces.damageFromSequence(a(), 2, 6, aux));
+        AssertJUnit.assertNull(Surfaces.damageFromSequence(a(0, 0), 2, 6, aux));
+        AssertJUnit.assertNull(Surfaces.damageFromSequence(a(3), 2, 6, aux));
+        AssertJUnit.assertNull(Surfaces.damageFromSequence(a(2, 0), 2, 6, aux));
+        AssertJUnit.assertNull(Surfaces.damageFromSequence(a(2), 2, 6, noTrample));
     }
 
     @Test

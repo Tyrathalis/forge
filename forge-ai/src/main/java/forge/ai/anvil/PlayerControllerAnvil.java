@@ -48,6 +48,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     public static final String TAG_SURFACE_ONE = "mtg.surface.entity_one";
     public static final String TAG_SURFACE_SET = "mtg.surface.entity_set";
     public static final String TAG_SURFACE_MODE = "mtg.surface.mode";
+    public static final String TAG_SURFACE_ORDER = "mtg.surface.order";   // evening 3
+    public static final String TAG_SURFACE_DAMAGE = "mtg.surface.damage"; // evening 3
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;

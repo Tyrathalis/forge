@@ -67,7 +67,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     public List<SpellAbility> orderSimultaneousSa(List<SpellAbility> activePlayerSAs) {
         Census.rec(getGame(), getPlayer(), "orderSimultaneousSa", "activePlayerSAs", Census.sz(activePlayerSAs));
         long __s = Surfaces.dec(getGame(), getPlayer(), "orderSimultaneousSa", Surfaces.ORDER, activePlayerSAs, "activePlayerSAs", Census.sz(activePlayerSAs));
-        List<SpellAbility> __f = Surfaces.forceOrderSa(getGame(), getPlayer(), activePlayerSAs);
+        List<SpellAbility> __f = Surfaces.forceOrderSa(getGame(), getPlayer(), activePlayerSAs, "orderSimultaneousSa");
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
             return __f;
@@ -124,7 +124,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public Map<Card, Integer> assignCombatDamage(Card attacker, CardCollectionView blockers, CardCollectionView remaining, int damageDealt, GameEntity defender, boolean overrideOrder) {
         Census.rec(getGame(), getPlayer(), "assignCombatDamage", "attacker", Census.str(attacker), "blockers", Census.sz(blockers), "remaining", Census.sz(remaining), "damageDealt", damageDealt, "defender", Census.str(defender), "overrideOrder", overrideOrder);
-        long __s = Surfaces.dec(getGame(), getPlayer(), "assignCombatDamage", Surfaces.DAMAGE, blockers, "attacker", Census.str(attacker), "blockers", Census.sz(blockers), "remaining", Census.sz(remaining), "damageDealt", damageDealt, "defender", Census.str(defender), "overrideOrder", overrideOrder);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "assignCombatDamage", Surfaces.DAMAGE, Surfaces.damageOpts(attacker, blockers, defender), "attacker", Census.str(attacker), "blockers", Census.sz(blockers), "remaining", Census.sz(remaining), "damageDealt", damageDealt, "defender", Census.str(defender), "overrideOrder", overrideOrder, "lethal", Surfaces.lethalList(getPlayer(), attacker, blockers, damageDealt, defender, overrideOrder), "trample", Surfaces.tramples(attacker, defender));
         Map<Card, Integer> __f = Surfaces.forceDamage(getGame(), getPlayer(), attacker, blockers, damageDealt, defender, overrideOrder);
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
@@ -408,7 +408,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     public CardCollection orderBlockers(Card attacker, CardCollection blockers) {
         Census.rec(getGame(), getPlayer(), "orderBlockers", "attacker", Census.str(attacker), "blockers", Census.sz(blockers));
         long __s = Surfaces.dec(getGame(), getPlayer(), "orderBlockers", Surfaces.ORDER, blockers, "attacker", Census.str(attacker), "blockers", Census.sz(blockers));
-        CardCollection __f = Surfaces.forceOrderCards(getGame(), getPlayer(), blockers);
+        CardCollection __f = Surfaces.forceOrderCards(getGame(), getPlayer(), blockers, "orderBlockers");
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
             return __f;
@@ -432,7 +432,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     public CardCollection orderAttackers(Card blocker, CardCollection attackers) {
         Census.rec(getGame(), getPlayer(), "orderAttackers", "blocker", Census.str(blocker), "attackers", Census.sz(attackers));
         long __s = Surfaces.dec(getGame(), getPlayer(), "orderAttackers", Surfaces.ORDER, attackers, "blocker", Census.str(blocker), "attackers", Census.sz(attackers));
-        CardCollection __f = Surfaces.forceOrderCards(getGame(), getPlayer(), attackers);
+        CardCollection __f = Surfaces.forceOrderCards(getGame(), getPlayer(), attackers, "orderAttackers");
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
             return __f;
@@ -507,7 +507,7 @@ public class CensusPlayerController extends PlayerControllerAi {
     public CardCollectionView orderMoveToZoneList(CardCollectionView cards, ZoneType destinationZone, SpellAbility source) {
         Census.rec(getGame(), getPlayer(), "orderMoveToZoneList", "cards", Census.sz(cards), "source", Census.str(source));
         long __s = Surfaces.dec(getGame(), getPlayer(), "orderMoveToZoneList", Surfaces.ORDER, cards, "cards", Census.sz(cards), "source", Census.str(source));
-        CardCollectionView __f = Surfaces.forceOrderCards(getGame(), getPlayer(), cards);
+        CardCollectionView __f = Surfaces.forceOrderCards(getGame(), getPlayer(), cards, "orderMoveToZoneList");
         if (__f != null) {
             Obs.ret(getGame(), __s, __f);
             return __f;

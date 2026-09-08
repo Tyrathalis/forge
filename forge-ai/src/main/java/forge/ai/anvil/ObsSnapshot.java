@@ -312,6 +312,15 @@ final class ObsSnapshot {
      * we walk, except hand = controller-only). Best-effort v1: revealed hands
      * and face-down knowledge via mayPlayerLook.
      */
+    /** mayPlayerLook with a null-safe player: on a search copy an option card
+     *  outside the walked zones can carry no controller (the copy-state NPE
+     *  "Player.getView() because player is null", ~0.8 per game on served
+     *  surfaces — the snapshot threw, the dec's obs went null, the heuristic
+     *  answered the copy). Null player = nobody looks. */
+    private static boolean look(Card c, Player p) {
+        return p != null && c.mayPlayerLook(p);
+    }
+
     private static String visDeviation(Card c, ZoneType z, List<Player> players) {
         if (z == ZoneType.Library || z == ZoneType.Sideboard || z == ZoneType.Flashback) {
             // Library rows only exist when someone may look (or as label-host
@@ -326,7 +335,7 @@ final class ObsSnapshot {
             if (all) {
                 return "all";
             }
-            return c.mayPlayerLook(c.getController()) ? "c" : "none";
+            return look(c, c.getController()) ? "c" : "none";
         }
         if (z == ZoneType.Hand) {
             for (Player p : players) {
@@ -337,7 +346,7 @@ final class ObsSnapshot {
             return players.size() > 1 ? "all" : null; // revealed to everyone
         }
         if (c.isFaceDown()) {
-            return c.mayPlayerLook(c.getController()) ? "c" : "none";
+            return look(c, c.getController()) ? "c" : "none";
         }
         return null;
     }

@@ -45,6 +45,14 @@ public interface AnvilBridge {
         return selectSet(tag, optionLabels, min, max);
     }
 
+    /** ORDER_N (ADR-0105 evening 3): a permutation of the labelled options
+     *  (mtg.surface.order), or — under mtg.surface.damage — a kill-order
+     *  prefix over blockers (+ the defender last); null = not answered (the
+     *  natural line). The local bridges never answer it. */
+    default int[] order(String tag, List<String> optionLabels) {
+        return null;
+    }
+
     /** BOOL. */
     boolean bool(String tag);
 

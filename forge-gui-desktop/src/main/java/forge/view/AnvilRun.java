@@ -108,7 +108,8 @@ public final class AnvilRun {
             PlayerControllerAnvil.TAG_TUCK, PlayerControllerAnvil.TAG_TRIGGER,
             PlayerControllerAnvil.TAG_BINARY, PlayerControllerAnvil.TAG_NUMBER,
             PlayerControllerAnvil.TAG_SURFACE_ONE, PlayerControllerAnvil.TAG_SURFACE_SET,
-            PlayerControllerAnvil.TAG_SURFACE_MODE));
+            PlayerControllerAnvil.TAG_SURFACE_MODE, PlayerControllerAnvil.TAG_SURFACE_ORDER,
+            PlayerControllerAnvil.TAG_SURFACE_DAMAGE));
 
     private AnvilRun() {
     }

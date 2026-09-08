@@ -175,6 +175,8 @@ public final class Surfaces {
             case ENTITY_ONE: return PlayerControllerAnvil.TAG_SURFACE_ONE;
             case ENTITY_SET: return PlayerControllerAnvil.TAG_SURFACE_SET;
             case MODE: return PlayerControllerAnvil.TAG_SURFACE_MODE;
+            case ORDER: return PlayerControllerAnvil.TAG_SURFACE_ORDER;
+            case DAMAGE: return PlayerControllerAnvil.TAG_SURFACE_DAMAGE;
             default: return null;
         }
     }
@@ -420,29 +422,50 @@ public final class Surfaces {
             }
             case DAMAGE: {
                 // aux = lethal per blocker (n) + [trample flag]; answer = damage per
-                // blocker + the defender's share as the last slot. Legal shapes
-                // under the ordered rule: lethal in order, remainder on one
-                // blocker k (or the defender with trample).
+                // blocker + the defender's share as the last slot. Under the rule
+                // in force (no damage assignment order: GameRules.orderCombatants
+                // off) any split is legal; the family enumerated is the kill
+                // orders (damageFromSequence): every prefix of every blocker
+                // permutation, each closed by the defender under trample — the
+                // natural first, permutations in a seeded order over the cap.
                 if (aux == null || aux.length != n + 1 || max <= 0) {
                     break;
                 }
                 boolean trample = aux[n] != 0;
-                for (int k = 0; k <= n && out.size() < cap; k++) {
-                    if (k == n && !trample) {
+                List<int[]> perms;
+                if (factorial(n) <= 24) {
+                    perms = permutations(n);
+                    shuffle(perms, rng);
+                } else {
+                    perms = new ArrayList<>();
+                    for (int t = 0; t < cap; t++) {
+                        int[] s = identity(n);
+                        shuffleInts(s, rng);
+                        perms.add(s);
+                    }
+                }
+                for (int[] perm : perms) {
+                    if (out.size() >= cap) {
                         break;
                     }
-                    int[] a = new int[n + 1];
-                    int left = max;
-                    for (int i = 0; i < n && left > 0; i++) {
-                        int d = Math.min(left, Math.max(0, aux[i]));
-                        if (i == k) {
-                            break; // the rest lands here
+                    for (int len = 1; len <= n && out.size() < cap; len++) {
+                        int[] seq = Arrays.copyOf(perm, len);
+                        int[] a = damageFromSequence(seq, n, max, aux);
+                        if (a != null) {
+                            add(out, seen, a, cap);
                         }
-                        a[i] = d;
-                        left -= d;
+                        if (trample && out.size() < cap) {
+                            int[] seq2 = Arrays.copyOf(perm, len + 1);
+                            seq2[len] = n;
+                            int[] a2 = damageFromSequence(seq2, n, max, aux);
+                            if (a2 != null) {
+                                add(out, seen, a2, cap);
+                            }
+                        }
                     }
-                    a[k] += left;
-                    add(out, seen, a, cap);
+                }
+                if (trample && out.size() < cap) {
+                    add(out, seen, damageFromSequence(new int[] {n}, n, max, aux), cap);
                 }
                 break;
             }
@@ -871,11 +894,19 @@ public final class Surfaces {
 
     // ---- ORDER
 
-    public static List<SpellAbility> forceOrderSa(Game g, Player p, List<SpellAbility> sas) {
+    public static List<SpellAbility> forceOrderSa(Game g, Player p, List<SpellAbility> sas, String m) {
         try {
             SurfaceDirective d = SurfaceDirective.match(g, p, ORDER, sas.size(), sas.size());
             if (d == null) {
-                return null;
+                int[] a = askOrder(g, p, sas, m);
+                if (a == null) {
+                    return null;
+                }
+                List<SpellAbility> out = new ArrayList<>(sas.size());
+                for (int i : a) {
+                    out.add(sas.get(i));
+                }
+                return out;
             }
             if (!validIndices(d.answer, sas.size(), sas.size(), sas.size(), true)) {
                 d.miss("idx");
@@ -892,12 +923,20 @@ public final class Surfaces {
         }
     }
 
-    public static CardCollection forceOrderCards(Game g, Player p, Iterable<Card> cards) {
+    public static CardCollection forceOrderCards(Game g, Player p, Iterable<Card> cards, String m) {
         try {
             List<Card> opts = asList(cards);
             SurfaceDirective d = SurfaceDirective.match(g, p, ORDER, opts.size(), opts.size());
             if (d == null) {
-                return null;
+                int[] a = askOrder(g, p, opts, m);
+                if (a == null) {
+                    return null;
+                }
+                CardCollection out = new CardCollection();
+                for (int i : a) {
+                    out.add(opts.get(i));
+                }
+                return out;
             }
             if (!validIndices(d.answer, opts.size(), opts.size(), opts.size(), true)) {
                 d.miss("idx");
@@ -917,6 +956,28 @@ public final class Surfaces {
     public static void afterOrder(Game g, Player p, Iterable<?> input, SpellAbility sa, Iterable<?> ordered) {
         List<?> opts = asList(input);
         trace(g, p, ORDER, labelOf(sa), opts.size(), opts.size(), opts.size(), indicesOf(opts, ordered), null);
+    }
+
+    /** Ordering windows longer than this are never asked over the bridge (the
+     *  option-set decoder's answer slots, anvil.policy.surfaces.SURF_MAX). */
+    public static final int ORDER_MAX = 12;
+
+    /** ORDER over the bridge (mtg.surface.order, evening 3): a permutation of
+     *  the option indices; null = the natural line (not bridged, a trivial
+     *  window, a window past ORDER_MAX, a declined or invalid answer). */
+    static int[] askOrder(Game g, Player p, List<?> opts, String m) {
+        AnvilBridge b = bridgeFor(p, ORDER);
+        int n = opts.size();
+        if (b == null || !nontrivial(ORDER, n, n) || n > ORDER_MAX) {
+            return null;
+        }
+        int[] a = b.order(PlayerControllerAnvil.TAG_SURFACE_ORDER, labels(opts));
+        boolean ok = a != null && validIndices(a, n, n, n, true);
+        Census.rec(g, p, m, "by", "bridge", "n", n, "ok", ok);
+        if (ok) {
+            trace(g, p, ORDER, m, n, n, n, a, null); // the served answer = the natural line
+        }
+        return ok ? a : null;
     }
 
     // ---- SCRY (arrangeForScry / arrangeForSurveil): pair = (top, bottom|graveyard)
@@ -1126,7 +1187,9 @@ public final class Surfaces {
             int n = blockers.size();
             SurfaceDirective d = SurfaceDirective.match(g, p, DAMAGE, n, damageDealt);
             if (d == null) {
-                return null;
+                int[] a = askDamage(g, p, attacker, blockers, damageDealt, defender, overrideOrder,
+                        "assignCombatDamage");
+                return a == null ? null : damageMap(a, blockers, defender);
             }
             if (d.answer == null || d.answer.length != n + 1) {
                 d.miss("idx");
@@ -1145,21 +1208,142 @@ public final class Surfaces {
                 return null;
             }
             d.fired(n);
-            Map<Card, Integer> out = new LinkedHashMap<>();
-            for (int i = 0; i < n; i++) {
-                if (d.answer[i] > 0) {
-                    out.put(blockers.get(i), d.answer[i]);
-                }
-            }
-            if (d.answer[n] > 0 && defender instanceof Card) {
-                out.put((Card) defender, d.answer[n]);
-            } else if (d.answer[n] > 0) {
-                out.put(null, d.answer[n]); // the defending player (distributeAIDamage's convention)
-            }
-            return out;
+            return damageMap(d.answer, blockers, defender);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Amounts (per blocker + the defender's share) -> assignCombatDamage's map
+     *  (a null key = the defending player, distributeAIDamage's convention). */
+    static Map<Card, Integer> damageMap(int[] amounts, CardCollectionView blockers, GameEntity defender) {
+        int n = blockers.size();
+        Map<Card, Integer> out = new LinkedHashMap<>();
+        for (int i = 0; i < n; i++) {
+            if (amounts[i] > 0) {
+                out.put(blockers.get(i), amounts[i]);
+            }
+        }
+        if (amounts[n] > 0 && defender instanceof Card) {
+            out.put((Card) defender, amounts[n]);
+        } else if (amounts[n] > 0) {
+            out.put(null, amounts[n]);
+        }
+        return out;
+    }
+
+    static boolean tramples(Card attacker, GameEntity defender) {
+        try {
+            return defender != null && attacker != null
+                    && attacker.hasKeyword(forge.game.keyword.Keyword.TRAMPLE);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** The damage window's option list for the dec record (evening 3): the
+     *  blockers, then the defender when the attacker tramples (the answer may
+     *  end on it: "the rest tramples over"). */
+    public static List<Object> damageOpts(Card attacker, CardCollectionView blockers, GameEntity defender) {
+        List<Object> out = new ArrayList<>();
+        if (blockers != null) {
+            for (Card c : blockers) {
+                out.add(c);
+            }
+        }
+        if (tramples(attacker, defender)) {
+            out.add(defender);
+        }
+        return out;
+    }
+
+    /** Lethal damage per blocker (the dec record's "lethal": the loader's
+     *  kill-order canonicalization of the heuristic's amounts). */
+    public static List<Integer> lethalList(Player p, Card attacker, CardCollectionView blockers, int damage,
+            GameEntity defender, boolean overrideOrder) {
+        List<Integer> out = new ArrayList<>();
+        if (blockers == null || blockers.isEmpty()) {
+            return out;
+        }
+        int[] aux = lethalAux(p, attacker, blockers, damage, defender, overrideOrder);
+        for (int i = 0; i < blockers.size(); i++) {
+            out.add(aux[i]);
+        }
+        return out;
+    }
+
+    /** A kill-order sequence over blockers (0..n-1) and, last at most, the
+     *  defender (n) -> amounts (length n + 1): lethal to each blocker in
+     *  sequence while damage lasts; the remainder tramples over when the
+     *  attacker tramples (distributeAIDamage's own rule) and lands on the
+     *  last blocker picked otherwise; a defender pick closes the sequence
+     *  early ("stop killing here, the rest tramples"). Null = an invalid
+     *  sequence (empty, out of range, a repeat, the defender not last, the
+     *  defender without trample). */
+    public static int[] damageFromSequence(int[] seq, int n, int total, int[] aux) {
+        if (seq == null || seq.length == 0 || seq.length > n + 1 || aux == null || aux.length != n + 1) {
+            return null;
+        }
+        boolean trample = aux[n] != 0;
+        Set<Integer> seen = new HashSet<>();
+        for (int k = 0; k < seq.length; k++) {
+            int i = seq[k];
+            if (i < 0 || i > n || !seen.add(i)) {
+                return null;
+            }
+            if (i == n && (!trample || k != seq.length - 1)) {
+                return null;
+            }
+        }
+        int[] a = new int[n + 1];
+        int left = total;
+        int last = -1;
+        for (int i : seq) {
+            if (left <= 0) {
+                break;
+            }
+            if (i == n) {
+                a[n] += left;
+                left = 0;
+                break;
+            }
+            int d = Math.min(left, Math.max(0, aux[i]));
+            a[i] += d;
+            left -= d;
+            last = i;
+        }
+        if (left > 0) {
+            if (trample) {
+                a[n] += left;
+            } else {
+                a[last < 0 ? seq[0] : last] += left;
+            }
+        }
+        return a;
+    }
+
+    /** DAMAGE over the bridge (mtg.surface.damage, evening 3): the model's
+     *  kill order over blockers (+ the defender under trample) realized as
+     *  amounts by the engine's own lethal arithmetic (damageFromSequence);
+     *  null = the natural line. Only multi-blocker windows are decisions
+     *  (nontrivial: n >= 2), as for the trace. */
+    static int[] askDamage(Game g, Player p, Card attacker, CardCollectionView blockers, int damageDealt,
+            GameEntity defender, boolean overrideOrder, String m) {
+        AnvilBridge b = bridgeFor(p, DAMAGE);
+        int n = blockers == null ? 0 : blockers.size();
+        if (b == null || !nontrivial(DAMAGE, n, damageDealt) || n > ORDER_MAX) {
+            return null;
+        }
+        List<Object> opts = damageOpts(attacker, blockers, defender);
+        int[] seq = b.order(PlayerControllerAnvil.TAG_SURFACE_DAMAGE, labels(opts));
+        int[] aux = lethalAux(p, attacker, blockers, damageDealt, defender, overrideOrder);
+        int[] a = damageFromSequence(seq, n, damageDealt, aux);
+        boolean ok = a != null;
+        Census.rec(g, p, m, "by", "bridge", "n", n, "k", seq == null ? -1 : seq.length, "ok", ok);
+        if (ok) {
+            trace(g, p, DAMAGE, attacker == null ? "" : attacker.getName(), n, damageDealt, damageDealt, a, aux);
+        }
+        return a;
     }
 
     public static void afterDamage(Game g, Player p, Card attacker, CardCollectionView blockers, int damageDealt,
