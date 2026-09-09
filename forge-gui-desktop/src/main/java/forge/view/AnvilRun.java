@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>]]");
+                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next] [-searchpaybridge]]]");
             return;
         }
 
@@ -273,6 +273,24 @@ public final class AnvilRun {
                 ? Integer.parseInt(params.get("searchsurf").get(0)) : 0;
         final int searchSurfCap = params.containsKey("searchsurfcap")
                 ? Integer.parseInt(params.get("searchsurfcap").get(0)) : Surfaces.DEFAULT_CAP;
+        // M12 Build 3 evening 4 (ADR-0105): -searchpay B expands the first
+        // traced PAYMENT window on the top-B candidates' paths — its own slot
+        // beside the surface slot (a payment fires at cast, before any other
+        // surface, and would otherwise crowd them out) — one copy per goal
+        // option (auto = answer 0), under the END-OF-TURN leaf by default
+        // (-searchpayleaf eot: a payment's consequence is what stayed untapped
+        // for the rest of the turn and the opponent's; next = fork A's leaf,
+        // the calibration comparison). -searchpaybridge lets copies bridge the
+        // pay tag as their natural line (default off: the copy-side gate).
+        final int searchPay = params.containsKey("searchpay")
+                ? Integer.parseInt(params.get("searchpay").get(0)) : 0;
+        final String searchPayLeaf = params.containsKey("searchpayleaf")
+                ? params.get("searchpayleaf").get(0) : "eot";
+        if (!"eot".equals(searchPayLeaf) && !"next".equals(searchPayLeaf)) {
+            throw new IllegalArgumentException("-searchpayleaf eot|next");
+        }
+        final boolean searchPayBridge = params.containsKey("searchpaybridge");
+        PlayerControllerAnvil.copyPayBridge = searchPayBridge;
         // M12 Build 2 (m12-plan canonical shape §2): the ACTING rule. -searchact
         // <bar> turns the instrument into the behavior policy: at a searched
         // window with margin = max V − V(natural) ≥ bar the controller samples
@@ -297,11 +315,12 @@ public final class AnvilRun {
             // The behavior policy's pins on every game header (provenance).
             Obs.searchPins = String.format(java.util.Locale.ROOT,
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
-                    + "\"bar\":%s,\"temp\":%s,\"seats\":%s}",
+                    + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
-                    searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"");
+                    searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"",
+                    searchPay, searchPayLeaf, searchPayBridge);
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -746,7 +765,8 @@ public final class AnvilRun {
                 if (search) {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
-                            searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats));
+                            searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
+                            searchPay, "eot".equals(searchPayLeaf)));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1207,6 +1227,9 @@ public final class AnvilRun {
         final double actBar;
         final double actTemp;
         final Set<Integer> seats;
+        /** Evening 4: the payment expansion slot (top-B paths) and its leaf. */
+        final int payTop;
+        final boolean payLeafEot;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1214,7 +1237,9 @@ public final class AnvilRun {
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
                 int optCap, boolean includeMana, int surfTop, int surfCap,
-                double actBar, double actTemp, Set<Integer> seats) {
+                double actBar, double actTemp, Set<Integer> seats, int payTop, boolean payLeafEot) {
+            this.payTop = Math.max(0, payTop);
+            this.payLeafEot = payLeafEot;
             this.surfTop = Math.max(0, surfTop);
             this.surfCap = Math.max(1, surfCap);
             this.actBar = actBar;
@@ -1302,6 +1327,12 @@ public final class AnvilRun {
          *  poisoned bridge (protocol law). */
         private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
                 byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer) {
+            return runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, surfKind, surfOrd, surfAnswer, -1);
+        }
+
+        /** @param leafAfterTurn ≥ 0: the end-of-turn leaf (SearchDirective.leafAfterTurn) */
+        private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
+                byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn) {
             CopyResult res = new CopyResult();
             long c0 = System.nanoTime();
             Game copy;
@@ -1320,6 +1351,7 @@ public final class AnvilRun {
             Obs.startWireGame(copy, wid, rollSeed, fmt, game);
             bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
             SearchDirective dir = SearchDirective.arm(copy, seatName, label);
+            dir.leafAfterTurn = leafAfterTurn;
             SurfaceDirective sdir = surfAnswer == null ? null
                     : SurfaceDirective.arm(copy, seatName, surfKind, surfOrd, surfAnswer);
             long asks0 = bridge.asksSoFar();
@@ -1401,6 +1433,119 @@ public final class AnvilRun {
             sb.append(']');
         }
 
+        /** The first traced surface of the class (pay / not pay) on a path, or null. */
+        private static SearchDirective.Surface firstOfClass(List<SearchDirective.Surface> l, boolean pay) {
+            for (SearchDirective.Surface sf : l) {
+                if ((sf.kind == Surfaces.PAY) == pay) {
+                    return sf;
+                }
+            }
+            return null;
+        }
+
+        /** One expansion slot: the top-`top` valued candidates whose path traced
+         *  a surface of the class, each expanded over its enumerated answers
+         *  (one copy per answer per roll). Appends `sub` entries (a comma
+         *  before each when `already` + the entries so far > 0); returns the
+         *  number appended. The payment slot runs under the end-of-turn leaf
+         *  when payLeafEot, where the natural answer is re-run too. */
+        private int expandRound(StringBuilder sb, boolean pay, int top, int already, int nCand, int[] nV,
+                double[] meanV, List<List<SearchDirective.Surface>> firstSurf, List<String> cands, int turn,
+                int mySw, int prioSeat, String seatName, byte[] rngState, String[][] firstKind,
+                double[][] firstV, long[] copyMsBox) {
+            if (top <= 0) {
+                return 0;
+            }
+            List<Integer> order = new ArrayList<>();
+            for (int c = 0; c < nCand; c++) {
+                if (nV[c] > 0 && firstOfClass(firstSurf.get(c), pay) != null) {
+                    order.add(c);
+                }
+            }
+            order.sort((a, b) -> Double.compare(meanV[b] / nV[b], meanV[a] / nV[a]));
+            final int leafAfter = pay && payLeafEot ? turn : -1;
+            final boolean rerunNatural = leafAfter >= 0;
+            int nSub = Math.min(top, order.size());
+            for (int si = 0; si < nSub; si++) {
+                int c = order.get(si);
+                SearchDirective.Surface sf = firstOfClass(firstSurf.get(c), pay);
+                Random erng = new Random(splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+                        ^ (mySw * 0xBF58476D1CE4E5B9L) ^ ((sf.kind + 1) * 0xD1B54A32D192ED03L)));
+                List<int[]> answers = Surfaces.enumerate(sf.kind, sf.n, sf.min, sf.max, sf.natural, sf.aux,
+                        surfCap, erng, sf.repeat);
+                String frame = null; // the surface window's dec record, from the first answer copy that fired
+                if (already + si > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"o\":").append(c)
+                        .append(",\"kind\":\"").append(Surfaces.KIND_NAMES[sf.kind]).append('"')
+                        .append(",\"ord\":").append(sf.ordinal)
+                        .append(",\"label\":\"").append(jstr(sf.label)).append('"')
+                        .append(",\"n\":").append(sf.n)
+                        .append(",\"min\":").append(sf.min)
+                        .append(",\"max\":").append(sf.max)
+                        .append(",\"rep\":").append(sf.repeat);
+                if (pay) {
+                    sb.append(",\"leaf\":\"").append(rerunNatural ? "eot" : "next").append('"');
+                }
+                sb.append(",\"nat\":");
+                appendInts(sb, sf.natural);
+                sb.append(",\"ans\":[");
+                for (int ai = 0; ai < answers.size(); ai++) {
+                    int[] a = answers.get(ai);
+                    if (ai > 0) {
+                        sb.append(',');
+                    }
+                    sb.append("{\"a\":");
+                    appendInts(sb, a);
+                    sb.append(",\"v\":[");
+                    StringBuilder kinds = new StringBuilder();
+                    StringBuilder calls = new StringBuilder();
+                    StringBuilder miss = new StringBuilder();
+                    boolean natural = sf.natural != null && Arrays.equals(a, sf.natural);
+                    for (int r = 0; r < rolls; r++) {
+                        if (r > 0) {
+                            sb.append(',');
+                            kinds.append(',');
+                            calls.append(',');
+                            miss.append(',');
+                        }
+                        if (natural && !rerunNatural) {
+                            // the natural answer IS the first-ply copy under CRN
+                            double v = firstV[c][r];
+                            sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
+                            kinds.append('"').append(firstKind[c][r]).append('"');
+                            calls.append('0');
+                            miss.append("null");
+                            continue;
+                        }
+                        long rollSeed = rollSeedOf(turn, mySw, r);
+                        String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c + (pay ? "p" : "a") + ai;
+                        CopyResult cr = runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState,
+                                sf.kind, sf.ordinal, a, leafAfter);
+                        copyMsBox[0] += cr.copyMs;
+                        if (frame == null && cr.surfFrame != null) {
+                            frame = cr.surfFrame;
+                        }
+                        sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
+                        kinds.append('"').append(cr.kind).append('"');
+                        calls.append(cr.asks);
+                        miss.append(cr.surfMiss == null ? "null" : "\"" + cr.surfMiss + "\"");
+                    }
+                    sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
+                            .append("],\"miss\":[").append(miss).append("]}");
+                }
+                sb.append(']');
+                if (frame != null) {
+                    // evening 2: the state the answers were chosen in (a dec
+                    // record: opts + obs + hist), the distillation loader's frame
+                    sb.append(",\"frame\":").append(frame);
+                }
+                sb.append('}');
+            }
+            return nSub;
+        }
+
         private void doSearch(Player prio, int turn, String phase, int mySw) {
             final long block0 = System.nanoTime();
             int prioSeat = game.getRegisteredPlayers().indexOf(prio);
@@ -1477,94 +1622,22 @@ public final class AnvilRun {
                         .append("],\"ms\":").append(optMs).append(",\"n_surf\":").append(surf0.size()).append('}');
             }
             sb.append(']');
-            // ---- expansion round (-searchsurf B): the first traced surface
-            // callback on the top-B candidates' paths, one copy per answer
-            if (surfTop > 0) {
-                List<Integer> order = new ArrayList<>();
-                for (int c = 0; c < nCand; c++) {
-                    if (nV[c] > 0 && !firstSurf.get(c).isEmpty()) {
-                        order.add(c);
-                    }
-                }
-                order.sort((a, b) -> Double.compare(meanV[b] / nV[b], meanV[a] / nV[a]));
+            // ---- expansion round (-searchsurf B): the first traced NON-PAYMENT
+            // surface callback on the top-B candidates' paths, one copy per
+            // answer; (-searchpay B, evening 4) the first traced PAYMENT window
+            // on the top-B paths in its own slot, under the end-of-turn leaf
+            // (every answer re-run there, the natural one included: a
+            // different leaf from the first ply's)
+            final long[] copyMsBox = {copyMsTotal};
+            if (surfTop > 0 || payTop > 0) {
                 sb.append(",\"sub\":[");
-                int nSub = Math.min(surfTop, order.size());
-                for (int si = 0; si < nSub; si++) {
-                    int c = order.get(si);
-                    SearchDirective.Surface sf = firstSurf.get(c).get(0);
-                    Random erng = new Random(splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
-                            ^ (mySw * 0xBF58476D1CE4E5B9L) ^ ((sf.kind + 1) * 0xD1B54A32D192ED03L)));
-                    List<int[]> answers = Surfaces.enumerate(sf.kind, sf.n, sf.min, sf.max, sf.natural, sf.aux,
-                            surfCap, erng, sf.repeat);
-                    String frame = null; // the surface window's dec record, from the first answer copy that fired
-                    if (si > 0) {
-                        sb.append(',');
-                    }
-                    sb.append("{\"o\":").append(c)
-                            .append(",\"kind\":\"").append(Surfaces.KIND_NAMES[sf.kind]).append('"')
-                            .append(",\"ord\":").append(sf.ordinal)
-                            .append(",\"label\":\"").append(jstr(sf.label)).append('"')
-                            .append(",\"n\":").append(sf.n)
-                            .append(",\"min\":").append(sf.min)
-                            .append(",\"max\":").append(sf.max)
-                            .append(",\"rep\":").append(sf.repeat)
-                            .append(",\"nat\":");
-                    appendInts(sb, sf.natural);
-                    sb.append(",\"ans\":[");
-                    for (int ai = 0; ai < answers.size(); ai++) {
-                        int[] a = answers.get(ai);
-                        if (ai > 0) {
-                            sb.append(',');
-                        }
-                        sb.append("{\"a\":");
-                        appendInts(sb, a);
-                        sb.append(",\"v\":[");
-                        StringBuilder kinds = new StringBuilder();
-                        StringBuilder calls = new StringBuilder();
-                        StringBuilder miss = new StringBuilder();
-                        boolean natural = sf.natural != null && Arrays.equals(a, sf.natural);
-                        for (int r = 0; r < rolls; r++) {
-                            if (r > 0) {
-                                sb.append(',');
-                                kinds.append(',');
-                                calls.append(',');
-                                miss.append(',');
-                            }
-                            if (natural) {
-                                // the natural answer IS the first-ply copy under CRN
-                                double v = firstV[c][r];
-                                sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
-                                kinds.append('"').append(firstKind[c][r]).append('"');
-                                calls.append('0');
-                                miss.append("null");
-                                continue;
-                            }
-                            long rollSeed = rollSeedOf(turn, mySw, r);
-                            String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c + "a" + ai;
-                            CopyResult cr = runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState,
-                                    sf.kind, sf.ordinal, a);
-                            copyMsTotal += cr.copyMs;
-                            if (frame == null && cr.surfFrame != null) {
-                                frame = cr.surfFrame;
-                            }
-                            sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
-                            kinds.append('"').append(cr.kind).append('"');
-                            calls.append(cr.asks);
-                            miss.append(cr.surfMiss == null ? "null" : "\"" + cr.surfMiss + "\"");
-                        }
-                        sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
-                                .append("],\"miss\":[").append(miss).append("]}");
-                    }
-                    sb.append(']');
-                    if (frame != null) {
-                        // evening 2: the state the answers were chosen in (a dec
-                        // record: opts + obs + hist), the distillation loader's frame
-                        sb.append(",\"frame\":").append(frame);
-                    }
-                    sb.append('}');
-                }
+                int nSub = expandRound(sb, false, surfTop, 0, nCand, nV, meanV, firstSurf, cands, turn, mySw,
+                        prioSeat, seatName, rngState, firstKind, firstV, copyMsBox);
+                expandRound(sb, true, payTop, nSub, nCand, nV, meanV, firstSurf, cands, turn, mySw,
+                        prioSeat, seatName, rngState, firstKind, firstV, copyMsBox);
                 sb.append(']');
             }
+            copyMsTotal = copyMsBox[0];
             sb.append(",\"copy_ms\":").append(copyMsTotal)
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));

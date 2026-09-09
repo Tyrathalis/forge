@@ -62,8 +62,12 @@ public final class Surfaces {
     public static final int MODE = 4;
     public static final int NAME = 5;
     public static final int DAMAGE = 6;
+    /** Evening 4 (ADR-0105): the payment window as a surface on search copies —
+     *  options = {auto} ∪ the M9 goal options (PlayerControllerAnvil.copyPay),
+     *  one pick; served by the pay head over its own tag, never through here. */
+    public static final int PAY = 7;
     public static final String[] KIND_NAMES = {
-        "entity_one", "entity_set", "order", "scry", "mode", "name", "damage"};
+        "entity_one", "entity_set", "order", "scry", "mode", "name", "damage", "pay"};
 
     /** Enumeration cap per callback (the search's -searchopts analogue). */
     public static final int DEFAULT_CAP = 12;
@@ -347,6 +351,7 @@ public final class Surfaces {
         switch (kind) {
             case ENTITY_ONE:
             case NAME:
+            case PAY:
                 if (n <= cap) {
                     for (int i = 0; i < n; i++) {
                         add(out, seen, new int[] {i}, cap);

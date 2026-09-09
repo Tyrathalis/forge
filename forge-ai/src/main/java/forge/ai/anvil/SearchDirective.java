@@ -47,6 +47,12 @@ public final class SearchDirective {
      *  end / timeout / crash. */
     public volatile String outcome = null;
     public volatile int seatWindows = 0;
+    /** Evening 4 (ADR-0105): the END-OF-TURN leaf — when ≥ 0, a quiescent
+     *  window of the seat inside this turn is natural play and the leaf is
+     *  the seat's first quiescent window of a LATER turn (ADR-0098's eot
+     *  horizon, where a payment's consequence — what stayed untapped — is
+     *  visible). -1 = the next quiescent window (fork A, every other copy). */
+    public volatile int leafAfterTurn = -1;
 
     /** M12 Build 3: one traced surface callback of the seat on this copy
      *  (after the forced option applied) — what the monitor may expand. */
@@ -119,6 +125,13 @@ public final class SearchDirective {
 
     /** The cast-window rule (see the class doc). */
     public Window window(List<SpellAbility> options, boolean quiescent) {
+        return window(options, quiescent, Integer.MAX_VALUE);
+    }
+
+    /** @param turn the copy's current turn: under an end-of-turn leaf
+     *              (leafAfterTurn ≥ 0) a quiescent window in a turn ≤ it is
+     *              natural play, not the leaf */
+    public Window window(List<SpellAbility> options, boolean quiescent, int turn) {
         seatWindows++;
         if (!applied) {
             applied = true;
@@ -133,7 +146,7 @@ public final class SearchDirective {
             outcome = "void";
             return new Window(W_VOID, null);
         }
-        if (quiescent) {
+        if (quiescent && !(leafAfterTurn >= 0 && turn <= leafAfterTurn)) {
             outcome = "leaf";
             return new Window(W_LEAF, null);
         }

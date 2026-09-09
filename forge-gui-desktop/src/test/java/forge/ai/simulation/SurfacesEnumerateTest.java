@@ -38,6 +38,17 @@ public class SurfacesEnumerateTest {
     }
 
     @Test
+    public void payEnumeratesAutoAndEveryGoalNaturalFirst() {
+        // evening 4: {auto} ∪ goals, one pick; the natural (auto = 0) first
+        List<int[]> r = Surfaces.enumerate(Surfaces.PAY, 4, 1, 1, a(0), null, 12, new Random(1));
+        AssertJUnit.assertEquals(4, r.size());
+        AssertJUnit.assertEquals("[0]", java.util.Arrays.toString(r.get(0)));
+        AssertJUnit.assertEquals(4, keys(r).size());
+        AssertJUnit.assertTrue(Surfaces.nontrivial(Surfaces.PAY, 2, 1));
+        AssertJUnit.assertFalse(Surfaces.nontrivial(Surfaces.PAY, 1, 1));
+    }
+
+    @Test
     public void entityOneCapsWithNaturalFirst() {
         List<int[]> r = Surfaces.enumerate(Surfaces.ENTITY_ONE, 60, 1, 1, a(41), null, 8, new Random(7));
         AssertJUnit.assertEquals(8, r.size());
@@ -124,7 +135,8 @@ public class SurfacesEnumerateTest {
         List<int[]> r = Surfaces.enumerate(Surfaces.DAMAGE, 2, 6, 6, a(2, 3, 1), a(2, 3, 1), 12, new Random(1));
         AssertJUnit.assertEquals("[2, 3, 1]", java.util.Arrays.toString(r.get(0)));
         Set<String> k = keys(r);
-        AssertJUnit.assertTrue(k.contains("[3, 2, 1]")); // the second killed first
+        // the second killed first realizes the SAME amounts ([2, 3, 1]: lethal is
+        // per blocker) and dedupes into the natural — amounts, not orders, are the family
         AssertJUnit.assertTrue(k.contains("[2, 0, 4]")); // lethal to the first, the rest tramples over
         AssertJUnit.assertTrue(k.contains("[0, 3, 3]")); // lethal to the second, the rest tramples over
         AssertJUnit.assertTrue(k.contains("[0, 0, 6]")); // all of it tramples over
@@ -152,7 +164,7 @@ public class SurfacesEnumerateTest {
     public void damageFromSequenceRealizesKillOrders() {
         int[] aux = a(2, 3, 1); // lethal 2 / 3, trample
         AssertJUnit.assertEquals("[2, 3, 1]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0, 1), 2, 6, aux)));
-        AssertJUnit.assertEquals("[3, 2, 1]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(1, 0), 2, 6, aux)));
+        AssertJUnit.assertEquals("[2, 3, 1]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(1, 0), 2, 6, aux)));
         AssertJUnit.assertEquals("[2, 0, 4]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0), 2, 6, aux)));
         AssertJUnit.assertEquals("[2, 0, 4]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(0, 2), 2, 6, aux)));
         AssertJUnit.assertEquals("[0, 0, 6]", java.util.Arrays.toString(Surfaces.damageFromSequence(a(2), 2, 6, aux)));

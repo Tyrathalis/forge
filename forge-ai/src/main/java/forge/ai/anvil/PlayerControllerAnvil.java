@@ -50,6 +50,13 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     public static final String TAG_SURFACE_MODE = "mtg.surface.mode";
     public static final String TAG_SURFACE_ORDER = "mtg.surface.order";   // evening 3
     public static final String TAG_SURFACE_DAMAGE = "mtg.surface.damage"; // evening 3
+    /** Evening 4 (ADR-0105): may a SEARCH COPY bridge its payment windows?
+     *  Default false — the copy-side gate: a copy pays by the engine's auto
+     *  payer (the natural line) unless a PAY SurfaceDirective directs the
+     *  window; the served pay head's answer on a copy was leaf noise (an
+     *  untrained head deviating at random inside every copy of every read
+     *  since Build 2). AnvilRun -searchpaybridge restores the old behaviour. */
+    public static volatile boolean copyPayBridge = false;
 
     private final AnvilBridge bridge;
     private final Set<String> bridgedTags;
@@ -318,7 +325,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 return super.chooseSpellAbilityToPlay();
             }
             List<SpellAbility> options = Lists.newArrayList(AnvilOptions.priorityOptions(getGame(), player));
-            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty());
+            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty(), getGame().getPhaseHandler().getTurn());
             if (w.kind == SearchDirective.W_PASS) {
                 Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                         "by", "search", "pick", "pass");
@@ -409,7 +416,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         SearchDirective sr = (fd == null && sd == null && sc == null)
                 ? SearchDirective.active(getGame(), player) : null;
         if (sr != null) {
-            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty());
+            final SearchDirective.Window w = sr.window(options, getGame().getStack().isEmpty(), getGame().getPhaseHandler().getTurn());
             if (w.kind == SearchDirective.W_PASS) {
                 Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                         "by", "search", "pick", "pass");
@@ -865,6 +872,25 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 }
             }
         }
+        // M12 Build 3 evening 4 (ADR-0105): payment on a SEARCH COPY — the
+        // copy-side gate (never bridged unless -searchpaybridge), the acting
+        // seat's in-scope windows traced as a PAY surface / directed by a PAY
+        // SurfaceDirective (copyPay); every other copy window pays auto.
+        final boolean onCopy = SearchDirective.directive(getGame()) != null;
+        if (onCopy && !copyPayBridge) {
+            final SearchDirective sr = SearchDirective.active(getGame(), player);
+            if (sr == null || !sr.applied || (effect && !combat) || toPay == null || toPay.isZero()) {
+                return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
+            }
+            return copyPay(sr, toPay, sa, effect, combat);
+        }
+        if (effect && !combat && !onCopy && PaymentTelemetry.enabled) {
+            // Evening 4: the resolution-effect payment census (the ADR-0077
+            // queue's item 3, deferred twice — this row is its measured
+            // argument: how many of the ~51/game carry a real choice). Under
+            // -paytelemetry only; scratch RNG (the auto-payer probe draws).
+            resolutionEffectCensus(toPay, sa);
+        }
         if (!bridged(TAG_PAY_CLASS) || (effect && !combat) || toPay == null || toPay.isZero()) {
             return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         }
@@ -1008,6 +1034,123 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     private boolean autoPay(forge.card.mana.ManaCost toPay, SpellAbility sa, boolean effect) {
         return forge.ai.ComputerUtilMana.payManaCost(
                 new forge.game.cost.Cost(toPay, effect), getPlayer(), sa, effect);
+    }
+
+    /**
+     * Evening 4 (ADR-0105): an in-scope payment window of the ACTING seat on a
+     * search copy (its SearchDirective applied). Enumerates the M9 goal
+     * options exactly as the mainline bridge path does; a consequential window
+     * is a PAY surface: the dec record (the wire shape, {auto} ∪ goals) is
+     * emitted on the copy's session so a directed window's frame reaches the
+     * sub row; a {@link SurfaceDirective} of kind PAY answers the ordinal-th
+     * such window with a goal index (0 = auto) realized through the directed
+     * executor; every window is TRACED (natural = the pick taken) so the
+     * monitor's pay round can expand it. Never bridged (-searchpaybridge
+     * off): the natural line is auto. Never throws into the game thread.
+     */
+    private boolean copyPay(SearchDirective sr, forge.card.mana.ManaCost toPay, SpellAbility sa,
+            boolean effect, boolean combat) {
+        final PaymentEnumerator.Result r;
+        final boolean auto;
+        try {
+            if (!combat && PaymentEnumerator.costModified(sa)) {
+                return autoPay(toPay, sa, effect);
+            }
+            r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
+            auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+        } catch (Exception e) {
+            return autoPay(toPay, sa, effect);
+        }
+        if (!PaymentEnumerator.consequential(r, auto)) {
+            return autoPay(toPay, sa, effect);
+        }
+        final List<String> labels = paymentOptionLabels(r);
+        final int n = labels.size();
+        final boolean forced = r.planCount >= 1 && !auto;
+        final Object[] decKv = kvPlus(combat, new Object[] {
+                "sa", Census.str(sa), "cost", String.valueOf(toPay), "effect", effect,
+                "fpool", floatingPool(), "goals", r.options.size(), "plans", r.planCount,
+                "trunc", r.goalCapHit, "forced", forced });
+        final long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels, decKv);
+        final SurfaceDirective d = SurfaceDirective.match(getGame(), player, Surfaces.PAY, n, 1);
+        int pick = 0;
+        String by = "natural";
+        if (d != null) {
+            d.frame = Obs.lastDecForBridge(getGame());
+            final int a = d.answer == null || d.answer.length != 1 ? -1 : d.answer[0];
+            if (a < 0 || a >= n) {
+                d.miss("idx");
+                by = "search_miss";
+            } else {
+                d.fired(n);
+                pick = a;
+                by = "search";
+            }
+        } else if (copyPayBridge && bridged(TAG_PAY_CLASS)) {
+            final int p = bridge.selectOne(TAG_PAY_CLASS, labels);
+            pick = p <= 0 || p > r.options.size() ? 0 : p;
+            by = "bridge";
+        }
+        Surfaces.trace(getGame(), player, Surfaces.PAY, Census.str(sa), n, 1, 1, new int[] {pick}, null);
+        final boolean paid;
+        final String exec;
+        String cousinsNote = null;
+        if (pick == 0) {
+            paid = autoPay(toPay, sa, effect);
+            exec = "auto";
+        } else {
+            final PaymentEnumerator.PaymentClass pc = r.options.get(pick - 1).plan;
+            final CousinDirective.Armed cousins = CousinDirective.arm(getPlayer(), pc);
+            final PaymentEnumerator.ExecOutcome out;
+            try {
+                out = PaymentEnumerator.executeDirected(getPlayer(), pc);
+                paid = autoPay(toPay, sa, effect);
+            } finally {
+                CousinDirective.disarm(getPlayer());
+            }
+            exec = !paid ? "directed_fail"
+                    : out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
+            cousinsNote = pc.hasCousins() ? cousins.summary() : null;
+        }
+        Object[] recKv = kvPlus(combat, new Object[] {
+                "by", by, "copy", true, "options", n, "pick", pick == 0 ? "auto" : String.valueOf(pick),
+                "exec", exec, "paid", paid, "goals", r.options.size(), "plans", r.planCount,
+                "conseq", true, "forced", forced });
+        if (cousinsNote != null) {
+            recKv = java.util.Arrays.copyOf(recKv, recKv.length + 2);
+            recKv[recKv.length - 2] = "cousins";
+            recKv[recKv.length - 1] = cousinsNote;
+        }
+        Census.rec(getGame(), getPlayer(), "payManaCost", recKv);
+        Obs.ret(getGame(), obsSeq, pick == 0 ? "auto:" + paid : exec);
+        return paid;
+    }
+
+    /** Evening 4: one census row per resolution-effect payment window under
+     *  -paytelemetry — goals / plans / consequential / auto-payable / costmod
+     *  over the raw cost, auto pays as ever. Enumeration errors are a row too. */
+    private void resolutionEffectCensus(forge.card.mana.ManaCost toPay, SpellAbility sa) {
+        try {
+            if (toPay == null || toPay.isZero()) {
+                // the zero-mana / nested class (the spec's ~73/g): counted, never enumerated
+                Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto", "effect", true, "reff", true,
+                        "sa", Census.str(sa), "zero", true);
+                return;
+            }
+            final boolean costmod = PaymentEnumerator.costModified(sa);
+            final PaymentEnumerator.Result r = AnvilOptions.withScratchRng(
+                    () -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
+            final boolean auto = AnvilOptions.withScratchRng(
+                    () -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, true));
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto", "effect", true, "reff", true,
+                    "sa", Census.str(sa), "cost", String.valueOf(toPay),
+                    "goals", r.options.size(), "plans", r.planCount,
+                    "conseq", PaymentEnumerator.consequential(r, auto), "autoable", auto,
+                    "costmod", costmod, "trunc", r.goalCapHit, "nodecap", r.nodeCapHit);
+        } catch (Exception e) {
+            Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto", "effect", true, "reff", true,
+                    "sa", Census.str(sa), "enumerr", e.getClass().getSimpleName());
+        }
     }
 
     /** Schedule-consistent directed payment (m10-ceiling-spec knob c): pick
