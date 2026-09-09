@@ -924,8 +924,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 Obs.ret(getGame(), s, paid);
                 return paid;
             }
-            r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
-            final boolean auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            r = quietProbe(() -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
+            final boolean auto = quietProbe(() -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect));
             conseq = PaymentEnumerator.consequential(r, auto);
             forced = r.planCount >= 1 && !auto; // spec §12c: ¬costmod already holds here
         } catch (Exception e) {
@@ -1051,6 +1051,58 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return sb.toString();
     }
 
+    /**
+     * Evening 4 (ADR-0105 addendum 09-09): the payment PROBE — the M9
+     * enumeration and the auto-payability test — must not touch the game.
+     * ComputerUtilMana's test-mode payment draws MyRandom.percentTrue per
+     * candidate source (isManaSourceReserved) and clears / writes the AI's
+     * mana-reservation memory sets, on every bridged in-scope window, BEFORE
+     * the same auto payment the unbridged path makes: a bridged seat whose
+     * head answered auto everywhere still played a different game (the
+     * evening-4 reads: −2.9 / −3.4pp vs the tag withheld; the ADR-0102 scan
+     * rule says probes are RNG-neutral). Scratch RNG around the body and the
+     * memory sets the probe can change snapshotted and restored after.
+     */
+    private static final forge.ai.AiCardMemory.MemorySet[] PROBE_SETS = {
+        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_DECLBLK,
+        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_ENEMY_DECLBLK,
+        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_NEXT_SPELL,
+        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_MAIN2,
+        forge.ai.AiCardMemory.MemorySet.CHOSEN_FOG_EFFECT,
+        forge.ai.AiCardMemory.MemorySet.PAYS_TAP_COST,
+        forge.ai.AiCardMemory.MemorySet.PAYS_SAC_COST,
+    };
+
+    private <T> T quietProbe(java.util.function.Supplier<T> body) {
+        final forge.game.player.Player p = getPlayer();
+        final java.util.List<java.util.Set<forge.game.card.Card>> saved = new java.util.ArrayList<>(PROBE_SETS.length);
+        for (forge.ai.AiCardMemory.MemorySet ms : PROBE_SETS) {
+            java.util.Set<forge.game.card.Card> cur = null;
+            try {
+                cur = forge.ai.AiCardMemory.getMemorySet(p, ms);
+            } catch (Exception ignored) {
+            }
+            saved.add(cur == null ? null : new java.util.HashSet<>(cur));
+        }
+        try {
+            return AnvilOptions.withScratchRng(body);
+        } finally {
+            for (int i = 0; i < PROBE_SETS.length; i++) {
+                final java.util.Set<forge.game.card.Card> was = saved.get(i);
+                if (was == null) {
+                    continue;
+                }
+                try {
+                    forge.ai.AiCardMemory.clearMemorySet(p, PROBE_SETS[i]);
+                    for (forge.game.card.Card c : was) {
+                        forge.ai.AiCardMemory.rememberCard(p, c, PROBE_SETS[i]);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
     /** The PlayerControllerAi payment body, called directly — super would
      *  re-record the census window. */
     private boolean autoPay(forge.card.mana.ManaCost toPay, SpellAbility sa, boolean effect) {
@@ -1078,8 +1130,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             if (!combat && PaymentEnumerator.costModified(sa)) {
                 return autoPay(toPay, sa, effect);
             }
-            r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
-            auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            r = quietProbe(() -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
+            auto = quietProbe(() -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect));
         } catch (Exception e) {
             return autoPay(toPay, sa, effect);
         }
@@ -1176,8 +1228,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             if (!combat && PaymentEnumerator.costModified(sa)) {
                 return null;
             }
-            final PaymentEnumerator.Result r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
-            final boolean auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            final PaymentEnumerator.Result r = quietProbe(() -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
+            final boolean auto = quietProbe(() -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect));
             if (auto || r.planCount < 1 || r.options.isEmpty()) {
                 return null;
             }
@@ -1206,10 +1258,8 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 return;
             }
             final boolean costmod = PaymentEnumerator.costModified(sa);
-            final PaymentEnumerator.Result r = AnvilOptions.withScratchRng(
-                    () -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
-            final boolean auto = AnvilOptions.withScratchRng(
-                    () -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, true));
+            final PaymentEnumerator.Result r = quietProbe(() -> PaymentEnumerator.enumerate(getPlayer(), sa, toPay));
+            final boolean auto = quietProbe(() -> PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, true));
             Census.rec(getGame(), getPlayer(), "payManaCost", "by", "auto", "effect", true, "reff", true,
                     "sa", Census.str(sa), "cost", String.valueOf(toPay),
                     "goals", r.options.size(), "plans", r.planCount,
