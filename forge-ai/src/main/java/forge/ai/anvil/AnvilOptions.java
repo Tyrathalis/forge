@@ -54,6 +54,28 @@ public final class AnvilOptions {
             "on".equals(System.getProperty("anvil.scan.payshadow", "off"));
 
     /**
+     * M12 Build 3 evening 4 (ADR-0105; the ADR-0102 rescue class): with the
+     * flag ON (AnvilRun -payrescue, or -Danvil.scan.payrescue=on) an option
+     * the auto-payer's predicate rejects but the M9 enumerator can pay is
+     * ADMITTED to the mask, the realizer's payability accepts it
+     * (payableOrRescue), and its payment window pays DIRECTED by the
+     * enumerator's first plan wherever auto cannot (PlayerControllerAnvil):
+     * "admit payable || enumeratorPlan and pay directed when auto cannot".
+     * Off (default) = byte-identical to before: a game-path change only
+     * under the flag (the ADR-0025 proof runs with it off). Cost with the
+     * flag on: the enumerator on every rejected option (+19% engine time
+     * per game at the Build 0 smoke).
+     */
+    public static volatile boolean PAYRESCUE =
+            "on".equals(System.getProperty("anvil.scan.payrescue", "off"));
+
+    /** The realizer's payability under the rescue flag: the predicate, or
+     *  (flag on) a feasible enumerator plan. */
+    public static boolean payableOrRescue(Game game, Player player, SpellAbility sa) {
+        return payable(game, player, sa) || (PAYRESCUE && withScratchRng(() -> shadowRescue(player, sa)));
+    }
+
+    /**
      * The legality subset of ComputerUtilCost.canPayCost (ADR-0102 item 1):
      * the extra-mana taxes (Nether Void class, command-zone effects), ward
      * mana when targets are set, ComputerUtilMana.canPayManaCost and the
@@ -299,12 +321,16 @@ public final class AnvilOptions {
                 continue;
             }
             rejected++;
-            if (PAYSHADOW && shadowRescue(player, sa)) {
+            if ((PAYSHADOW || PAYRESCUE) && shadowRescue(player, sa)) {
                 rescue++;
+                if (PAYRESCUE) {
+                    options.add(sa); // evening 4: the rescue class admitted (pays directed)
+                }
             }
         }
-        if (PAYSHADOW) {
-            Census.rec(game, player, "paymask", "n", scanned, "rej", rejected, "rescue", rescue);
+        if (PAYSHADOW || PAYRESCUE) {
+            Census.rec(game, player, "paymask", "n", scanned, "rej", rejected, "rescue", rescue,
+                    "admitted", PAYRESCUE);
         }
         CardCollectionView lands = ComputerUtilAbility.getAvailableLandsToPlay(game, player);
         if (lands != null) {

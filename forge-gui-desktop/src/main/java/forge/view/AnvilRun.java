@@ -147,7 +147,8 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next] [-searchpaybridge]]]");
+                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next] [-searchpaybridge]]] "
+                    + "[-payrescue]");
             return;
         }
 
@@ -291,6 +292,13 @@ public final class AnvilRun {
         }
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
+        // Evening 4 (ADR-0105): the ADR-0102 rescue class admitted + paid
+        // directed (AnvilOptions.PAYRESCUE); a game-path change under the
+        // flag only, on every header as provenance.
+        if (params.containsKey("payrescue")) {
+            forge.ai.anvil.AnvilOptions.PAYRESCUE = true;
+            Obs.payRescue = true;
+        }
         // M12 Build 2 (m12-plan canonical shape §2): the ACTING rule. -searchact
         // <bar> turns the instrument into the behavior policy: at a searched
         // window with margin = max V − V(natural) ≥ bar the controller samples

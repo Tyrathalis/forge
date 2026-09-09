@@ -79,6 +79,8 @@ public final class Obs {
      *  provenance on every game header (m12-plan "Boundary discipline");
      *  null = search off. */
     public static volatile String searchPins = null;
+    /** Evening 4 (ADR-0105): the rescue flag (-payrescue) on every header. */
+    public static volatile boolean payRescue = false;
     private static final int ZSTD_LEVEL = 3;
     /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
     private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
@@ -445,6 +447,9 @@ public final class Obs {
         }
         if (forkCommit != null) {
             sb.append(",\"fork_commit\":").append(q(forkCommit));
+        }
+        if (payRescue) {
+            sb.append(",\"payrescue\":true");
         }
         if (searchPins != null) {
             sb.append(",\"search\":").append(searchPins);

@@ -891,6 +891,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             // -paytelemetry only; scratch RNG (the auto-payer probe draws).
             resolutionEffectCensus(toPay, sa);
         }
+        if (AnvilOptions.PAYRESCUE && !bridged(TAG_PAY_CLASS) && !(effect && !combat)
+                && toPay != null && !toPay.isZero()) {
+            // evening 4 (the rescue flag): an UNBRIDGED seat's forced window
+            // (auto cannot pay, a plan exists) pays directed by the
+            // enumerator's first plan — the natural line under the flag; a
+            // null = not forced, the ordinary path
+            final Boolean paid = rescuePay(toPay, sa, effect, combat);
+            if (paid != null) {
+                return paid;
+            }
+        }
         if (!bridged(TAG_PAY_CLASS) || (effect && !combat) || toPay == null || toPay.isZero()) {
             return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
         }
@@ -956,6 +967,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels, decKv);
         int pick = bridge.selectOne(TAG_PAY_CLASS, labels);
         if (pick <= 0 || pick > r.options.size()) {
+            if (AnvilOptions.PAYRESCUE && forced && !r.options.isEmpty()) {
+                // evening 4 (the rescue flag): auto cannot pay here — the
+                // enumerator's first plan is the natural line
+                final boolean paid = directedPay(r.options.get(0).plan, toPay, sa, effect, "rescue");
+                Census.rec(getGame(), getPlayer(), "payManaCost", kvPlus(combat, new Object[] {
+                        "by", "bridge", "options", labels.size(), "pick", "auto", "rescue", true,
+                        "paid", paid, "goals", r.options.size(), "plans", r.planCount, "conseq", true,
+                        "trunc", r.goalCapHit, "forced", true }));
+                Obs.ret(getGame(), obsSeq, "rescue:" + paid);
+                return paid;
+            }
             boolean paid = autoPay(toPay, sa, effect);
             Census.rec(getGame(), getPlayer(), "payManaCost", kvPlus(combat, new Object[] {
                     "by", "bridge",
@@ -1095,7 +1117,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         final boolean paid;
         final String exec;
         String cousinsNote = null;
-        if (pick == 0) {
+        if (pick == 0 && AnvilOptions.PAYRESCUE && forced && !r.options.isEmpty()) {
+            // the rescue flag: auto cannot pay — the first plan is the natural line
+            paid = directedPay(r.options.get(0).plan, toPay, sa, effect, "rescue");
+            exec = "rescue:" + paid;
+        } else if (pick == 0) {
             paid = autoPay(toPay, sa, effect);
             exec = "auto";
         } else {
@@ -1124,6 +1150,48 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         Census.rec(getGame(), getPlayer(), "payManaCost", recKv);
         Obs.ret(getGame(), obsSeq, pick == 0 ? "auto:" + paid : exec);
         return paid;
+    }
+
+    /** Evening 4 (the rescue flag): a directed payment through the audited
+     *  executor — the plan floated then auto completes pool-first, cousins
+     *  armed; the failure semantics are the executor's (salvage, never a veto). */
+    private boolean directedPay(PaymentEnumerator.PaymentClass pc, forge.card.mana.ManaCost toPay,
+            SpellAbility sa, boolean effect, String why) {
+        CousinDirective.arm(getPlayer(), pc);
+        try {
+            PaymentEnumerator.executeDirected(getPlayer(), pc);
+            return autoPay(toPay, sa, effect);
+        } finally {
+            CousinDirective.disarm(getPlayer());
+        }
+    }
+
+    /** Evening 4 (the rescue flag): an unbridged seat's in-scope window —
+     *  forced (auto cannot pay, a plan exists) pays directed by the first
+     *  plan and returns; null = not forced (or cost-modified, or an
+     *  enumeration error): the ordinary path pays. */
+    private Boolean rescuePay(forge.card.mana.ManaCost toPay, SpellAbility sa, boolean effect,
+            boolean combat) {
+        try {
+            if (!combat && PaymentEnumerator.costModified(sa)) {
+                return null;
+            }
+            final PaymentEnumerator.Result r = PaymentEnumerator.enumerate(getPlayer(), sa, toPay);
+            final boolean auto = PaymentEnumerator.autoPayable(getPlayer(), sa, toPay, effect);
+            if (auto || r.planCount < 1 || r.options.isEmpty()) {
+                return null;
+            }
+            final long s = Obs.dec(getGame(), getPlayer(), "payManaCost",
+                    "sa", Census.str(sa), "effect", effect, "rescue", true);
+            final boolean paid = directedPay(r.options.get(0).plan, toPay, sa, effect, "rescue");
+            Census.rec(getGame(), getPlayer(), "payManaCost", kvPlus(combat, new Object[] {
+                    "by", "rescue", "sa", Census.str(sa), "effect", effect, "paid", paid,
+                    "goals", r.options.size(), "plans", r.planCount, "conseq", true, "forced", true }));
+            Obs.ret(getGame(), s, "rescue:" + paid);
+            return paid;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Evening 4: one census row per resolution-effect payment window under

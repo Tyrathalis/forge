@@ -87,7 +87,7 @@ public final class CastPlanRealizer {
                 }
                 String why = legality(game, player, sa);
                 if (why == null && !sa.isLandAbility()
-                        && !AnvilOptions.payable(game, player, sa)) {
+                        && !AnvilOptions.payableOrRescue(game, player, sa)) {
                     why = "unpayable";
                 }
                 if (why != null) {
@@ -104,7 +104,7 @@ public final class CastPlanRealizer {
             tryApply(sa, refs, ans); // legality/payability judged with targets+X set
             String why = legality(game, player, sa);
             if (why == null && !sa.isLandAbility()
-                    && !AnvilOptions.payable(game, player, sa)) {
+                    && !AnvilOptions.payableOrRescue(game, player, sa)) {
                 why = "unpayable";
             }
             clear(sa);
