@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next] [-searchpaybridge]]] "
+                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
                     + "[-payrescue]");
             return;
         }
@@ -287,9 +287,22 @@ public final class AnvilRun {
                 ? Integer.parseInt(params.get("searchpay").get(0)) : 0;
         final String searchPayLeaf = params.containsKey("searchpayleaf")
                 ? params.get("searchpayleaf").get(0) : "eot";
-        if (!"eot".equals(searchPayLeaf) && !"next".equals(searchPayLeaf)) {
-            throw new IllegalArgumentException("-searchpayleaf eot|next");
+        // The payment target's calibration (ADR-0105 evening 4 close): the
+        // pay slot's leaf family — next (fork A's leaf), eot (= h0: the seat's
+        // first quiescent window of a later turn), h<N> (of a turn > t+N, the
+        // certify horizon), end (natural game end: the outcome is the value,
+        // no head call). Each pay answer copy under a horizon leaf also
+        // snapshots the certify axes at its stop (the sub row's "snap").
+        // Search-copy / recording only; the mainline is untouched.
+        if (SearchMonitor.payLeafHorizon(searchPayLeaf) == Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("-searchpayleaf eot|next|h<N>|end");
         }
+        // -searchclock <s>: the wall-clock allowance under search (the crash
+        // guard around a searched game; 900 s since the 09-07 loop game). A
+        // rollout leaf (h<N> / end) plays copies to a far horizon, so its
+        // runs raise it explicitly.
+        final int searchClock = params.containsKey("searchclock")
+                ? Integer.parseInt(params.get("searchclock").get(0)) : 900;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
         // Evening 4 (ADR-0105): the ADR-0102 rescue class admitted + paid
@@ -774,13 +787,14 @@ public final class AnvilRun {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
-                            searchPay, "eot".equals(searchPayLeaf)));
+                            searchPay, searchPayLeaf));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
                     // sit under 15 s per window; the hour-long allowance let
-                    // the dzla10 arm's loop game run 65 min (09-07).
-                    extraS += 900;
+                    // the dzla10 arm's loop game run 65 min (09-07). A rollout
+                    // leaf's run names its own allowance (-searchclock).
+                    extraS += searchClock;
                 }
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
@@ -1237,17 +1251,58 @@ public final class AnvilRun {
         final Set<Integer> seats;
         /** Evening 4: the payment expansion slot (top-B paths) and its leaf. */
         final int payTop;
-        final boolean payLeafEot;
+        /** The pay slot's leaf mode (next | eot | h<N> | end) and its horizon
+         *  in turns: -1 = next (fork A's leaf), 0 = eot, N = h<N>,
+         *  Integer.MAX_VALUE = end. */
+        final String payLeaf;
+        final int payLeafH;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
 
+        /** Parses a -searchpayleaf mode; Integer.MIN_VALUE = not a mode. */
+        static int payLeafHorizon(String mode) {
+            if ("next".equals(mode)) {
+                return -1;
+            }
+            if ("eot".equals(mode)) {
+                return 0;
+            }
+            if ("end".equals(mode)) {
+                return Integer.MAX_VALUE;
+            }
+            if (mode != null && mode.length() > 1 && mode.charAt(0) == 'h') {
+                try {
+                    int n = Integer.parseInt(mode.substring(1));
+                    return n >= 0 ? n : Integer.MIN_VALUE;
+                } catch (NumberFormatException e) {
+                    return Integer.MIN_VALUE;
+                }
+            }
+            return Integer.MIN_VALUE;
+        }
+
+        /** SearchDirective.leafAfterTurn for a pay copy searched at `turn`:
+         *  -1 under next; the last turn of natural play otherwise (the copy's
+         *  leaf is the seat's first quiescent window of a later turn; under
+         *  end no turn qualifies and the copy plays to its outcome). */
+        int payLeafAfter(int turn) {
+            if (payLeafH < 0) {
+                return -1;
+            }
+            if (payLeafH == Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+            return turn + payLeafH;
+        }
+
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
                 int optCap, boolean includeMana, int surfTop, int surfCap,
-                double actBar, double actTemp, Set<Integer> seats, int payTop, boolean payLeafEot) {
+                double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf) {
             this.payTop = Math.max(0, payTop);
-            this.payLeafEot = payLeafEot;
+            this.payLeaf = payLeaf;
+            this.payLeafH = payLeafHorizon(payLeaf);
             this.surfTop = Math.max(0, surfTop);
             this.surfCap = Math.max(1, surfCap);
             this.actBar = actBar;
@@ -1326,6 +1381,43 @@ public final class AnvilRun {
             String surfMiss = null;
             /** The fired surface window's dec record (SurfaceDirective.frame); null = unarmed / unfired. */
             String surfFrame = null;
+            /** Pay answer copies under a horizon leaf: the certify axes at the
+             *  copy's stop (JSON array), the calibration read's rollout side. */
+            String snap = null;
+        }
+
+        /** The certify-style end snapshot of a copy (CensusRun.certRow's
+         *  axes, seat order = registered order): [t_end, ended, life0, life1,
+         *  creatures0, creatures1, power0, power1, hand0, hand1, lands0, lands1]. */
+        private static String certSnap(Game copy, boolean ended) {
+            int tEnd = -1;
+            try {
+                tEnd = copy.getPhaseHandler().getTurn();
+            } catch (Exception ignored) {
+            }
+            int[] life = new int[2], creatures = new int[2], power = new int[2], hand = new int[2],
+                    lands = new int[2];
+            try {
+                List<Player> ps = copy.getRegisteredPlayers();
+                for (int j = 0; j < Math.min(2, ps.size()); j++) {
+                    Player gp = ps.get(j);
+                    life[j] = gp.getLife();
+                    hand[j] = gp.getCardsIn(ZoneType.Hand).size();
+                    for (Card c : gp.getCardsIn(ZoneType.Battlefield)) {
+                        if (c.isCreature()) {
+                            creatures[j]++;
+                            power[j] += c.getNetPower();
+                        }
+                        if (c.isLand()) {
+                            lands[j]++;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            return "[" + tEnd + "," + (ended ? 1 : 0) + "," + life[0] + "," + life[1] + "," + creatures[0] + ","
+                    + creatures[1] + "," + power[0] + "," + power[1] + "," + hand[0] + "," + hand[1] + ","
+                    + lands[0] + "," + lands[1] + "]";
         }
 
         /** One candidate copy: the forced option (label; null = pass) at the
@@ -1366,10 +1458,18 @@ public final class AnvilRun {
             MyRandom.setRandom(rollRng);
             boolean crashed = false;
             final boolean[] clockHit = {false};
+            // A rollout leaf (h<N> / end) plays a copy well past the next
+            // window; its clock is the game-end allowance, not fork A's.
+            int copyTurn = 0;
+            try {
+                copyTurn = copy.getPhaseHandler().getTurn();
+            } catch (Exception ignored) {
+            }
+            final int copyClockS = leafAfterTurn > copyTurn ? ROLLOUT_END_TIMEOUT_S : ROLLOUT_TIMEOUT_S;
             ScheduledFuture<?> clock = watchdogs.schedule(() -> {
                 clockHit[0] = true;
                 copy.setGameOver(GameEndReason.Draw);
-            }, ROLLOUT_TIMEOUT_S, TimeUnit.SECONDS);
+            }, copyClockS, TimeUnit.SECONDS);
             try {
                 copy.getPhaseHandler().mainGameLoop();
             } catch (Throwable t) {
@@ -1408,6 +1508,11 @@ public final class AnvilRun {
                 if (sdir != null) {
                     res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
                     res.surfFrame = sdir.frame;
+                }
+                if (surfKind == Surfaces.PAY && leafAfterTurn >= 0) {
+                    // the calibration read's rollout side: where the copy
+                    // stopped and what the board looked like there
+                    res.snap = certSnap(copy, "end".equals(res.kind) || "draw".equals(res.kind));
                 }
             } catch (RuntimeException e) {
                 throw e; // a poisoned bridge ends the game (protocol law)
@@ -1471,7 +1576,7 @@ public final class AnvilRun {
                 }
             }
             order.sort((a, b) -> Double.compare(meanV[b] / nV[b], meanV[a] / nV[a]));
-            final int leafAfter = pay && payLeafEot ? turn : -1;
+            final int leafAfter = pay ? payLeafAfter(turn) : -1;
             final boolean rerunNatural = leafAfter >= 0;
             int nSub = Math.min(top, order.size());
             for (int si = 0; si < nSub; si++) {
@@ -1494,7 +1599,7 @@ public final class AnvilRun {
                         .append(",\"max\":").append(sf.max)
                         .append(",\"rep\":").append(sf.repeat);
                 if (pay) {
-                    sb.append(",\"leaf\":\"").append(rerunNatural ? "eot" : "next").append('"');
+                    sb.append(",\"leaf\":\"").append(payLeaf).append('"');
                 }
                 sb.append(",\"nat\":");
                 appendInts(sb, sf.natural);
@@ -1510,6 +1615,8 @@ public final class AnvilRun {
                     StringBuilder kinds = new StringBuilder();
                     StringBuilder calls = new StringBuilder();
                     StringBuilder miss = new StringBuilder();
+                    StringBuilder snaps = new StringBuilder();
+                    long ansMs = 0;
                     boolean natural = sf.natural != null && Arrays.equals(a, sf.natural);
                     for (int r = 0; r < rolls; r++) {
                         if (r > 0) {
@@ -1517,6 +1624,7 @@ public final class AnvilRun {
                             kinds.append(',');
                             calls.append(',');
                             miss.append(',');
+                            snaps.append(',');
                         }
                         if (natural && !rerunNatural) {
                             // the natural answer IS the first-ply copy under CRN
@@ -1525,6 +1633,7 @@ public final class AnvilRun {
                             kinds.append('"').append(firstKind[c][r]).append('"');
                             calls.append('0');
                             miss.append("null");
+                            snaps.append("null");
                             continue;
                         }
                         long rollSeed = rollSeedOf(turn, mySw, r);
@@ -1532,6 +1641,7 @@ public final class AnvilRun {
                         CopyResult cr = runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState,
                                 sf.kind, sf.ordinal, a, leafAfter);
                         copyMsBox[0] += cr.copyMs;
+                        ansMs += cr.ms;
                         if (frame == null && cr.surfFrame != null) {
                             frame = cr.surfFrame;
                         }
@@ -1539,9 +1649,15 @@ public final class AnvilRun {
                         kinds.append('"').append(cr.kind).append('"');
                         calls.append(cr.asks);
                         miss.append(cr.surfMiss == null ? "null" : "\"" + cr.surfMiss + "\"");
+                        snaps.append(cr.snap == null ? "null" : cr.snap);
                     }
                     sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
-                            .append("],\"miss\":[").append(miss).append("]}");
+                            .append("],\"miss\":[").append(miss).append(']');
+                    if (pay && rerunNatural) {
+                        // the horizon leaf's rollout side (per roll) + the copies' wall
+                        sb.append(",\"snap\":[").append(snaps).append("],\"ms\":").append(ansMs);
+                    }
+                    sb.append('}');
                 }
                 sb.append(']');
                 if (frame != null) {
@@ -1729,6 +1845,9 @@ public final class AnvilRun {
     // ------------------------------------------------------------------
 
     private static final int ROLLOUT_TIMEOUT_S = 120;
+    /** A pay copy under a rollout leaf (-searchpayleaf h<N> / end): the
+     *  allowance for a heuristic half-game (the calibration read). */
+    private static final int ROLLOUT_END_TIMEOUT_S = 600;
     /** Inline certification: arms per point cap (sched_pins.ARM_CAP) — the clock budget. */
     private static final int CERTIFY_MAX_ARMS = 16;
     static final String TAG_CERTIFY = "anvil.certify";
