@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
+                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
                     + "[-payrescue]");
             return;
         }
@@ -314,6 +314,15 @@ public final class AnvilRun {
         // guard around a searched game; 900 s since the 09-07 loop game). A
         // rollout leaf (h<N> / end) plays copies to a far horizon, so its
         // runs raise it explicitly.
+        // Evening 5 (ADR-0106 C1 follow-up): -searchrollsalt <long> salts the
+        // per-roll determinization seed of every copy. The calibration arms
+        // share roll seeds (CRN), so a deeper leaf's copy and the end copy of
+        // the same roll share their first turns and the deeper leaf's agreement
+        // with the outcome is optimistic by construction; an end arm under a
+        // salt is the de-confounded verdict. The rate draw (which windows are
+        // searched) is unsalted, so the arms still join per window.
+        final long searchRollSalt = params.containsKey("searchrollsalt")
+                ? Long.parseLong(params.get("searchrollsalt").get(0)) : 0L;
         final int searchClock = params.containsKey("searchclock")
                 ? Integer.parseInt(params.get("searchclock").get(0)) : 900;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
@@ -377,13 +386,13 @@ public final class AnvilRun {
             Obs.searchPins = String.format(java.util.Locale.ROOT,
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
-                    + "\"leaf\":\"%s\",\"actkinds\":%s}",
+                    + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
                     searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"",
                     searchPay, searchPayLeaf, searchPayBridge, searchLeaf,
-                    searchActKinds == null ? "null" : "\"" + searchActKinds + "\"");
+                    searchActKinds == null ? "null" : "\"" + searchActKinds + "\"", searchRollSalt);
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -829,7 +838,7 @@ public final class AnvilRun {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
-                            searchPay, searchPayLeaf, searchLeaf, actKinds));
+                            searchPay, searchPayLeaf, searchLeaf, actKinds, searchRollSalt));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1305,6 +1314,8 @@ public final class AnvilRun {
         /** Evening 5: the surface kinds the acting rule's answer stage
          *  runs on (null = none). */
         final boolean[] actKinds;
+        /** -searchrollsalt: XORed into every roll seed (0 = the CRN baseline). */
+        final long rollSalt;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1360,15 +1371,16 @@ public final class AnvilRun {
                 double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
                 String prioLeaf) {
             this(game, gameIdx, seed, bridge, fmt, labels, watchdogs, rate, rolls, optCap, includeMana, surfTop,
-                    surfCap, actBar, actTemp, seats, payTop, payLeaf, prioLeaf, null);
+                    surfCap, actBar, actTemp, seats, payTop, payLeaf, prioLeaf, null, 0L);
         }
 
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
                 int optCap, boolean includeMana, int surfTop, int surfCap,
                 double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
-                String prioLeaf, boolean[] actKinds) {
+                String prioLeaf, boolean[] actKinds, long rollSalt) {
             this.actKinds = actKinds;
+            this.rollSalt = rollSalt;
             this.payTop = Math.max(0, payTop);
             this.payLeaf = payLeaf;
             this.payLeafH = payLeafHorizon(payLeaf);
@@ -1601,7 +1613,7 @@ public final class AnvilRun {
         }
 
         private long rollSeedOf(int turn, int mySw, int r) {
-            return splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
+            return splitmix64(seed ^ rollSalt ^ (turn * 0x9E3779B97F4A7C15L)
                     ^ (mySw * 0xBF58476D1CE4E5B9L) ^ (r * 0x94D049BB133111EBL));
         }
 
