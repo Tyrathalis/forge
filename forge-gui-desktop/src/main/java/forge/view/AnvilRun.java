@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
+                    + "[-searchseats <csv>] [-searchleaf next|eot|h<N>|end] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
                     + "[-payrescue]");
             return;
         }
@@ -297,6 +297,19 @@ public final class AnvilRun {
         if (SearchMonitor.payLeafHorizon(searchPayLeaf) == Integer.MIN_VALUE) {
             throw new IllegalArgumentException("-searchpayleaf eot|next|h<N>|end");
         }
+        // Evening 5 (ADR-0106 C1): the PRIORITY slot's leaf — the same family,
+        // on the first-ply candidate copies (and the surface slot's answer
+        // copies, which share the first ply's leaf so the natural answer stays
+        // the first-ply copy under CRN). Default next = fork A's leaf (every
+        // read so far). Under a horizon leaf every first-ply copy snapshots
+        // the certify axes at its stop (the opts row's per-roll "snap") — the
+        // priority-slot calibration read's rollout side. Search-copy /
+        // recording only; the mainline is untouched.
+        final String searchLeaf = params.containsKey("searchleaf")
+                ? params.get("searchleaf").get(0) : "next";
+        if (SearchMonitor.payLeafHorizon(searchLeaf) == Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("-searchleaf next|eot|h<N>|end");
+        }
         // -searchclock <s>: the wall-clock allowance under search (the crash
         // guard around a searched game; 900 s since the 09-07 loop game). A
         // rollout leaf (h<N> / end) plays copies to a far horizon, so its
@@ -336,12 +349,13 @@ public final class AnvilRun {
             // The behavior policy's pins on every game header (provenance).
             Obs.searchPins = String.format(java.util.Locale.ROOT,
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
-                    + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b}",
+                    + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
+                    + "\"leaf\":\"%s\"}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
                     searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"",
-                    searchPay, searchPayLeaf, searchPayBridge);
+                    searchPay, searchPayLeaf, searchPayBridge, searchLeaf);
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -787,7 +801,7 @@ public final class AnvilRun {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
-                            searchPay, searchPayLeaf));
+                            searchPay, searchPayLeaf, searchLeaf));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1256,6 +1270,10 @@ public final class AnvilRun {
          *  Integer.MAX_VALUE = end. */
         final String payLeaf;
         final int payLeafH;
+        /** Evening 5 (ADR-0106 C1): the priority slot's leaf mode and horizon
+         *  (the same encoding as payLeafH); the surface slot follows it. */
+        final String prioLeaf;
+        final int prioLeafH;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1287,22 +1305,34 @@ public final class AnvilRun {
          *  leaf is the seat's first quiescent window of a later turn; under
          *  end no turn qualifies and the copy plays to its outcome). */
         int payLeafAfter(int turn) {
-            if (payLeafH < 0) {
+            return leafAfter(turn, payLeafH);
+        }
+
+        /** The priority slot's leafAfterTurn at `turn` (-searchleaf). */
+        int prioLeafAfter(int turn) {
+            return leafAfter(turn, prioLeafH);
+        }
+
+        static int leafAfter(int turn, int h) {
+            if (h < 0) {
                 return -1;
             }
-            if (payLeafH == Integer.MAX_VALUE) {
+            if (h == Integer.MAX_VALUE) {
                 return Integer.MAX_VALUE;
             }
-            return turn + payLeafH;
+            return turn + h;
         }
 
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
                 PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
                 int optCap, boolean includeMana, int surfTop, int surfCap,
-                double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf) {
+                double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
+                String prioLeaf) {
             this.payTop = Math.max(0, payTop);
             this.payLeaf = payLeaf;
             this.payLeafH = payLeafHorizon(payLeaf);
+            this.prioLeaf = prioLeaf == null ? "next" : prioLeaf;
+            this.prioLeafH = payLeafHorizon(this.prioLeaf);
             this.surfTop = Math.max(0, surfTop);
             this.surfCap = Math.max(1, surfCap);
             this.actBar = actBar;
@@ -1509,9 +1539,10 @@ public final class AnvilRun {
                     res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
                     res.surfFrame = sdir.frame;
                 }
-                if (surfKind == Surfaces.PAY && leafAfterTurn >= 0) {
-                    // the calibration read's rollout side: where the copy
-                    // stopped and what the board looked like there
+                if (leafAfterTurn >= 0) {
+                    // the calibration reads' rollout side (the pay slot's,
+                    // evening 4; the priority slot's, evening 5): where the
+                    // copy stopped and what the board looked like there
                     res.snap = certSnap(copy, "end".equals(res.kind) || "draw".equals(res.kind));
                 }
             } catch (RuntimeException e) {
@@ -1576,8 +1607,10 @@ public final class AnvilRun {
                 }
             }
             order.sort((a, b) -> Double.compare(meanV[b] / nV[b], meanV[a] / nV[a]));
-            final int leafAfter = pay ? payLeafAfter(turn) : -1;
-            final boolean rerunNatural = leafAfter >= 0;
+            final int leafAfter = pay ? payLeafAfter(turn) : prioLeafAfter(turn);
+            // the natural answer is the first-ply copy under CRN only when the
+            // slot's leaf is the first ply's; the pay slot re-runs it otherwise
+            final boolean rerunNatural = pay && leafAfter != prioLeafAfter(turn);
             int nSub = Math.min(top, order.size());
             for (int si = 0; si < nSub; si++) {
                 int c = order.get(si);
@@ -1697,6 +1730,7 @@ public final class AnvilRun {
                     .append(",\"n_opts\":").append(options.size())
                     .append(",\"mana_skipped\":").append(manaSkipped)
                     .append(",\"rolls\":").append(rolls)
+                    .append(",\"leaf\":\"").append(prioLeaf).append('"')
                     .append(",\"opts\":[");
             long copyMsTotal = 0;
             // ---- first ply: every candidate on its own determinized copy per roll
@@ -1714,8 +1748,10 @@ public final class AnvilRun {
                         .append(",\"v\":[");
                 StringBuilder kinds = new StringBuilder();
                 StringBuilder calls = new StringBuilder();
+                StringBuilder snaps = new StringBuilder();
                 long optMs = 0;
                 List<SearchDirective.Surface> surf0 = Collections.emptyList();
+                final int prioLeafAfter = prioLeafAfter(turn);
                 for (int r = 0; r < rolls; r++) {
                     // PAIRED across candidates: same determinization per roll.
                     long rollSeed = rollSeedOf(turn, mySw, r);
@@ -1723,9 +1759,12 @@ public final class AnvilRun {
                         sb.append(',');
                         kinds.append(',');
                         calls.append(',');
+                        snaps.append(',');
                     }
                     String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c;
-                    CopyResult cr = runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, -1, -1, null);
+                    CopyResult cr = runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, -1, -1, null,
+                            prioLeafAfter);
+                    snaps.append(cr.snap == null ? "null" : cr.snap);
                     copyMsTotal += cr.copyMs;
                     optMs += cr.ms;
                     firstKind[c][r] = cr.kind;
@@ -1743,7 +1782,11 @@ public final class AnvilRun {
                 }
                 firstSurf.add(surf0);
                 sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
-                        .append("],\"ms\":").append(optMs).append(",\"n_surf\":").append(surf0.size()).append('}');
+                        .append("],\"ms\":").append(optMs).append(",\"n_surf\":").append(surf0.size());
+                if (prioLeafAfter >= 0) {
+                    sb.append(",\"snap\":[").append(snaps).append(']');
+                }
+                sb.append('}');
             }
             sb.append(']');
             // ---- expansion round (-searchsurf B): the first traced NON-PAYMENT
