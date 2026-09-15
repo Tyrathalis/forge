@@ -735,7 +735,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return opts.isEmpty() ? null : opts.get(0); // loop tripwire: let the engine's re-ask exit
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, opts.size(), 1);
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, opts.size(), 1, labelOf(sa));
             if (d == null) {
                 int i = askOne(g, p, opts, "chooseSingleEntityForEffect");
                 return i < 0 ? null : opts.get(i);
@@ -762,7 +762,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return spells.isEmpty() ? null : spells.get(0);
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, spells.size(), 1);
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, spells.size(), 1, labelOf(sa));
             if (d == null) {
                 int i = askOne(g, p, spells, "chooseSingleSpellForEffect");
                 return i < 0 ? null : spells.get(i);
@@ -783,7 +783,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return fetchList.isEmpty() ? null : fetchList.get(0);
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, fetchList.size(), 1);
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, fetchList.size(), 1, labelOf(sa));
             if (d == null) {
                 int i = askOne(g, p, fetchList, "chooseSingleCardForZoneChange");
                 return i < 0 ? null : fetchList.get(i);
@@ -808,7 +808,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return new java.util.ArrayList<>(opts.subList(0, Math.min(opts.size(), Math.max(0, min))));
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max, labelOf(sa));
             if (d == null) {
                 int[] a = askSet(g, p, opts, min, max, "chooseEntitiesForEffect");
                 if (a == null) {
@@ -842,7 +842,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return new CardCollection(opts.subList(0, Math.min(opts.size(), Math.max(0, min))));
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max);
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max, labelOf(sa));
             if (d == null) {
                 int[] a = askSet(g, p, opts, min, max, "chooseCardsForEffect");
                 if (a == null) {
@@ -872,7 +872,7 @@ public final class Surfaces {
     public static List<SpellAbility> forceSpellSet(Game g, Player p, List<SpellAbility> spells, int num,
             SpellAbility sa) {
         try {
-            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, spells.size(), Math.max(0, num));
+            SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, spells.size(), Math.max(0, num), labelOf(sa));
             if (d == null) {
                 return null;
             }
@@ -1030,7 +1030,7 @@ public final class Surfaces {
             if (Census.loopTripped(g)) {
                 return new java.util.ArrayList<>(possible.subList(0, Math.min(possible.size(), Math.max(0, min))));
             }
-            SurfaceDirective d = SurfaceDirective.match(g, p, MODE, possible.size(), num);
+            SurfaceDirective d = SurfaceDirective.match(g, p, MODE, possible.size(), num, labelOf(sa));
             if (d == null) {
                 int[] a = askMode(g, p, possible, min, num, allowRepeat, "chooseModeForAbility");
                 if (a == null) {
@@ -1142,7 +1142,7 @@ public final class Surfaces {
     public static String forceName(Game g, Player p, Iterable<?> names, SpellAbility sa) {
         try {
             List<?> opts = asList(names);
-            SurfaceDirective d = SurfaceDirective.match(g, p, NAME, opts.size(), 1);
+            SurfaceDirective d = SurfaceDirective.match(g, p, NAME, opts.size(), 1, labelOf(sa));
             if (d == null) {
                 return null;
             }

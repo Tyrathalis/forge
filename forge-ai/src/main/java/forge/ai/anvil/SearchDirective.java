@@ -169,13 +169,43 @@ public final class SearchDirective {
         public final double bar;
         public final double temp;
         public final long sampleSeed;
+        /** Evening 5 (ADR-0106 A): per candidate, the second round's answers
+         *  on its path (null = not expanded / no surface / a kind not
+         *  acted); the acting rule's second stage samples among them. */
+        public final SurfAnswers[] surf;
+
+        /** One expanded surface on a candidate's path: the enumerated
+         *  answers with their mean leaf values (NaN = unvalued) and the
+         *  natural answer's index among them (-1 = absent). */
+        public static final class SurfAnswers {
+            public final int kind;
+            public final int ordinal;
+            public final String label;
+            public final int[][] answers;
+            public final double[] values;
+            public final int natIdx;
+
+            public SurfAnswers(int kind, int ordinal, String label, int[][] answers, double[] values, int natIdx) {
+                this.kind = kind;
+                this.ordinal = ordinal;
+                this.label = label;
+                this.answers = answers;
+                this.values = values;
+                this.natIdx = natIdx;
+            }
+        }
 
         public Pending(String rowPrefix, Consumer<String> sink) {
-            this(rowPrefix, sink, null, null, Double.NaN, 1.0, 0L);
+            this(rowPrefix, sink, null, null, Double.NaN, 1.0, 0L, null);
         }
 
         public Pending(String rowPrefix, Consumer<String> sink, String[] cands, double[] values,
                 double bar, double temp, long sampleSeed) {
+            this(rowPrefix, sink, cands, values, bar, temp, sampleSeed, null);
+        }
+
+        public Pending(String rowPrefix, Consumer<String> sink, String[] cands, double[] values,
+                double bar, double temp, long sampleSeed, SurfAnswers[] surf) {
             this.rowPrefix = rowPrefix;
             this.sink = sink;
             this.cands = cands;
@@ -183,6 +213,7 @@ public final class SearchDirective {
             this.bar = bar;
             this.temp = temp;
             this.sampleSeed = sampleSeed;
+            this.surf = surf;
         }
 
         public boolean acts() {
@@ -201,11 +232,77 @@ public final class SearchDirective {
             public double[] p = null;
             public double logp = Double.NaN;
             public String by = "natural";
+            /** Evening 5: the answer stage on the ACTED option (the sampled
+             *  option, else the natural). ansBy: off (no surface acting) |
+             *  ans_unsearched (the acted option's path was not expanded) |
+             *  ans_unvalued (its natural answer has no value) | natural
+             *  (answer margin below the bar) | search_nat (the natural
+             *  answer sampled) | search (another answer sampled → the
+             *  mainline arms it). */
+            public String ansBy = "off";
+            public int ansCand = -1;
+            public int ansIdx = -1;
+            public int ansNatIdx = -1;
+            public double ansMargin = Double.NaN;
+            public double[] ansP = null;
+            public double ansLogp = Double.NaN;
+            /** The option values the option stage ran on: the first-ply
+             *  values, each lifted to its sampled answer's value where the
+             *  answer stage cleared the bar (null = no lift anywhere). */
+            public double[] lifted = null;
+
+            /** The surface answer to arm on the mainline, or null. */
+            public SurfAnswers arm(Pending p) {
+                return "search".equals(ansBy) && p.surf != null ? p.surf[ansCand] : null;
+            }
         }
 
-        /** margin = max V − V(natural); margin ≥ bar → sample from the
-         *  softmax of the valued candidates' leaf values at temp (temp ≤ 0 =
-         *  argmax) with a private seeded RNG (never the game's stream). */
+        /** The softmax sample over `v` at `temp` (temp ≤ 0 = argmax) with a
+         *  private seeded RNG (never the game's stream); fills `p`; returns
+         *  the sampled index. NaN entries carry no mass. */
+        static int sample(double[] v, double max, int argmax, double temp, long seed, double[] p) {
+            if (temp <= 0) {
+                java.util.Arrays.fill(p, 0.0);
+                p[argmax] = 1.0;
+                return argmax;
+            }
+            double z = 0;
+            for (int i = 0; i < v.length; i++) {
+                p[i] = Double.isNaN(v[i]) ? 0.0 : Math.exp((v[i] - max) / temp);
+                z += p[i];
+            }
+            for (int i = 0; i < v.length; i++) {
+                p[i] /= z;
+            }
+            // One splitmix64 step → a uniform in [0, 1): java.util.Random's
+            // first output is poorly distributed over nearby seeds.
+            double u = (mix64(seed) >>> 11) * 0x1.0p-53;
+            double acc = 0;
+            int pick = argmax;
+            for (int i = 0; i < v.length; i++) {
+                if (p[i] <= 0) {
+                    continue;
+                }
+                acc += p[i];
+                if (u < acc) {
+                    pick = i;
+                    break;
+                }
+            }
+            return pick;
+        }
+
+        /** The two-stage rule (ADR-0106 A, the bar-lifted joint pick).
+         *  Stage 1 (answers, evening 5): for every expanded candidate whose
+         *  natural answer is valued, answer margin = max V(answer) −
+         *  V(natural answer); at or above the bar an answer is sampled from
+         *  the answers' softmax at temp (its own seed stream) and the
+         *  candidate's option value is LIFTED to that answer's value.
+         *  Stage 2 (options, Build 2): margin = max V − V(natural) over the
+         *  lifted values; margin ≥ bar → sample from the softmax of the
+         *  valued candidates at temp, else the natural pick stands. The
+         *  acted option's answer verdict is reported; a sampled non-natural
+         *  answer is what the mainline arms. */
         public Decision decide(String natural) {
             Decision d = new Decision();
             for (int i = 0; i < cands.length; i++) {
@@ -223,50 +320,85 @@ public final class SearchDirective {
                 d.by = "nat_unvalued";
                 return d;
             }
+            // ---- stage 1: the answers
+            double[] v = values;
+            int[] ansPick = null;
+            double[][] ansP = null;
+            double[] ansMargin = null;
+            if (surf != null) {
+                ansPick = new int[cands.length];
+                ansP = new double[cands.length][];
+                ansMargin = new double[cands.length];
+                java.util.Arrays.fill(ansPick, -1);
+                java.util.Arrays.fill(ansMargin, Double.NaN);
+                for (int c = 0; c < cands.length; c++) {
+                    SurfAnswers s = surf[c];
+                    if (s == null || s.natIdx < 0 || Double.isNaN(s.values[s.natIdx])) {
+                        continue;
+                    }
+                    double amax = Double.NEGATIVE_INFINITY;
+                    int aarg = -1;
+                    for (int a = 0; a < s.values.length; a++) {
+                        if (!Double.isNaN(s.values[a]) && s.values[a] > amax) {
+                            amax = s.values[a];
+                            aarg = a;
+                        }
+                    }
+                    ansMargin[c] = amax - s.values[s.natIdx];
+                    if (ansMargin[c] < bar) {
+                        continue;
+                    }
+                    double[] p = new double[s.values.length];
+                    int pick = sample(s.values, amax, aarg, temp, sampleSeed ^ ((c + 1) * 0xD1B54A32D192ED03L), p);
+                    ansPick[c] = pick;
+                    ansP[c] = p;
+                    if (v == values) {
+                        v = values.clone();
+                    }
+                    v[c] = s.values[pick];
+                }
+                if (v != values) {
+                    d.lifted = v;
+                }
+            }
+            // ---- stage 2: the options
             double max = Double.NEGATIVE_INFINITY;
             int argmax = -1;
-            for (int i = 0; i < values.length; i++) {
-                if (!Double.isNaN(values[i]) && values[i] > max) {
-                    max = values[i];
+            for (int i = 0; i < v.length; i++) {
+                if (!Double.isNaN(v[i]) && v[i] > max) {
+                    max = v[i];
                     argmax = i;
                 }
             }
-            d.margin = max - values[d.natIdx];
-            if (d.margin < bar) {
-                return d;
+            d.margin = max - v[d.natIdx];
+            if (d.margin >= bar) {
+                d.p = new double[v.length];
+                d.actIdx = sample(v, max, argmax, temp, sampleSeed, d.p);
+                d.logp = Math.log(d.p[d.actIdx]);
+                d.by = d.actIdx == d.natIdx ? "search_nat" : "search";
             }
-            d.p = new double[values.length];
-            if (temp <= 0) {
-                java.util.Arrays.fill(d.p, 0.0);
-                d.p[argmax] = 1.0;
-                d.actIdx = argmax;
-            } else {
-                double z = 0;
-                for (int i = 0; i < values.length; i++) {
-                    d.p[i] = Double.isNaN(values[i]) ? 0.0 : Math.exp((values[i] - max) / temp);
-                    z += d.p[i];
-                }
-                for (int i = 0; i < values.length; i++) {
-                    d.p[i] /= z;
-                }
-                // One splitmix64 step → a uniform in [0, 1): java.util.Random's
-                // first output is poorly distributed over nearby seeds.
-                double u = (mix64(sampleSeed) >>> 11) * 0x1.0p-53;
-                double acc = 0;
-                d.actIdx = argmax;
-                for (int i = 0; i < values.length; i++) {
-                    if (d.p[i] <= 0) {
-                        continue;
-                    }
-                    acc += d.p[i];
-                    if (u < acc) {
-                        d.actIdx = i;
-                        break;
+            // ---- the acted option's answer verdict
+            if (surf != null) {
+                int o = d.actIdx >= 0 ? d.actIdx : d.natIdx;
+                SurfAnswers s = surf[o];
+                d.ansCand = o;
+                if (s == null) {
+                    d.ansBy = "ans_unsearched";
+                } else if (s.natIdx < 0 || Double.isNaN(s.values[s.natIdx])) {
+                    d.ansBy = "ans_unvalued";
+                } else {
+                    d.ansNatIdx = s.natIdx;
+                    d.ansMargin = ansMargin[o];
+                    if (ansPick[o] < 0) {
+                        d.ansBy = "natural";
+                    } else {
+                        d.ansIdx = ansPick[o];
+                        d.ansP = ansP[o];
+                        d.ansLogp = Math.log(d.ansP[d.ansIdx]);
+                        d.ansBy = d.ansIdx == s.natIdx ? "search_nat" : "search";
                     }
                 }
             }
-            d.logp = Math.log(d.p[d.actIdx]);
-            d.by = d.actIdx == d.natIdx ? "search_nat" : "search";
             return d;
         }
 
@@ -308,6 +440,51 @@ public final class SearchDirective {
                 }
                 if (applied != null) {
                     sb.append(",\"applied\":\"").append(applied).append('"');
+                }
+                if (d.lifted != null) {
+                    sb.append(",\"lifted\":[");
+                    for (int i = 0; i < d.lifted.length; i++) {
+                        if (i > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(Double.isNaN(d.lifted[i]) ? "null"
+                                : String.format(java.util.Locale.ROOT, "%.5f", d.lifted[i]));
+                    }
+                    sb.append(']');
+                }
+                if (!"off".equals(d.ansBy)) {
+                    // evening 5: the answer stage on the acted option
+                    sb.append(",\"ans\":{\"o\":").append(d.ansCand)
+                            .append(",\"by\":\"").append(d.ansBy).append('"');
+                    SurfAnswers s = surf != null && d.ansCand >= 0 ? surf[d.ansCand] : null;
+                    if (s != null) {
+                        sb.append(",\"kind\":\"").append(Surfaces.KIND_NAMES[s.kind]).append('"')
+                                .append(",\"ord\":").append(s.ordinal)
+                                .append(",\"nat_i\":").append(s.natIdx);
+                    }
+                    if (!Double.isNaN(d.ansMargin)) {
+                        sb.append(",\"margin\":").append(String.format(java.util.Locale.ROOT, "%.5f", d.ansMargin));
+                    }
+                    if (d.ansIdx >= 0 && s != null) {
+                        sb.append(",\"a_i\":").append(d.ansIdx).append(",\"a\":[");
+                        int[] a = s.answers[d.ansIdx];
+                        for (int i = 0; i < a.length; i++) {
+                            if (i > 0) {
+                                sb.append(',');
+                            }
+                            sb.append(a[i]);
+                        }
+                        sb.append("],\"logp\":").append(String.format(java.util.Locale.ROOT, "%.4f", d.ansLogp))
+                                .append(",\"p\":[");
+                        for (int i = 0; i < d.ansP.length; i++) {
+                            if (i > 0) {
+                                sb.append(',');
+                            }
+                            sb.append(String.format(java.util.Locale.ROOT, "%.4f", d.ansP[i]));
+                        }
+                        sb.append(']');
+                    }
+                    sb.append('}');
                 }
             }
             sb.append('}');

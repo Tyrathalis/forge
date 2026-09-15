@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchleaf next|eot|h<N>|end] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
+                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
                     + "[-payrescue]");
             return;
         }
@@ -338,6 +338,33 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchact").get(0)) : Double.NaN;
         final double searchTemp = params.containsKey("searchtemp")
                 ? Double.parseDouble(params.get("searchtemp").get(0)) : 0.025;
+        // Evening 5 (ADR-0106 A): -searchactkinds <csv|all> turns the acting
+        // rule's second stage on for these surface kinds: on the acted option
+        // the second round's answers (-searchsurf B) are sampled the same way
+        // the option is (bar / temp), a non-natural sample armed on the
+        // mainline for the action's callback (SurfaceDirective.armMainline).
+        // Absent = options only (Build 2). Modes first; pay is never acted here.
+        final String searchActKinds = params.containsKey("searchactkinds")
+                ? params.get("searchactkinds").get(0) : null;
+        final boolean[] actKinds = new boolean[Surfaces.KIND_NAMES.length];
+        if (searchActKinds != null) {
+            for (String kn : searchActKinds.split(",")) {
+                kn = kn.trim();
+                if (kn.isEmpty()) {
+                    continue;
+                }
+                boolean hit = false;
+                for (int k = 0; k < Surfaces.KIND_NAMES.length; k++) {
+                    if (k != Surfaces.PAY && ("all".equals(kn) || Surfaces.KIND_NAMES[k].equals(kn))) {
+                        actKinds[k] = true;
+                        hit = true;
+                    }
+                }
+                if (!hit) {
+                    throw new IllegalArgumentException("-searchactkinds: unknown kind " + kn);
+                }
+            }
+        }
         Set<Integer> searchSeats = null;
         if (params.containsKey("searchseats")) {
             searchSeats = new HashSet<>();
@@ -350,12 +377,13 @@ public final class AnvilRun {
             Obs.searchPins = String.format(java.util.Locale.ROOT,
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
-                    + "\"leaf\":\"%s\"}",
+                    + "\"leaf\":\"%s\",\"actkinds\":%s}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
                     searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"",
-                    searchPay, searchPayLeaf, searchPayBridge, searchLeaf);
+                    searchPay, searchPayLeaf, searchPayBridge, searchLeaf,
+                    searchActKinds == null ? "null" : "\"" + searchActKinds + "\"");
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -801,7 +829,7 @@ public final class AnvilRun {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
-                            searchPay, searchPayLeaf, searchLeaf));
+                            searchPay, searchPayLeaf, searchLeaf, actKinds));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1274,6 +1302,9 @@ public final class AnvilRun {
          *  (the same encoding as payLeafH); the surface slot follows it. */
         final String prioLeaf;
         final int prioLeafH;
+        /** Evening 5: the surface kinds the acting rule's answer stage
+         *  runs on (null = none). */
+        final boolean[] actKinds;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1328,6 +1359,16 @@ public final class AnvilRun {
                 int optCap, boolean includeMana, int surfTop, int surfCap,
                 double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
                 String prioLeaf) {
+            this(game, gameIdx, seed, bridge, fmt, labels, watchdogs, rate, rolls, optCap, includeMana, surfTop,
+                    surfCap, actBar, actTemp, seats, payTop, payLeaf, prioLeaf, null);
+        }
+
+        SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
+                PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
+                int optCap, boolean includeMana, int surfTop, int surfCap,
+                double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
+                String prioLeaf, boolean[] actKinds) {
+            this.actKinds = actKinds;
             this.payTop = Math.max(0, payTop);
             this.payLeaf = payLeaf;
             this.payLeafH = payLeafHorizon(payLeaf);
@@ -1597,6 +1638,18 @@ public final class AnvilRun {
                 double[] meanV, List<List<SearchDirective.Surface>> firstSurf, List<String> cands, int turn,
                 int mySw, int prioSeat, String seatName, byte[] rngState, String[][] firstKind,
                 double[][] firstV, long[] copyMsBox) {
+            return expandRound(sb, pay, top, already, nCand, nV, meanV, firstSurf, cands, turn, mySw, prioSeat,
+                    seatName, rngState, firstKind, firstV, copyMsBox, null);
+        }
+
+        /** @param collect evening 5: when non-null, the slot's answers per
+         *                 candidate (index = candidate) for the acting rule's
+         *                 second stage — the enumerated answers with their
+         *                 mean leaf values and the natural answer's index */
+        private int expandRound(StringBuilder sb, boolean pay, int top, int already, int nCand, int[] nV,
+                double[] meanV, List<List<SearchDirective.Surface>> firstSurf, List<String> cands, int turn,
+                int mySw, int prioSeat, String seatName, byte[] rngState, String[][] firstKind,
+                double[][] firstV, long[] copyMsBox, SearchDirective.Pending.SurfAnswers[] collect) {
             if (top <= 0) {
                 return 0;
             }
@@ -1637,6 +1690,9 @@ public final class AnvilRun {
                 sb.append(",\"nat\":");
                 appendInts(sb, sf.natural);
                 sb.append(",\"ans\":[");
+                double[] ansMean = new double[answers.size()];
+                int[] ansN = new int[answers.size()];
+                int natAi = -1;
                 for (int ai = 0; ai < answers.size(); ai++) {
                     int[] a = answers.get(ai);
                     if (ai > 0) {
@@ -1651,6 +1707,9 @@ public final class AnvilRun {
                     StringBuilder snaps = new StringBuilder();
                     long ansMs = 0;
                     boolean natural = sf.natural != null && Arrays.equals(a, sf.natural);
+                    if (natural) {
+                        natAi = ai;
+                    }
                     for (int r = 0; r < rolls; r++) {
                         if (r > 0) {
                             sb.append(',');
@@ -1662,6 +1721,10 @@ public final class AnvilRun {
                         if (natural && !rerunNatural) {
                             // the natural answer IS the first-ply copy under CRN
                             double v = firstV[c][r];
+                            if (!Double.isNaN(v)) {
+                                ansMean[ai] += v;
+                                ansN[ai]++;
+                            }
                             sb.append(Double.isNaN(v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", v));
                             kinds.append('"').append(firstKind[c][r]).append('"');
                             calls.append('0');
@@ -1677,6 +1740,10 @@ public final class AnvilRun {
                         ansMs += cr.ms;
                         if (frame == null && cr.surfFrame != null) {
                             frame = cr.surfFrame;
+                        }
+                        if (!Double.isNaN(cr.v)) {
+                            ansMean[ai] += cr.v;
+                            ansN[ai]++;
                         }
                         sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
                         kinds.append('"').append(cr.kind).append('"');
@@ -1699,6 +1766,14 @@ public final class AnvilRun {
                     sb.append(",\"frame\":").append(frame);
                 }
                 sb.append('}');
+                if (collect != null && actKinds != null && actKinds[sf.kind]) {
+                    double[] vals = new double[answers.size()];
+                    for (int ai = 0; ai < answers.size(); ai++) {
+                        vals[ai] = ansN[ai] > 0 ? ansMean[ai] / ansN[ai] : Double.NaN;
+                    }
+                    collect[c] = new SearchDirective.Pending.SurfAnswers(sf.kind, sf.ordinal, sf.label,
+                            answers.toArray(new int[0][]), vals, natAi);
+                }
             }
             return nSub;
         }
@@ -1796,10 +1871,13 @@ public final class AnvilRun {
             // (every answer re-run there, the natural one included: a
             // different leaf from the first ply's)
             final long[] copyMsBox = {copyMsTotal};
+            final SearchDirective.Pending.SurfAnswers[] surfAns =
+                    actKinds != null && surfTop > 0 && !Double.isNaN(actBar)
+                            ? new SearchDirective.Pending.SurfAnswers[nCand] : null;
             if (surfTop > 0 || payTop > 0) {
                 sb.append(",\"sub\":[");
                 int nSub = expandRound(sb, false, surfTop, 0, nCand, nV, meanV, firstSurf, cands, turn, mySw,
-                        prioSeat, seatName, rngState, firstKind, firstV, copyMsBox);
+                        prioSeat, seatName, rngState, firstKind, firstV, copyMsBox, surfAns);
                 expandRound(sb, true, payTop, nSub, nCand, nV, meanV, firstSurf, cands, turn, mySw,
                         prioSeat, seatName, rngState, firstKind, firstV, copyMsBox);
                 sb.append(']');
@@ -1828,7 +1906,7 @@ public final class AnvilRun {
             long sampleSeed = splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
                     ^ (mySw * 0xBF58476D1CE4E5B9L) ^ 0xAC71A6L);
             SearchDirective.expectNatural(game, new SearchDirective.Pending(sb.toString(), sink,
-                    candArr, valArr, actBar, actTemp, sampleSeed));
+                    candArr, valArr, actBar, actTemp, sampleSeed, surfAns));
         }
     }
 

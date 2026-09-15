@@ -256,6 +256,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         SearchDirective.Pending.Decision d = pend.decide(natural);
         if (d.actIdx < 0 || d.actIdx == d.natIdx) {
             pend.complete(natural, d, "natural");
+            armSurface(pend, d);
             return picked;
         }
         final String label = pend.cands[d.actIdx];
@@ -275,7 +276,44 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                 "by", "search", "pick", Census.str(forced.get(0)), "nat", natural, "margin", d.margin);
         pend.complete(natural, d, "act");
+        armSurface(pend, d);
         return forced;
+    }
+
+    /** Evening 5 (ADR-0106 A): the acting rule's sampled surface answer on
+     *  the acted option is armed for this seat's next action (its
+     *  ordinal-th callback of the kind, label-guarded); the arm is taken —
+     *  fired, missed or unfired — after the action plays
+     *  (playChosenSpellAbility) and counted in the census per kind. A
+     *  previous unfired arm found here is counted too (the action never
+     *  reached its callback). */
+    private void armSurface(SearchDirective.Pending pend, SearchDirective.Pending.Decision d) {
+        SearchDirective.Pending.SurfAnswers s = d.arm(pend);
+        if (s == null) {
+            return;
+        }
+        SurfaceDirective prev = SurfaceDirective.takeMainline(getGame(), player.getName());
+        if (prev != null) {
+            recordSurfaceArm(prev, "stale");
+        }
+        SurfaceDirective.armMainline(getGame(), player.getName(), s.kind, s.ordinal, s.answers[d.ansIdx], s.label);
+    }
+
+    private void recordSurfaceArm(SurfaceDirective d, String when) {
+        Census.rec(getGame(), getPlayer(), "surfaceAct", "kind", Surfaces.KIND_NAMES[d.kind], "ord", d.ordinal,
+                "outcome", d.outcome(), "n", d.ncand, "at", when, "label", d.label == null ? "" : d.label);
+    }
+
+    @Override
+    public boolean playChosenSpellAbility(SpellAbility sa) {
+        try {
+            return super.playChosenSpellAbility(sa);
+        } finally {
+            SurfaceDirective d = SurfaceDirective.takeMainline(getGame(), player.getName());
+            if (d != null) {
+                recordSurfaceArm(d, "played");
+            }
+        }
     }
 
     /** M12 Build 2: realize the search's sampled option on the mainline — a
@@ -1146,7 +1184,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 "fpool", floatingPool(), "goals", r.options.size(), "plans", r.planCount,
                 "trunc", r.goalCapHit, "forced", forced });
         final long obsSeq = Obs.decBridged(getGame(), getPlayer(), "payManaCost", labels, decKv);
-        final SurfaceDirective d = SurfaceDirective.match(getGame(), player, Surfaces.PAY, n, 1);
+        final SurfaceDirective d = SurfaceDirective.match(getGame(), player, Surfaces.PAY, n, 1, Census.str(sa));
         int pick = 0;
         String by = "natural";
         if (d != null) {

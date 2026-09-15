@@ -25,6 +25,15 @@ public final class SurfaceDirective {
     public final int kind;
     public final int ordinal;
     public final int[] answer;
+    /** Evening 5 (ADR-0106 A): a MAINLINE arm — the acting rule's sampled
+     *  answer, consumed at the seat's ordinal-th callback of the kind after
+     *  arming (no SearchDirective gate) and bounded to the played action
+     *  (PlayerControllerAnvil.playChosenSpellAbility takes it after). */
+    public final boolean mainline;
+    /** The traced surface's label the answer was valued under (mainline
+     *  arms); a callback of the kind with another label is a miss ("label")
+     *  — the path diverged from the copy's. null = no guard. */
+    public final String label;
 
     public volatile boolean fired = false;
     /** Fired-with-miss reason (idx / sum / neg); null = clean. */
@@ -42,19 +51,52 @@ public final class SurfaceDirective {
     volatile String pendingFrame = null;
 
     private SurfaceDirective(String playerName, int kind, int ordinal, int[] answer) {
+        this(playerName, kind, ordinal, answer, false, null);
+    }
+
+    private SurfaceDirective(String playerName, int kind, int ordinal, int[] answer, boolean mainline,
+            String label) {
         this.playerName = playerName;
         this.kind = kind;
         this.ordinal = ordinal;
         this.answer = answer == null ? null : answer.clone();
+        this.mainline = mainline;
+        this.label = label;
     }
 
     private static final Map<Game, SurfaceDirective> armed =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    /** Mainline arms, one per (game, seat): keyed by game, the seat inside. */
+    private static final Map<Game, Map<String, SurfaceDirective>> armedMain =
             Collections.synchronizedMap(new WeakHashMap<>());
 
     public static SurfaceDirective arm(Game copy, String playerName, int kind, int ordinal, int[] answer) {
         SurfaceDirective d = new SurfaceDirective(playerName, kind, ordinal, answer);
         armed.put(copy, d);
         return d;
+    }
+
+    /** Evening 5: arm the acting rule's sampled answer on the mainline for
+     *  the seat's next action. A previous arm of the seat still pending is
+     *  returned (unfired: the caller counts it). */
+    public static SurfaceDirective armMainline(Game g, String playerName, int kind, int ordinal, int[] answer,
+            String label) {
+        SurfaceDirective d = new SurfaceDirective(playerName, kind, ordinal, answer, true, label);
+        Map<String, SurfaceDirective> m = armedMain.computeIfAbsent(g,
+                k -> Collections.synchronizedMap(new java.util.HashMap<>()));
+        m.put(playerName, d);
+        return d;
+    }
+
+    /** The seat's mainline arm, removed (null = none). */
+    public static SurfaceDirective takeMainline(Game g, String playerName) {
+        Map<String, SurfaceDirective> m = armedMain.get(g);
+        return m == null ? null : m.remove(playerName);
+    }
+
+    /** "act" (fired clean) | "miss:<why>" | "unfired". */
+    public String outcome() {
+        return !fired ? "unfired" : miss == null ? "act" : "miss:" + miss;
     }
 
     public static SurfaceDirective directive(Game g) {
@@ -69,22 +111,38 @@ public final class SurfaceDirective {
      *  ordinal, not yet fired); null otherwise. Counts every callback of
      *  the kind for the seat. */
     static SurfaceDirective match(Game g, Player p, int kind, int n, int max) {
-        final SurfaceDirective d = armed.get(g);
+        return match(g, p, kind, n, max, null);
+    }
+
+    /** @param label the callback's surface label (the trace's), for the
+     *               mainline arm's guard; null = unguarded */
+    static SurfaceDirective match(Game g, Player p, int kind, int n, int max, String label) {
+        SurfaceDirective d = armed.get(g);
+        if (d == null) {
+            Map<String, SurfaceDirective> m = armedMain.get(g);
+            d = m == null ? null : m.get(p.getName());
+        }
         if (d == null || d.kind != kind || !d.playerName.equals(p.getName())) {
             return null;
         }
         if (!Surfaces.nontrivial(kind, n, max)) {
             return null; // the same rule as the trace: trivial callbacks have no ordinal
         }
-        // Ordinals count from the forced priority option onward, exactly as
-        // the trace does (Surfaces.trace gates on SearchDirective.applied).
-        final SearchDirective sr = SearchDirective.active(g, p);
-        if (sr == null || !sr.applied) {
-            return null;
+        if (!d.mainline) {
+            // Ordinals count from the forced priority option onward, exactly as
+            // the trace does (Surfaces.trace gates on SearchDirective.applied).
+            final SearchDirective sr = SearchDirective.active(g, p);
+            if (sr == null || !sr.applied) {
+                return null;
+            }
         }
         int k = d.seen++;
         if (d.fired || k != d.ordinal) {
             return null;
+        }
+        if (d.mainline && d.label != null && label != null && !d.label.equals(label)) {
+            d.miss("label");
+            return null; // the path diverged: the natural answer plays
         }
         d.frame = d.pendingFrame;
         d.pendingFrame = null;
@@ -114,6 +172,7 @@ public final class SurfaceDirective {
 
     @Override
     public String toString() {
-        return "SurfaceDirective[" + Surfaces.KIND_NAMES[kind] + " #" + ordinal + " " + Arrays.toString(answer) + "]";
+        return "SurfaceDirective[" + (mainline ? "mainline " : "") + Surfaces.KIND_NAMES[kind] + " #" + ordinal + " "
+                + Arrays.toString(answer) + "]";
     }
 }
