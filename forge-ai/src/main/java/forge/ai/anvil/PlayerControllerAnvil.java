@@ -233,6 +233,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
 
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
+        // Evening 5: a mainline surface arm lives until the seat's next
+        // QUIESCENT priority window — the copy's leaf, the bound the sub row's
+        // ordinal was counted to (a cast spell's entity choices fire at
+        // resolution, after the play returns; the first smoke took the arm
+        // at the play boundary and every arm was "unfired").
+        if (getGame().getStack().isEmpty()) {
+            SurfaceDirective stale = SurfaceDirective.takeMainline(getGame(), player.getName());
+            if (stale != null) {
+                recordSurfaceArm(stale, "next_window");
+            }
+        }
         List<SpellAbility> picked = chooseSpellAbilityToPlayInner();
         // M12 Build 0: a searched mainline window's row waits for the natural
         // pick (what the policy did here); complete it once, after the answer.
@@ -281,12 +292,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
     }
 
     /** Evening 5 (ADR-0106 A): the acting rule's sampled surface answer on
-     *  the acted option is armed for this seat's next action (its
-     *  ordinal-th callback of the kind, label-guarded); the arm is taken —
-     *  fired, missed or unfired — after the action plays
-     *  (playChosenSpellAbility) and counted in the census per kind. A
-     *  previous unfired arm found here is counted too (the action never
-     *  reached its callback). */
+     *  the acted option is armed for this seat's path to its next quiescent
+     *  window (its ordinal-th callback of the kind, label-guarded); the arm
+     *  is taken — fired, missed or unfired — at that window and counted in
+     *  the census per kind (surfaceAct). An arm still pending here (a
+     *  non-quiescent re-ask in between) is counted as stale. */
     private void armSurface(SearchDirective.Pending pend, SearchDirective.Pending.Decision d) {
         SearchDirective.Pending.SurfAnswers s = d.arm(pend);
         if (s == null) {
@@ -304,17 +314,6 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 "outcome", d.outcome(), "n", d.ncand, "at", when, "label", d.label == null ? "" : d.label);
     }
 
-    @Override
-    public boolean playChosenSpellAbility(SpellAbility sa) {
-        try {
-            return super.playChosenSpellAbility(sa);
-        } finally {
-            SurfaceDirective d = SurfaceDirective.takeMainline(getGame(), player.getName());
-            if (d != null) {
-                recordSurfaceArm(d, "played");
-            }
-        }
-    }
 
     /** M12 Build 2: realize the search's sampled option on the mainline — a
      *  single-option forbid-decline ask (the search copy's W_FORCE shape) so

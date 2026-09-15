@@ -210,6 +210,12 @@ public final class Surfaces {
     /** ENTITY_ONE over the bridge: the option index, or -1 (not bridged, a
      *  trivial window, an out-of-range answer — the natural line stands). */
     static int askOne(Game g, Player p, List<?> opts, String m) {
+        return askOne(g, p, opts, m, m);
+    }
+
+    /** @param label the trace label (the ability's, as the after-hooks
+     *               trace it — the mainline arm's guard compares it) */
+    static int askOne(Game g, Player p, List<?> opts, String m, String label) {
         AnvilBridge b = bridgeFor(p, ENTITY_ONE);
         if (b == null || !nontrivial(ENTITY_ONE, opts.size(), 1)) {
             return -1;
@@ -221,13 +227,17 @@ public final class Surfaces {
             // the served answer IS the natural line: trace it on search copies so the
             // expansion round still enumerates this surface (a bridged hook returns
             // before the wrapper's after-hook — found on the first served smoke, 09-07)
-            trace(g, p, ENTITY_ONE, m, opts.size(), 1, 1, new int[] {i}, null);
+            trace(g, p, ENTITY_ONE, label, opts.size(), 1, 1, new int[] {i}, null);
         }
         return ok ? i : -1;
     }
 
     /** ENTITY_SET over the bridge: distinct indices within [min, max], or null. */
     static int[] askSet(Game g, Player p, List<?> opts, int min, int max, String m) {
+        return askSet(g, p, opts, min, max, m, m);
+    }
+
+    static int[] askSet(Game g, Player p, List<?> opts, int min, int max, String m, String label) {
         AnvilBridge b = bridgeFor(p, ENTITY_SET);
         if (b == null || !nontrivial(ENTITY_SET, opts.size(), max) || (min >= opts.size() && max >= opts.size())) {
             return null;
@@ -236,7 +246,7 @@ public final class Surfaces {
         boolean ok = a != null && validIndices(a, opts.size(), min, max, true);
         Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
         if (ok) {
-            trace(g, p, ENTITY_SET, m, opts.size(), min, max, a, null); // the served answer = the natural line
+            trace(g, p, ENTITY_SET, label, opts.size(), min, max, a, null); // the served answer = the natural line
         }
         return ok ? a : null;
     }
@@ -737,7 +747,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, opts.size(), 1, labelOf(sa));
             if (d == null) {
-                int i = askOne(g, p, opts, "chooseSingleEntityForEffect");
+                int i = askOne(g, p, opts, "chooseSingleEntityForEffect", labelOf(sa));
                 return i < 0 ? null : opts.get(i);
             }
             if (!validIndices(d.answer, opts.size(), 1, 1, true)) {
@@ -764,7 +774,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, spells.size(), 1, labelOf(sa));
             if (d == null) {
-                int i = askOne(g, p, spells, "chooseSingleSpellForEffect");
+                int i = askOne(g, p, spells, "chooseSingleSpellForEffect", labelOf(sa));
                 return i < 0 ? null : spells.get(i);
             }
             if (!validIndices(d.answer, spells.size(), 1, 1, true)) {
@@ -785,7 +795,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_ONE, fetchList.size(), 1, labelOf(sa));
             if (d == null) {
-                int i = askOne(g, p, fetchList, "chooseSingleCardForZoneChange");
+                int i = askOne(g, p, fetchList, "chooseSingleCardForZoneChange", labelOf(sa));
                 return i < 0 ? null : fetchList.get(i);
             }
             if (!validIndices(d.answer, fetchList.size(), 1, 1, true)) {
@@ -810,7 +820,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max, labelOf(sa));
             if (d == null) {
-                int[] a = askSet(g, p, opts, min, max, "chooseEntitiesForEffect");
+                int[] a = askSet(g, p, opts, min, max, "chooseEntitiesForEffect", labelOf(sa));
                 if (a == null) {
                     return null;
                 }
@@ -844,7 +854,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, ENTITY_SET, opts.size(), max, labelOf(sa));
             if (d == null) {
-                int[] a = askSet(g, p, opts, min, max, "chooseCardsForEffect");
+                int[] a = askSet(g, p, opts, min, max, "chooseCardsForEffect", labelOf(sa));
                 if (a == null) {
                     return null;
                 }
@@ -1032,7 +1042,7 @@ public final class Surfaces {
             }
             SurfaceDirective d = SurfaceDirective.match(g, p, MODE, possible.size(), num, labelOf(sa));
             if (d == null) {
-                int[] a = askMode(g, p, possible, min, num, allowRepeat, "chooseModeForAbility");
+                int[] a = askMode(g, p, possible, min, num, allowRepeat, "chooseModeForAbility", labelOf(sa));
                 if (a == null) {
                     return null;
                 }
@@ -1067,6 +1077,10 @@ public final class Surfaces {
      *  repeat allowed when the callback allows one; null = the natural line
      *  (not bridged, a trivial window, an invalid answer). */
     static int[] askMode(Game g, Player p, List<?> opts, int min, int max, boolean repeat, String m) {
+        return askMode(g, p, opts, min, max, repeat, m, m);
+    }
+
+    static int[] askMode(Game g, Player p, List<?> opts, int min, int max, boolean repeat, String m, String label) {
         AnvilBridge b = bridgeFor(p, MODE);
         if (b == null || !nontrivial(MODE, opts.size(), max)
                 || (!repeat && min >= opts.size() && max >= opts.size())) {
@@ -1105,7 +1119,7 @@ public final class Surfaces {
         }
         Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok, "gate", gate);
         if (ok) {
-            trace(g, p, MODE, m, opts.size(), min, max, a, null, repeat); // the served answer = the natural line
+            trace(g, p, MODE, label, opts.size(), min, max, a, null, repeat); // the served answer = the natural line
         }
         return ok ? a : null;
     }
