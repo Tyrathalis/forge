@@ -310,6 +310,9 @@ public final class AnvilOptions {
         // must appear as an option or the logged legality mask would forbid
         // the heuristic's own pick (found by the D2 smoke validator).
         int scanned = 0, rejected = 0, rescue = 0;
+        // the mana-source memo (ComputerUtilMana, 2026-09-14): one grouping per scan
+        forge.ai.ComputerUtilMana.armSourceMemo(player);
+        try {
         for (SpellAbility sa : ComputerUtilAbility.getOriginalAndAltCostAbilities(
                 ComputerUtilAbility.getSpellAbilities(cards, player), player)) {
             if (sa.isLandAbility() || !sa.canPlay()) {
@@ -327,6 +330,9 @@ public final class AnvilOptions {
                     options.add(sa); // evening 4: the rescue class admitted (pays directed)
                 }
             }
+        }
+        } finally {
+            forge.ai.ComputerUtilMana.disarmSourceMemo();
         }
         if (PAYSHADOW || PAYRESCUE) {
             Census.rec(game, player, "paymask", "n", scanned, "rej", rejected, "rescue", rescue,

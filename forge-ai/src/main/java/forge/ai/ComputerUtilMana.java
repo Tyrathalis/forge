@@ -1490,7 +1490,63 @@ public class ComputerUtilMana {
         return sortedManaSources;
     }
 
+    // ---- Anvil (2026-09-14, the JFR read): a per-scan memo of the mana-source
+    // grouping. AnvilOptions.buildPriorityOptions tests every candidate's
+    // payability, and each test rebuilt this grouping (18% of a search
+    // worker's CPU: getAvailableManaSources + canPlay per mana ability + the
+    // ProduceMana replacement lookup per source) although nothing it reads
+    // changes between the candidates of one scan (canPlay on a candidate
+    // touches its own targets/X, never the battlefield or the pool). Armed
+    // only for the scan's duration on the scan's thread; every consumer gets
+    // a fresh copy so downstream mutation cannot leak; the heuristic AI's own
+    // payment calls never see it. -Danvil.scan.sourcememo=off restores the
+    // per-candidate rebuild (the identity gate's reference arm).
+    private static final boolean SOURCE_MEMO_ENABLED =
+            !"off".equals(System.getProperty("anvil.scan.sourcememo", "on"));
+
+    private static final class SourceMemo {
+        final Player ai;
+        ListMultimap<Integer, SpellAbility> playable;
+        ListMultimap<Integer, SpellAbility> any;
+        SourceMemo(final Player ai) {
+            this.ai = ai;
+        }
+    }
+
+    private static final ThreadLocal<SourceMemo> SOURCE_MEMO = new ThreadLocal<>();
+    public static long sourceMemoHits = 0, sourceMemoBuilds = 0; // Census telemetry
+
+    public static void armSourceMemo(final Player ai) {
+        if (SOURCE_MEMO_ENABLED) {
+            SOURCE_MEMO.set(new SourceMemo(ai));
+        }
+    }
+
+    public static void disarmSourceMemo() {
+        SOURCE_MEMO.remove();
+    }
+
     private static ListMultimap<Integer, SpellAbility> groupSourcesByManaColor(final Player ai, boolean checkPlayable) {
+        final SourceMemo memo = SOURCE_MEMO.get();
+        if (memo == null || memo.ai != ai) {
+            return buildSourcesByManaColor(ai, checkPlayable);
+        }
+        ListMultimap<Integer, SpellAbility> cached = checkPlayable ? memo.playable : memo.any;
+        if (cached == null) {
+            cached = buildSourcesByManaColor(ai, checkPlayable);
+            if (checkPlayable) {
+                memo.playable = cached;
+            } else {
+                memo.any = cached;
+            }
+            sourceMemoBuilds++;
+        } else {
+            sourceMemoHits++;
+        }
+        return ArrayListMultimap.create(cached);
+    }
+
+    private static ListMultimap<Integer, SpellAbility> buildSourcesByManaColor(final Player ai, boolean checkPlayable) {
         final ListMultimap<Integer, SpellAbility> manaMap = ArrayListMultimap.create();
         final Game game = ai.getGame();
 
