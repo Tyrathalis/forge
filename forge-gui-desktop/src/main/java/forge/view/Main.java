@@ -139,7 +139,10 @@ public final class Main {
      * not a mode and only prints usage, so it is deliberately not listed here.
      */
     public static boolean isCommandLineMode(final String mode) {
-        return "sim".equals(mode) || "parse".equals(mode) || "server".equals(mode);
+        // Anvil (ADR-0110): the fork's own console modes — a worker without
+        // DISPLAY used to exit 1 silently at AWT init (Sentry ate the crash).
+        return "sim".equals(mode) || "parse".equals(mode) || "server".equals(mode)
+                || "anvil".equals(mode) || "forkcheck".equals(mode) || "census".equals(mode);
     }
 
     @SuppressWarnings("deprecation")
