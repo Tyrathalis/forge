@@ -220,6 +220,11 @@ final class ObsSnapshot {
                 }
                 sb.append("\"c\":").append(players.indexOf(si.getActivatingPlayer()))
                         .append(",\"lbl\":").append(Obs.q(trunc(String.valueOf(sa == null ? si : sa))));
+                // Build 4 (ADR-0111): the entry's ability key (the wrapped trigger's) — the
+                // stack-entry fields key the model's additive stack representation on it
+                if (sa != null) {
+                    Obs.ak(sb, sa.isWrapper() ? ((forge.game.trigger.WrappedAbility) sa).getWrappedAbility() : sa);
+                }
                 if (si.getTargetChoices() != null && !si.getTargetChoices().isEmpty()) {
                     sb.append(",\"tgt\":[");
                     int j = 0;
