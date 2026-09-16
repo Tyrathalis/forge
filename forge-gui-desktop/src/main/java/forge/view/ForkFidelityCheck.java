@@ -253,6 +253,7 @@ public final class ForkFidelityCheck {
 
         Match mc = new Match(rules, pp, "ForkFidelity");
         Game game = mc.createGame();
+        AnvilGames.noGui(game); // -Danvil.nogui=on: upstream #11780 DummyCardView (ADR-0110)
         Monitor monitor = new Monitor(game, result);
         monitor.perturb = perturb;
         monitor.freshRng = freshRng;

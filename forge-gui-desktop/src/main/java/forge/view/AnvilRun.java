@@ -360,6 +360,10 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchdeepbar").get(0)) : Double.NaN;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
+        // ADR-0110 (the 09-16 merge): -searchvoidskip 0|1 (default 1) — a first-ply
+        // candidate whose roll-0 copy voided is not re-rolled (kind "skip").
+        SearchMonitor.VOID_SKIP = !params.containsKey("searchvoidskip")
+                || !"0".equals(params.get("searchvoidskip").get(0));
         // Evening 4 (ADR-0105): the ADR-0102 rescue class admitted + paid
         // directed (AnvilOptions.PAYRESCUE); a game-path change under the
         // flag only, on every header as provenance.
@@ -423,7 +427,7 @@ public final class AnvilRun {
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
                     + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d,"
-                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s}",
+                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s,\"voidskip\":%b}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
@@ -432,7 +436,8 @@ public final class AnvilRun {
                     searchActKinds == null ? "null" : "\"" + searchActKinds + "\"", searchRollSalt,
                     searchDeep, searchDeepLeaf, searchDeepRolls, String.valueOf(searchDeepLo),
                     String.valueOf(searchDeepFloor),
-                    Double.isNaN(searchDeepBar) ? "null" : String.valueOf(searchDeepBar));
+                    Double.isNaN(searchDeepBar) ? "null" : String.valueOf(searchDeepBar),
+                    SearchMonitor.VOID_SKIP);
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -848,6 +853,7 @@ public final class AnvilRun {
 
                 Match mc = new Match(rules, pp, "Anvil");
                 Game game = mc.createGame();
+                AnvilGames.noGui(game); // -Danvil.nogui=on: upstream #11780 DummyCardView (ADR-0110)
                 Census.startGame(idx, seed);
                 Obs.startGame(idx, seed, game, type.toString());
                 long gameT0 = System.currentTimeMillis();
@@ -1368,6 +1374,12 @@ public final class AnvilRun {
         final double deepLo;
         final double deepFloor;
         final double deepBar;
+        /** ADR-0110: skip rolls ≥ 1 of a first-ply candidate whose roll-0 copy
+         *  voided (the forced option absent on the copy — a copy-fidelity
+         *  artifact, deterministic per candidate, so it repeats on every roll;
+         *  its value is NaN either way; 29.6% of first-ply copies on the 09-15
+         *  bench cell, ≈ 15% of them at rolls 2). Search-copy / recording only. */
+        static boolean VOID_SKIP = true;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1990,6 +2002,15 @@ public final class AnvilRun {
                         kinds.append(',');
                         calls.append(',');
                         snaps.append(',');
+                    }
+                    if (r > 0 && VOID_SKIP && "void".equals(firstKind[c][0])) {
+                        firstKind[c][r] = "skip";
+                        firstV[c][r] = Double.NaN;
+                        sb.append("null");
+                        kinds.append("\"skip\"");
+                        calls.append('0');
+                        snaps.append("null");
+                        continue;
                     }
                     String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c;
                     CopyResult cr = runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, -1, -1, null,

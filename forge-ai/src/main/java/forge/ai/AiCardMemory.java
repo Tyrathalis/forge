@@ -212,6 +212,49 @@ public class AiCardMemory {
         }
     }
 
+    // ---- Anvil (ADR-0110, 2026-09-16): a whole-memory snapshot for probes that
+    // must leave the AI's memory untouched (PlayerControllerAnvil.quietProbe:
+    // the payment probe runs ComputerUtilMana's test-mode payment, which
+    // writes the mana-reservation sets and, since #11667, MemorySetMana.
+    // UNPAID_COSTS). Every entry of the map is copied, so a memory set added
+    // later is covered without a named list. Fork-local, additive.
+    public Map<MemoryType, Set> snapshotAll() {
+        final Map<MemoryType, Set> snap = Maps.newHashMap();
+        for (Map.Entry<MemoryType, Set> e : memoryMap.get().entrySet()) {
+            snap.put(e.getKey(), Sets.newHashSet(e.getValue()));
+        }
+        return snap;
+    }
+
+    /** Restores the memory to a {@link #snapshotAll()} state: every set present in
+     *  the snapshot is replaced by its saved contents; a set created since the
+     *  snapshot is cleared. */
+    public void restoreAll(Map<MemoryType, Set> snap) {
+        for (MemoryType key : memoryMap.get().keySet()) {
+            if (!snap.containsKey(key)) {
+                getMemorySet(key).clear();
+            }
+        }
+        for (Map.Entry<MemoryType, Set> e : snap.entrySet()) {
+            final Set cur = getMemorySet(e.getKey());
+            cur.clear();
+            cur.addAll(e.getValue());
+        }
+    }
+
+    public static Map<MemoryType, Set> snapshotAll(Player ai) {
+        if (!ai.getController().isAI()) {
+            return null;
+        }
+        return ((PlayerControllerAi) ai.getController()).getAi().getCardMemory().snapshotAll();
+    }
+    public static void restoreAll(Player ai, Map<MemoryType, Set> snap) {
+        if (snap == null || !ai.getController().isAI()) {
+            return;
+        }
+        ((PlayerControllerAi) ai.getController()).getAi().getCardMemory().restoreAll(snap);
+    }
+
     // Static functions to simplify access to AI card memory of a given AI player.
     public static <T> Set<T> getMemorySet(Player ai, MemoryType<T> set) {
         if (!ai.getController().isAI()) {

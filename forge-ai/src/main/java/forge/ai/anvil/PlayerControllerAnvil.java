@@ -1100,42 +1100,23 @@ public class PlayerControllerAnvil extends CensusPlayerController {
      * rule says probes are RNG-neutral). Scratch RNG around the body and the
      * memory sets the probe can change snapshotted and restored after.
      */
-    private static final forge.ai.AiCardMemory.MemorySet[] PROBE_SETS = {
-        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_DECLBLK,
-        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_ENEMY_DECLBLK,
-        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_NEXT_SPELL,
-        forge.ai.AiCardMemory.MemorySet.HELD_MANA_SOURCES_FOR_MAIN2,
-        forge.ai.AiCardMemory.MemorySet.CHOSEN_FOG_EFFECT,
-        forge.ai.AiCardMemory.MemorySet.PAYS_TAP_COST,
-        forge.ai.AiCardMemory.MemorySet.PAYS_SAC_COST,
-    };
-
     private <T> T quietProbe(java.util.function.Supplier<T> body) {
+        // ADR-0110 (the 09-16 upstream merge): the whole memory map, not a
+        // named list — #11667 added MemorySetMana.UNPAID_COSTS, written by the
+        // test-mode payment the probe runs and read by ChangeZoneAi; a named
+        // list would have leaked it silently.
         final forge.game.player.Player p = getPlayer();
-        final java.util.List<java.util.Set<forge.game.card.Card>> saved = new java.util.ArrayList<>(PROBE_SETS.length);
-        for (forge.ai.AiCardMemory.MemorySet ms : PROBE_SETS) {
-            java.util.Set<forge.game.card.Card> cur = null;
-            try {
-                cur = forge.ai.AiCardMemory.getMemorySet(p, ms);
-            } catch (Exception ignored) {
-            }
-            saved.add(cur == null ? null : new java.util.HashSet<>(cur));
+        java.util.Map<forge.ai.AiCardMemory.MemoryType, java.util.Set> saved = null;
+        try {
+            saved = forge.ai.AiCardMemory.snapshotAll(p);
+        } catch (Exception ignored) {
         }
         try {
             return AnvilOptions.withScratchRng(body);
         } finally {
-            for (int i = 0; i < PROBE_SETS.length; i++) {
-                final java.util.Set<forge.game.card.Card> was = saved.get(i);
-                if (was == null) {
-                    continue;
-                }
-                try {
-                    forge.ai.AiCardMemory.clearMemorySet(p, PROBE_SETS[i]);
-                    for (forge.game.card.Card c : was) {
-                        forge.ai.AiCardMemory.rememberCard(p, c, PROBE_SETS[i]);
-                    }
-                } catch (Exception ignored) {
-                }
+            try {
+                forge.ai.AiCardMemory.restoreAll(p, saved);
+            } catch (Exception ignored) {
             }
         }
     }

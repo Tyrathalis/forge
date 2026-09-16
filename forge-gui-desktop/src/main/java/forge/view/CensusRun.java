@@ -118,6 +118,7 @@ public final class CensusRun {
 
                 Match mc = new Match(rules, pp, "Census");
                 Game game = mc.createGame();
+                AnvilGames.noGui(game); // -Danvil.nogui=on: upstream #11780 DummyCardView (ADR-0110)
                 Census.startGame(i, seed);
                 ScheduledFuture<?> drawClock = watchdogs.schedule(
                         () -> game.setGameOver(GameEndReason.Draw), DRAW_CLOCK_S, TimeUnit.SECONDS);
@@ -314,6 +315,7 @@ public final class CensusRun {
         }
         Match mc = new Match(rules, pp, "Census");
         Game game = mc.createGame();
+        AnvilGames.noGui(game); // -Danvil.nogui=on: upstream #11780 DummyCardView (ADR-0110)
         if (job.observe && forge.ai.anvil.Obs.isOpen()) {
             // one obs frame per observe job; store game idx = job id (the
             // Python-side join key back to the drill row)
