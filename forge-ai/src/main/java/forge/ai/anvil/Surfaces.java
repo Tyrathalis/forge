@@ -1090,6 +1090,56 @@ public final class Surfaces {
         }
     }
 
+    /** The legal targets of an already-targeted ability, enumerated as the
+     *  engine does at setupTargets — with its targets cleared (unique /
+     *  same-controller restrictions read the picks so far) and restored. */
+    public static List<GameEntity> targetOptionsCleared(SpellAbility sa) {
+        SpellAbility u = unwrap(sa);
+        if (u == null) {
+            return Collections.emptyList();
+        }
+        TargetChoices old = u.getTargets();
+        try {
+            u.resetTargets();
+            return targetOptions(u, null);
+        } finally {
+            u.setTargets(old);
+        }
+    }
+
+    /** A prepared trigger's targeting ability (PlayerControllerAi.preparedTrigger:
+     *  the effect logic already picked; the picks = the natural line): a
+     *  directed / bridged answer re-targets it, else the picks stand. The
+     *  window is traced either way. */
+    public static boolean retargetPrepared(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa) {
+        try {
+            SpellAbility u = unwrap(sa);
+            int[] natural = indicesOf(opts, u.getTargets());
+            if (!Census.loopTripped(g) && !opts.isEmpty()) {
+                SurfaceDirective[] d = new SurfaceDirective[1];
+                int[] a = targetAnswer(g, p, opts, min, max, "playTriggerTargets", labelOf(sa), d);
+                if (a != null) {
+                    TargetChoices old = u.getTargets();
+                    if (applyTargets(u, opts, a)) {
+                        if (d[0] != null) {
+                            d[0].fired(opts.size());
+                        }
+                        trace(g, p, TARGET, labelOf(sa), opts.size(), min, max, a, null);
+                        return true;
+                    }
+                    u.setTargets(old);
+                    if (d[0] != null) {
+                        d[0].miss("legal");
+                    }
+                }
+            }
+            trace(g, p, TARGET, labelOf(sa), opts.size(), min, max, natural, null);
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static void afterTargets(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa,
             boolean ok) {
         int[] natural = null;

@@ -218,6 +218,33 @@ public class CensusPlayerController extends PlayerControllerAi {
         return __r;
     }
 
+    /** Build 4 (ADR-0109): the target surface's main site — a trigger the AI
+     *  prepared (PlayerControllerAi.playTrigger / orderAndPlaySimultaneousSa:
+     *  modes chosen, targets picked by the effect logic, every other decision
+     *  made) gets one TARGET window per targeting ability in its chain, the
+     *  heuristic's picks as the natural line; a directed / bridged answer
+     *  re-targets that ability before the play. */
+    @Override
+    protected void preparedTrigger(SpellAbility sa) {
+        try {
+            for (SpellAbility cur = Surfaces.unwrap(sa); cur != null; cur = cur.getSubAbility()) {
+                if (!cur.usesTargeting()) {
+                    continue;
+                }
+                List<GameEntity> __o = Surfaces.targetOptionsCleared(cur);
+                if (__o.size() < 2) {
+                    continue;
+                }
+                int __min = Surfaces.targetMin(cur), __max = Surfaces.targetMax(cur);
+                Census.rec(getGame(), getPlayer(), "playTriggerTargets", "sa", Census.str(sa), "ability", Census.str(cur), "min", __min, "max", __max, "candidates", __o.size());
+                long __s = Surfaces.dec(getGame(), getPlayer(), "playTriggerTargets", Surfaces.TARGET, __o, "sa", Census.str(sa), "ability", Census.str(cur), "min", __min, "max", __max, "candidates", __o.size(), "sak", cur);
+                Surfaces.retargetPrepared(getGame(), getPlayer(), __o, __min, __max, cur);
+                Obs.ret(getGame(), __s, cur.getTargets());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     @Override
     public boolean chooseTargetsFor(SpellAbility currentAbility) {
         Census.rec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));

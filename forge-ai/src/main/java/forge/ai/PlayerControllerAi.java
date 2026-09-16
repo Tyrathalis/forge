@@ -1296,6 +1296,7 @@ public class PlayerControllerAi extends PlayerController {
         for (final SpellAbility sa : orderSimultaneousSa(activePlayerSAs)) {
             if (sa.isTrigger() && !sa.isCopied()) {
                 if (prepareSingleSa(sa.getHostCard(), sa, true)) {
+                    preparedTrigger(sa);
                     ComputerUtil.playStack(sa, player, getGame());
                 }
             } else {
@@ -1345,9 +1346,18 @@ public class PlayerControllerAi extends PlayerController {
     @Override
     public boolean playTrigger(Card host, WrappedAbility wrapperAbility, boolean isMandatory) {
         if (prepareSingleSa(host, wrapperAbility, isMandatory)) {
+            preparedTrigger(wrapperAbility);
             return ComputerUtil.playNoStack(wrapperAbility.getActivatingPlayer(), wrapperAbility, getGame(), true);
         }
         return false;
+    }
+
+    /**
+     * A prepared trigger (its modes chosen, its targets picked by the effect
+     * logic) about to be played: a hook for a controller that re-chooses the
+     * targets (Anvil's target surface). No-op here.
+     */
+    protected void preparedTrigger(SpellAbility sa) {
     }
 
     @Override
