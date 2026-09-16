@@ -273,19 +273,19 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         final String label = pend.cands[d.actIdx];
         if (label == null) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                    "by", "search", "pick", "pass", "nat", natural, "margin", d.margin);
+                    "by", d.by, "pick", "pass", "nat", natural, "margin", d.margin);
             pend.complete(natural, d, "pass");
             return null;
         }
         List<SpellAbility> forced = searchForcedAsk(label);
         if (forced == null || forced.isEmpty()) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                    "by", "search", "pick", label, "nat", natural, "margin", d.margin, "void", true);
+                    "by", d.by, "pick", label, "nat", natural, "margin", d.margin, "void", true);
             pend.complete(natural, d, "act_void");
             return picked;
         }
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                "by", "search", "pick", Census.str(forced.get(0)), "nat", natural, "margin", d.margin);
+                "by", d.by, "pick", Census.str(forced.get(0)), "nat", natural, "margin", d.margin);
         pend.complete(natural, d, "act");
         armSurface(pend, d);
         return forced;

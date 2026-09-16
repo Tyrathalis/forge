@@ -173,6 +173,34 @@ public final class SearchDirective {
          *  on its path (null = not expanded / no surface / a kind not
          *  acted); the acting rule's second stage samples among them. */
         public final SurfAnswers[] surf;
+        /** The partial-expansion slot (ADR-0106 C3): the deep round's runner
+         *  (null = off), its set size B, the natural-margin band [lo, bar)
+         *  that gates it, the floor rate on the other windows, and the bar
+         *  the deep values act under. */
+        public final DeepRound deep;
+        public final int deepTop;
+        public final double deepLo;
+        public final double deepFloor;
+        public final double deepBar;
+
+        /** The partial-expansion slot's runner: re-expands the candidates in
+         *  `set` (indices into cands; each with the answer index its stage-1
+         *  sample chose on surf[c], or -1 = the natural answer) to the deep
+         *  leaf under CRN and returns their mean deep values (NaN outside the
+         *  set / unvalued) plus the row's "copies" fragment. */
+        public interface DeepRound {
+            Result run(int[] set, int[] ansIdx);
+
+            final class Result {
+                public final double[] v;
+                public final String copies;
+
+                public Result(double[] v, String copies) {
+                    this.v = v;
+                    this.copies = copies;
+                }
+            }
+        }
 
         /** One expanded surface on a candidate's path: the enumerated
          *  answers with their mean leaf values (NaN = unvalued) and the
@@ -206,6 +234,12 @@ public final class SearchDirective {
 
         public Pending(String rowPrefix, Consumer<String> sink, String[] cands, double[] values,
                 double bar, double temp, long sampleSeed, SurfAnswers[] surf) {
+            this(rowPrefix, sink, cands, values, bar, temp, sampleSeed, surf, null, 0, 0.0, 0.0, Double.NaN);
+        }
+
+        public Pending(String rowPrefix, Consumer<String> sink, String[] cands, double[] values,
+                double bar, double temp, long sampleSeed, SurfAnswers[] surf, DeepRound deep, int deepTop,
+                double deepLo, double deepFloor, double deepBar) {
             this.rowPrefix = rowPrefix;
             this.sink = sink;
             this.cands = cands;
@@ -214,6 +248,11 @@ public final class SearchDirective {
             this.temp = temp;
             this.sampleSeed = sampleSeed;
             this.surf = surf;
+            this.deep = deep;
+            this.deepTop = deepTop;
+            this.deepLo = deepLo;
+            this.deepFloor = deepFloor;
+            this.deepBar = Double.isNaN(deepBar) ? bar : deepBar;
         }
 
         public boolean acts() {
@@ -250,6 +289,23 @@ public final class SearchDirective {
              *  values, each lifted to its sampled answer's value where the
              *  answer stage cleared the bar (null = no lift anywhere). */
             public double[] lifted = null;
+            /** The partial-expansion slot (ADR-0106 C3). deepBy: off (no
+             *  deep round) | single (one valued candidate — nothing to
+             *  adjudicate) | gate (the shallow margin outside the band and
+             *  the floor draw missed — the shallow rule decided) | band (the
+             *  shallow margin in [lo, bar) — the deep round ran) | floor (the
+             *  floor draw hit — it ran) | nat_unvalued (it ran; the natural's
+             *  deep copies all void — the shallow rule decided). When it ran,
+             *  `by` reads deep | deep_nat | natural on the DEEP values over
+             *  the deep set (every other candidate pruned) and `margin` is
+             *  the deep margin; shallowMargin / shallowArg keep the first
+             *  ply's verdict for the allocation head's labels (fork L). */
+            public String deepBy = "off";
+            public int[] deepSet = null;
+            public double[] deepV = null;
+            public String deepCopies = null;
+            public double shallowMargin = Double.NaN;
+            public int shallowArg = -1;
 
             /** The surface answer to arm on the mainline, or null. */
             public SurfAnswers arm(Pending p) {
@@ -364,18 +420,99 @@ public final class SearchDirective {
             // ---- stage 2: the options
             double max = Double.NEGATIVE_INFINITY;
             int argmax = -1;
+            int nValued = 0;
             for (int i = 0; i < v.length; i++) {
-                if (!Double.isNaN(v[i]) && v[i] > max) {
-                    max = v[i];
-                    argmax = i;
+                if (!Double.isNaN(v[i])) {
+                    nValued++;
+                    if (v[i] > max) {
+                        max = v[i];
+                        argmax = i;
+                    }
                 }
             }
             d.margin = max - v[d.natIdx];
-            if (d.margin >= bar) {
+            double actBar = bar;
+            // ---- the deep stage (ADR-0106 C3, the partial-expansion slot):
+            // where the shallow margin sits in [lo, bar) — the first ply sees
+            // something but not enough to act on — or on a seeded floor draw,
+            // the natural ∪ the top-B (by the lifted first-ply value) are
+            // re-expanded to the deep leaf; the option stage then runs on the
+            // deep values over that set only (the rest pruned) under the deep
+            // bar. Outside the band the shallow rule decides as before.
+            if (deep != null) {
+                d.shallowMargin = d.margin;
+                d.shallowArg = argmax;
+                if (nValued < 2) {
+                    d.deepBy = "single";
+                } else {
+                    boolean band = d.margin >= deepLo && d.margin < bar;
+                    boolean floor = !band && deepFloor > 0
+                            && ((mix64(sampleSeed ^ 0xDEEBL) >>> 11) * 0x1.0p-53) < deepFloor;
+                    if (!band && !floor) {
+                        d.deepBy = "gate";
+                    } else {
+                        d.deepBy = band ? "band" : "floor";
+                        // the deep set: the top-B valued candidates by the
+                        // lifted first-ply value, plus the natural when it
+                        // ranks outside them (B or B + 1 candidates)
+                        java.util.List<Integer> order = new java.util.ArrayList<>();
+                        for (int i = 0; i < v.length; i++) {
+                            if (!Double.isNaN(v[i])) {
+                                order.add(i);
+                            }
+                        }
+                        final double[] fv = v;
+                        order.sort((a, b) -> Double.compare(fv[b], fv[a]));
+                        java.util.TreeSet<Integer> setIdx = new java.util.TreeSet<>();
+                        for (int i = 0; i < order.size() && i < Math.max(1, deepTop); i++) {
+                            setIdx.add(order.get(i));
+                        }
+                        setIdx.add(d.natIdx);
+                        int[] set = new int[setIdx.size()];
+                        int si = 0;
+                        for (int i : setIdx) {
+                            set[si++] = i;
+                        }
+                        int[] ans = new int[v.length];
+                        java.util.Arrays.fill(ans, -1);
+                        if (ansPick != null) {
+                            for (int c = 0; c < v.length; c++) {
+                                if (ansPick[c] >= 0 && surf[c] != null && ansPick[c] != surf[c].natIdx) {
+                                    ans[c] = ansPick[c];
+                                }
+                            }
+                        }
+                        DeepRound.Result res = deep.run(set, ans);
+                        d.deepSet = set;
+                        d.deepV = res.v;
+                        d.deepCopies = res.copies;
+                        if (res.v == null || Double.isNaN(res.v[d.natIdx])) {
+                            d.deepBy = "nat_unvalued";
+                        } else {
+                            double[] dv = new double[v.length];
+                            java.util.Arrays.fill(dv, Double.NaN);
+                            max = Double.NEGATIVE_INFINITY;
+                            argmax = -1;
+                            for (int i : set) {
+                                dv[i] = res.v[i];
+                                if (!Double.isNaN(dv[i]) && dv[i] > max) {
+                                    max = dv[i];
+                                    argmax = i;
+                                }
+                            }
+                            v = dv;
+                            d.margin = max - v[d.natIdx];
+                            actBar = deepBar;
+                        }
+                    }
+                }
+            }
+            final boolean deepRan = "band".equals(d.deepBy) || "floor".equals(d.deepBy);
+            if (d.margin >= actBar) {
                 d.p = new double[v.length];
                 d.actIdx = sample(v, max, argmax, temp, sampleSeed, d.p);
                 d.logp = Math.log(d.p[d.actIdx]);
-                d.by = d.actIdx == d.natIdx ? "search_nat" : "search";
+                d.by = d.actIdx == d.natIdx ? (deepRan ? "deep_nat" : "search_nat") : (deepRan ? "deep" : "search");
             }
             // ---- the acted option's answer verdict
             if (surf != null) {
@@ -451,6 +588,38 @@ public final class SearchDirective {
                                 : String.format(java.util.Locale.ROOT, "%.5f", d.lifted[i]));
                     }
                     sb.append(']');
+                }
+                if (!"off".equals(d.deepBy)) {
+                    // the partial-expansion slot: the gate's verdict, the
+                    // first ply's margin + argmax, the deep set + values, the
+                    // deep copies (per set candidate: leaf, v, kind, calls,
+                    // snap, ms)
+                    sb.append(",\"deep\":{\"by\":\"").append(d.deepBy).append('"')
+                            .append(",\"shallow_margin\":").append(Double.isNaN(d.shallowMargin) ? "null"
+                                    : String.format(java.util.Locale.ROOT, "%.5f", d.shallowMargin))
+                            .append(",\"shallow_arg\":").append(d.shallowArg);
+                    if (d.deepSet != null) {
+                        sb.append(",\"set\":[");
+                        for (int i = 0; i < d.deepSet.length; i++) {
+                            if (i > 0) {
+                                sb.append(',');
+                            }
+                            sb.append(d.deepSet[i]);
+                        }
+                        sb.append("],\"v\":[");
+                        for (int i = 0; i < d.deepSet.length; i++) {
+                            if (i > 0) {
+                                sb.append(',');
+                            }
+                            double dv = d.deepV == null ? Double.NaN : d.deepV[d.deepSet[i]];
+                            sb.append(Double.isNaN(dv) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", dv));
+                        }
+                        sb.append(']');
+                    }
+                    if (d.deepCopies != null) {
+                        sb.append(",\"copies\":").append(d.deepCopies);
+                    }
+                    sb.append('}');
                 }
                 if (!"off".equals(d.ansBy)) {
                     // evening 5: the answer stage on the acted option

@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchclock <s>]] "
+                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>]] "
                     + "[-payrescue]");
             return;
         }
@@ -325,6 +325,39 @@ public final class AnvilRun {
                 ? Long.parseLong(params.get("searchrollsalt").get(0)) : 0L;
         final int searchClock = params.containsKey("searchclock")
                 ? Integer.parseInt(params.get("searchclock").get(0)) : 900;
+        // The partial-expansion slot (ADR-0106 C3): -searchdeep B re-expands
+        // the natural pick + the top-B first-ply candidates (by their lifted
+        // value) to a DEEPER leaf (-searchdeepleaf, default h2 — C1's deep
+        // arm) at -searchdeeprolls (default 4: h2's roll σ is ≈ 8× next's)
+        // under CRN, and the option stage then decides on the deep values
+        // over that set (the rest pruned) under -searchdeepbar (default the
+        // acting bar). Gated on the shallow margin: the deep round runs where
+        // max V − V(natural) lies in [-searchdeeplo, bar) — the first ply
+        // sees something but not enough to act on (default 0.02 ≈ two roll
+        // σ at next; 11% of heuristic windows, more on network arms) — plus
+        // a seeded floor draw at -searchdeepfloor on every other window
+        // (default 0.1: fork L's labels need every shape on ungated
+        // windows). It runs at decide time (after the controller's ask), so
+        // the natural is always in the deep set; the deep copies play the
+        // (option, lifted answer) pair the shallow stage proposed. Requires
+        // -searchact. Search-copy / recording only; the mainline is
+        // untouched. Measured, not assumed: an h2 copy is ≈ 10× a next copy
+        // on the calibration arms (09-15).
+        final int searchDeep = params.containsKey("searchdeep")
+                ? Integer.parseInt(params.get("searchdeep").get(0)) : 0;
+        final String searchDeepLeaf = params.containsKey("searchdeepleaf")
+                ? params.get("searchdeepleaf").get(0) : "h2";
+        if (SearchMonitor.payLeafHorizon(searchDeepLeaf) == Integer.MIN_VALUE || "next".equals(searchDeepLeaf)) {
+            throw new IllegalArgumentException("-searchdeepleaf eot|h<N>|end");
+        }
+        final int searchDeepRolls = params.containsKey("searchdeeprolls")
+                ? Integer.parseInt(params.get("searchdeeprolls").get(0)) : 4;
+        final double searchDeepLo = params.containsKey("searchdeeplo")
+                ? Double.parseDouble(params.get("searchdeeplo").get(0)) : 0.02;
+        final double searchDeepFloor = params.containsKey("searchdeepfloor")
+                ? Double.parseDouble(params.get("searchdeepfloor").get(0)) : 0.1;
+        final double searchDeepBar = params.containsKey("searchdeepbar")
+                ? Double.parseDouble(params.get("searchdeepbar").get(0)) : Double.NaN;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
         // Evening 4 (ADR-0105): the ADR-0102 rescue class admitted + paid
@@ -347,6 +380,9 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchact").get(0)) : Double.NaN;
         final double searchTemp = params.containsKey("searchtemp")
                 ? Double.parseDouble(params.get("searchtemp").get(0)) : 0.025;
+        if (searchDeep > 0 && Double.isNaN(searchAct)) {
+            throw new IllegalArgumentException("-searchdeep needs -searchact (the deep round runs at decide time)");
+        }
         // Evening 5 (ADR-0106 A): -searchactkinds <csv|all> turns the acting
         // rule's second stage on for these surface kinds: on the acted option
         // the second round's answers (-searchsurf B) are sampled the same way
@@ -386,13 +422,17 @@ public final class AnvilRun {
             Obs.searchPins = String.format(java.util.Locale.ROOT,
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
-                    + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d}",
+                    + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d,"
+                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
                     searchSeats == null ? "null" : "\"" + params.get("searchseats").get(0) + "\"",
                     searchPay, searchPayLeaf, searchPayBridge, searchLeaf,
-                    searchActKinds == null ? "null" : "\"" + searchActKinds + "\"", searchRollSalt);
+                    searchActKinds == null ? "null" : "\"" + searchActKinds + "\"", searchRollSalt,
+                    searchDeep, searchDeepLeaf, searchDeepRolls, String.valueOf(searchDeepLo),
+                    String.valueOf(searchDeepFloor),
+                    Double.isNaN(searchDeepBar) ? "null" : String.valueOf(searchDeepBar));
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -838,7 +878,9 @@ public final class AnvilRun {
                     game.subscribeToEvents(new SearchMonitor(game, idx, seed, bridge,
                             type.toString(), labels, watchdogs, searchRate, searchRolls, searchOpts,
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
-                            searchPay, searchPayLeaf, searchLeaf, actKinds, searchRollSalt));
+                            searchPay, searchPayLeaf, searchLeaf, actKinds, searchRollSalt,
+                            searchDeep, searchDeepLeaf, searchDeepRolls, searchDeepLo, searchDeepFloor,
+                            searchDeepBar));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1316,6 +1358,16 @@ public final class AnvilRun {
         final boolean[] actKinds;
         /** -searchrollsalt: XORed into every roll seed (0 = the CRN baseline). */
         final long rollSalt;
+        /** The partial-expansion slot (ADR-0106 C3): the deep set size (0 =
+         *  off), its leaf mode + horizon, rolls, the band's low edge, the
+         *  floor rate and the deep bar (NaN = the acting bar). */
+        final int deepTop;
+        final String deepLeaf;
+        final int deepLeafH;
+        final int deepRolls;
+        final double deepLo;
+        final double deepFloor;
+        final double deepBar;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1379,6 +1431,24 @@ public final class AnvilRun {
                 int optCap, boolean includeMana, int surfTop, int surfCap,
                 double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
                 String prioLeaf, boolean[] actKinds, long rollSalt) {
+            this(game, gameIdx, seed, bridge, fmt, labels, watchdogs, rate, rolls, optCap, includeMana, surfTop,
+                    surfCap, actBar, actTemp, seats, payTop, payLeaf, prioLeaf, actKinds, rollSalt,
+                    0, "h2", 4, 0.02, 0.1, Double.NaN);
+        }
+
+        SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
+                PrintWriter labels, ScheduledExecutorService watchdogs, double rate, int rolls,
+                int optCap, boolean includeMana, int surfTop, int surfCap,
+                double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
+                String prioLeaf, boolean[] actKinds, long rollSalt, int deepTop, String deepLeaf,
+                int deepRolls, double deepLo, double deepFloor, double deepBar) {
+            this.deepTop = Math.max(0, deepTop);
+            this.deepLeaf = deepLeaf == null ? "h2" : deepLeaf;
+            this.deepLeafH = payLeafHorizon(this.deepLeaf);
+            this.deepRolls = Math.max(1, deepRolls);
+            this.deepLo = deepLo;
+            this.deepFloor = deepFloor;
+            this.deepBar = deepBar;
             this.actKinds = actKinds;
             this.rollSalt = rollSalt;
             this.payTop = Math.max(0, payTop);
@@ -1790,6 +1860,79 @@ public final class AnvilRun {
             return nSub;
         }
 
+        /** The partial-expansion slot's runner (SearchDirective.Pending.DeepRound):
+         *  at decide time — the controller's ask done, the natural known —
+         *  every candidate in `set` is re-expanded to the deep leaf, one copy
+         *  per roll (rollSeedOf(turn, mySw, r), r < deepRolls: CRN-paired
+         *  across the set; the first `rolls` share the first ply's
+         *  determinizations), each playing its forced option with the answer
+         *  the shallow stage sampled for it (ansIdx[c] ≥ 0 → a
+         *  SurfaceDirective on surf[c]'s callback) else its natural line.
+         *  Returns the mean deep values (NaN = every roll void / crashed)
+         *  and the row's copies fragment: [{o, leaf, v, kind, calls, snap,
+         *  ms}]. The game RNG is snapshotted / restored around the copies. */
+        private SearchDirective.Pending.DeepRound.Result deepRound(int[] set, int[] ansIdx, List<String> cands,
+                SearchDirective.Pending.SurfAnswers[] surf, int turn, int mySw, int prioSeat, String seatName) {
+            byte[] rngState = snapshotRng();
+            final int leafAfter = leafAfter(turn, deepLeafH);
+            double[] v = new double[cands.size()];
+            java.util.Arrays.fill(v, Double.NaN);
+            StringBuilder sb = new StringBuilder(512);
+            sb.append('[');
+            for (int si = 0; si < set.length; si++) {
+                int c = set[si];
+                SearchDirective.Pending.SurfAnswers sa = surf != null && ansIdx[c] >= 0 ? surf[c] : null;
+                if (si > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"o\":").append(c).append(",\"leaf\":\"").append(deepLeaf).append("\",\"v\":[");
+                StringBuilder kinds = new StringBuilder();
+                StringBuilder calls = new StringBuilder();
+                StringBuilder snaps = new StringBuilder();
+                double sum = 0;
+                int n = 0;
+                long ms = 0;
+                for (int r = 0; r < deepRolls; r++) {
+                    if (r > 0) {
+                        sb.append(',');
+                        kinds.append(',');
+                        calls.append(',');
+                        snaps.append(',');
+                    }
+                    long rollSeed = rollSeedOf(turn, mySw, r);
+                    String wid = "g" + gameIdx + ".s" + mySw + "r" + r + "o" + c + "d";
+                    CopyResult cr = sa == null
+                            ? runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState, -1, -1, null,
+                                    leafAfter)
+                            : runCopy(cands.get(c), rollSeed, wid, prioSeat, seatName, rngState, sa.kind, sa.ordinal,
+                                    sa.answers[ansIdx[c]], leafAfter);
+                    ms += cr.ms;
+                    if (!Double.isNaN(cr.v)) {
+                        sum += cr.v;
+                        n++;
+                    }
+                    sb.append(Double.isNaN(cr.v) ? "null" : String.format(java.util.Locale.ROOT, "%.5f", cr.v));
+                    kinds.append('"').append(cr.kind).append('"');
+                    calls.append(cr.asks);
+                    snaps.append(cr.snap == null ? "null" : cr.snap);
+                }
+                if (n > 0) {
+                    v[c] = sum / n;
+                }
+                sb.append("],\"kind\":[").append(kinds).append("],\"calls\":[").append(calls)
+                        .append("],\"snap\":[").append(snaps).append("],\"ms\":").append(ms);
+                if (sa != null) {
+                    sb.append(",\"a_i\":").append(ansIdx[c]);
+                }
+                sb.append('}');
+            }
+            sb.append(']');
+            // the mainline's bridge session is restored by runCopy's caller
+            // in doSearch; the deep round runs after it, so re-announce it
+            bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
+            return new SearchDirective.Pending.DeepRound.Result(v, sb.toString());
+        }
+
         private void doSearch(Player prio, int turn, String phase, int mySw) {
             final long block0 = System.nanoTime();
             int prioSeat = game.getRegisteredPlayers().indexOf(prio);
@@ -1917,8 +2060,12 @@ public final class AnvilRun {
             }
             long sampleSeed = splitmix64(seed ^ (turn * 0x9E3779B97F4A7C15L)
                     ^ (mySw * 0xBF58476D1CE4E5B9L) ^ 0xAC71A6L);
+            final SearchDirective.Pending.DeepRound deepRun = deepTop > 0 && !Double.isNaN(actBar)
+                    ? (set, ansIdx) -> deepRound(set, ansIdx, cands, surfAns, turn, mySw, prioSeat, seatName)
+                    : null;
             SearchDirective.expectNatural(game, new SearchDirective.Pending(sb.toString(), sink,
-                    candArr, valArr, actBar, actTemp, sampleSeed, surfAns));
+                    candArr, valArr, actBar, actTemp, sampleSeed, surfAns, deepRun, deepTop, deepLo, deepFloor,
+                    deepBar));
         }
     }
 

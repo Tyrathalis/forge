@@ -245,4 +245,181 @@ public class SearchActTest {
         AssertJUnit.assertTrue(row, row.contains("\"margin\":0.15000,\"a_i\":1,\"a\":[1],\"logp\":0.0000,\"p\":[0.0000,1.0000]}"));
         AssertJUnit.assertTrue(row, row.endsWith("}}"));
     }
+
+    // ---- The partial-expansion slot (ADR-0106 C3): the deep stage
+
+    /** A stub deep round: records the set + answer indices it was asked
+     *  for and answers with fixed per-candidate values. */
+    private static final class Deep implements SearchDirective.Pending.DeepRound {
+        final double[] v;
+        int[] set;
+        int[] ans;
+        int runs = 0;
+
+        Deep(double... v) {
+            this.v = v;
+        }
+
+        @Override
+        public Result run(int[] set, int[] ans) {
+            this.set = set;
+            this.ans = ans;
+            runs++;
+            double[] out = new double[v.length];
+            java.util.Arrays.fill(out, Double.NaN);
+            for (int c : set) {
+                out[c] = v[c];
+            }
+            return new Result(out, "[]");
+        }
+    }
+
+    private static SearchDirective.Pending deepPend(double bar, long seed, double[] v, Deep deep, int top,
+            double lo, double floor, double deepBar, SearchDirective.Pending.SurfAnswers... surf) {
+        String[] cands = new String[v.length];
+        cands[0] = null;
+        for (int i = 1; i < v.length; i++) {
+            cands[i] = "opt" + i;
+        }
+        return new SearchDirective.Pending("{\"ev\":\"search\"", null, cands, v, bar, 0.0, seed,
+                surf.length == 0 ? null : surf, deep, top, lo, floor, deepBar);
+    }
+
+    @Test
+    public void noDeepRoundMeansTheDeepStageIsOff() {
+        SearchDirective.Pending.Decision d = pend(0.10, 0.0, 7, 0.40, 0.45).decide("pass");
+        AssertJUnit.assertEquals("off", d.deepBy);
+        AssertJUnit.assertTrue(Double.isNaN(d.shallowMargin));
+    }
+
+    @Test
+    public void shallowMarginInTheBandRunsTheDeepRoundOnTheNaturalAndTheTopB() {
+        // shallow: pass 0.40 (natural), opt1 0.45, opt2 0.44, opt3 0.30 — margin 0.05 in [0.02, 0.10)
+        Deep deep = new Deep(0.60, 0.50, 0.75, 0.90);
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.40, 0.45, 0.44, 0.30}, deep,
+                2, 0.02, 0.0, Double.NaN).decide("pass");
+        AssertJUnit.assertEquals(1, deep.runs);
+        AssertJUnit.assertEquals("band", d.deepBy);
+        AssertJUnit.assertEquals("[0, 1, 2]", java.util.Arrays.toString(deep.set)); // natural + top-2
+        AssertJUnit.assertEquals(0.05, d.shallowMargin, 1e-9);
+        AssertJUnit.assertEquals(1, d.shallowArg);
+        // the deep values decide over the set only: opt3 (0.90) is pruned
+        AssertJUnit.assertEquals("deep", d.by);
+        AssertJUnit.assertEquals(2, d.actIdx);
+        AssertJUnit.assertEquals(0.15, d.margin, 1e-9);
+        AssertJUnit.assertEquals(0.0, d.p[3], 1e-12);
+        AssertJUnit.assertEquals(0.0, d.p[1], 1e-12);
+    }
+
+    @Test
+    public void shallowMarginOutsideTheBandLeavesTheShallowRuleWithoutAFloor() {
+        Deep deep = new Deep(0.0, 0.0, 0.0);
+        // below the band: nothing to adjudicate
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.40, 0.41, 0.30}, deep,
+                2, 0.02, 0.0, Double.NaN).decide("pass");
+        AssertJUnit.assertEquals("gate", d.deepBy);
+        AssertJUnit.assertEquals("natural", d.by);
+        AssertJUnit.assertEquals(0, deep.runs);
+        // at or above the bar: the shallow rule acts as before
+        d = deepPend(0.10, 7, new double[] {0.40, 0.55, 0.30}, deep, 2, 0.02, 0.0, Double.NaN).decide("pass");
+        AssertJUnit.assertEquals("gate", d.deepBy);
+        AssertJUnit.assertEquals("search", d.by);
+        AssertJUnit.assertEquals(1, d.actIdx);
+        AssertJUnit.assertEquals(0, deep.runs);
+    }
+
+    @Test
+    public void theFloorDrawIsSeededAndRunsTheDeepRoundOutsideTheBand() {
+        int hits = 0;
+        for (long s = 0; s < 2000; s++) {
+            Deep deep = new Deep(0.40, 0.40, 0.40);
+            SearchDirective.Pending.Decision d = deepPend(0.10, s, new double[] {0.40, 0.41, 0.30}, deep,
+                    2, 0.02, 0.1, Double.NaN).decide("pass");
+            AssertJUnit.assertEquals(d.deepBy, deep.runs == 1 ? "floor" : "gate");
+            if (deep.runs == 1) {
+                hits++;
+                AssertJUnit.assertEquals("natural", d.by); // deep margin 0 < bar
+                AssertJUnit.assertEquals(0.0, d.margin, 1e-9);
+            }
+            Deep again = new Deep(0.40, 0.40, 0.40);
+            deepPend(0.10, s, new double[] {0.40, 0.41, 0.30}, again, 2, 0.02, 0.1, Double.NaN).decide("pass");
+            AssertJUnit.assertEquals(deep.runs, again.runs);
+        }
+        double f = hits / 2000.0;
+        AssertJUnit.assertTrue("floor share " + f, f > 0.07 && f < 0.13);
+    }
+
+    @Test
+    public void aSingleValuedCandidateSkipsTheDeepRound() {
+        Deep deep = new Deep(0.0, 0.0);
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.40, Double.NaN}, deep,
+                2, 0.02, 1.0, Double.NaN).decide("pass");
+        AssertJUnit.assertEquals("single", d.deepBy);
+        AssertJUnit.assertEquals(0, deep.runs);
+    }
+
+    @Test
+    public void theNaturalOutsideTheTopBIsStillInTheDeepSet() {
+        // natural opt3 ranks last; the set is opt3 + the top-2
+        Deep deep = new Deep(0.50, 0.50, 0.50, 0.80);
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.44, 0.45, 0.43, 0.40}, deep,
+                2, 0.02, 0.0, Double.NaN).decide("opt3");
+        AssertJUnit.assertEquals("band", d.deepBy);
+        AssertJUnit.assertEquals("[0, 1, 3]", java.util.Arrays.toString(deep.set));
+        AssertJUnit.assertEquals("natural", d.by); // the natural wins at depth: the set's max is itself
+        AssertJUnit.assertEquals(0.0, d.margin, 1e-9);
+    }
+
+    @Test
+    public void anUnvaluedDeepNaturalFallsBackToTheShallowRule() {
+        Deep deep = new Deep(Double.NaN, 0.90, 0.10);
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.40, 0.45, 0.30}, deep,
+                2, 0.02, 0.0, Double.NaN).decide("pass");
+        AssertJUnit.assertEquals("nat_unvalued", d.deepBy);
+        AssertJUnit.assertEquals("natural", d.by); // shallow margin 0.05 < bar
+        AssertJUnit.assertEquals(0.05, d.margin, 1e-9);
+    }
+
+    @Test
+    public void theDeepBarIsItsOwn() {
+        Deep deep = new Deep(0.40, 0.47, 0.10);
+        SearchDirective.Pending.Decision d = deepPend(0.10, 7, new double[] {0.40, 0.45, 0.30}, deep,
+                2, 0.02, 0.0, 0.05).decide("pass");
+        AssertJUnit.assertEquals("deep", d.by);
+        AssertJUnit.assertEquals(0.07, d.margin, 1e-9);
+        d = deepPend(0.10, 7, new double[] {0.40, 0.45, 0.30}, deep, 2, 0.02, 0.0, 0.20).decide("pass");
+        AssertJUnit.assertEquals("natural", d.by);
+    }
+
+    @Test
+    public void theDeepCopiesPlayTheLiftedAnswer() {
+        // opt1 first-ply 0.30; its answers: natural 0.30, answer 1 at 0.45 → answer margin 0.15 ≥ bar,
+        // sampled at T 0 → answer 1, opt1 lifted to 0.45 → shallow margin 0.05: in the band
+        Deep deep = new Deep(0.40, 0.60);
+        SearchDirective.Pending p = deepPend(0.10, 7, new double[] {0.40, 0.30}, deep, 2, 0.02, 0.0, Double.NaN,
+                null, ans(0, 0.30, 0.45));
+        SearchDirective.Pending.Decision d = p.decide("pass");
+        AssertJUnit.assertEquals("band", d.deepBy);
+        AssertJUnit.assertEquals("[-1, 1]", java.util.Arrays.toString(deep.ans)); // the deep copy plays answer 1
+        AssertJUnit.assertEquals("deep", d.by);
+        AssertJUnit.assertEquals("search", d.ansBy); // the acted option's answer verdict stands
+    }
+
+    @Test
+    public void completedRowCarriesTheDeepVerdict() {
+        final StringBuilder got = new StringBuilder();
+        String[] cands = {null, "opt1", "opt2"};
+        SearchDirective.Pending p = new SearchDirective.Pending("{\"ev\":\"search\"", got::append,
+                cands, new double[] {0.40, 0.45, 0.30}, 0.10, 0.0, 1L, null,
+                new Deep(0.50, 0.70, 0.0), 1, 0.02, 0.0, Double.NaN);
+        SearchDirective.Pending.Decision d = p.decide("pass");
+        p.complete("pass", d, "act");
+        String row = got.toString();
+        AssertJUnit.assertTrue(row, row.contains("\"by\":\"deep\""));
+        AssertJUnit.assertTrue(row, row.contains("\"margin\":0.20000"));
+        AssertJUnit.assertTrue(row, row.contains("\"act_o\":1"));
+        AssertJUnit.assertTrue(row, row.contains(
+                "\"deep\":{\"by\":\"band\",\"shallow_margin\":0.05000,\"shallow_arg\":1,\"set\":[0,1],\"v\":[0.50000,0.70000],\"copies\":[]}"));
+        AssertJUnit.assertTrue(row, row.endsWith("}"));
+    }
 }
