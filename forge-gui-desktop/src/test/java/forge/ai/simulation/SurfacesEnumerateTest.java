@@ -250,11 +250,14 @@ public class SurfacesEnumerateTest {
 
     @Test
     public void targetEnumeratesSetsInRangeNaturalFirst() {
-        // Build 4: TARGET = the entity-set family over the legal-target set
+        // Build 4: TARGET = the entity-set family over the legal-target set —
+        // size-anchored on the natural (every single at k = 1, then the one
+        // size-neighbour pair), natural first, distinct
         List<int[]> r = Surfaces.enumerate(Surfaces.TARGET, 4, 1, 2, a(2), null, 12, new Random(3));
         AssertJUnit.assertEquals("[2]", java.util.Arrays.toString(r.get(0)));
-        AssertJUnit.assertEquals(10, r.size()); // C(4,1) + C(4,2)
-        AssertJUnit.assertEquals(10, keys(r).size());
+        AssertJUnit.assertEquals(5, r.size()); // C(4,1) + the grow neighbour
+        AssertJUnit.assertEquals(5, keys(r).size());
+        AssertJUnit.assertEquals(keys(Surfaces.enumerate(Surfaces.ENTITY_SET, 4, 1, 2, a(2), null, 12, new Random(3))), keys(r));
         for (int[] x : r) {
             AssertJUnit.assertTrue(x.length >= 1 && x.length <= 2);
         }
