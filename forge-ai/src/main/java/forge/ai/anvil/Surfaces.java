@@ -6,6 +6,9 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import org.apache.commons.lang3.tuple.Pair;
+import java.util.function.Predicate;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -16,6 +19,10 @@ import forge.ai.ComputerUtilCombat;
 import forge.card.ICardFace;
 import forge.game.Game;
 import forge.game.GameEntity;
+import forge.game.GameObject;
+import forge.game.spellability.SpellAbilityStackInstance;
+import forge.game.spellability.TargetChoices;
+import forge.game.trigger.WrappedAbility;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
@@ -66,8 +73,11 @@ public final class Surfaces {
      *  options = {auto} ∪ the M9 goal options (PlayerControllerAnvil.copyPay),
      *  one pick; served by the pay head over its own tag, never through here. */
     public static final int PAY = 7;
+    /** Build 4 (ADR-0109): targets chosen outside a cast — chooseTargetsFor /
+     *  chooseNewTargetsFor / chooseTarget; the legal-target set, min..max. */
+    public static final int TARGET = 8;
     public static final String[] KIND_NAMES = {
-        "entity_one", "entity_set", "order", "scry", "mode", "name", "damage", "pay"};
+        "entity_one", "entity_set", "order", "scry", "mode", "name", "damage", "pay", "target"};
 
     /** Enumeration cap per callback (the search's -searchopts analogue). */
     public static final int DEFAULT_CAP = 12;
@@ -100,12 +110,22 @@ public final class Surfaces {
     }
 
     static List<String> optList(Iterable<?> options) {
+        return optList(options, -1);
+    }
+
+    /** kind MODE: each mode's legal-target count rides on its option
+     *  ("nt", -1 = no targets) — the option feature routed at evening 2. */
+    static List<String> optList(Iterable<?> options, int kind) {
         List<String> out = new ArrayList<>();
         if (options == null) {
             return out;
         }
         for (Object o : options) {
-            out.add(optJson(o));
+            String j = optJson(o);
+            if (kind == MODE && o instanceof SpellAbility && j.endsWith("}")) {
+                j = j.substring(0, j.length() - 1) + ",\"nt\":" + legalTargetCount((SpellAbility) o) + "}";
+            }
+            out.add(j);
         }
         return out;
     }
@@ -157,7 +177,7 @@ public final class Surfaces {
                 }
             }
             String by = bridgeFor(p, kind) != null ? "bridge" : null;
-            long s = Obs.decSurface(g, p, m, by, optList(options), extras(options), kv2);
+            long s = Obs.decSurface(g, p, m, by, optList(options, kind), extras(options), kv2);
             // evening 2: the frame of the surface window a SurfaceDirective is
             // about to answer (the copy's wire-session dec record, already
             // built for the bridge) — the sub row's state for distillation
@@ -181,6 +201,7 @@ public final class Surfaces {
             case MODE: return PlayerControllerAnvil.TAG_SURFACE_MODE;
             case ORDER: return PlayerControllerAnvil.TAG_SURFACE_ORDER;
             case DAMAGE: return PlayerControllerAnvil.TAG_SURFACE_DAMAGE;
+            case TARGET: return PlayerControllerAnvil.TAG_SURFACE_TARGET;
             default: return null;
         }
     }
@@ -374,6 +395,7 @@ public final class Surfaces {
                 break;
             case ENTITY_SET:
             case MODE:
+            case TARGET:
                 enumerateSet(n, min, max, natural, cap, rng, repeat, out, seen);
                 break;
             case ORDER: {
@@ -905,6 +927,249 @@ public final class Surfaces {
             Iterable<?> chosen) {
         List<?> opts = asList(optionList);
         trace(g, p, ENTITY_SET, labelOf(sa), opts.size(), min, max, indicesOf(opts, chosen), null);
+    }
+
+    // ---- TARGET (Build 4, ADR-0109): targets chosen outside a cast —
+    // chooseTargetsFor (every targeted trigger), chooseNewTargetsFor (copies,
+    // redirects) and chooseTarget (ChangeTargets' pairs). The answer shape is
+    // the entity set over the ENGINE's legal-target enumerator, min..max from
+    // the TargetRestrictions; a directed / bridged answer is applied to the
+    // ability (each pick still targetable in turn, the count valid after) or
+    // dropped for the natural line.
+
+    /** The ability a targeting callback is really about (a trigger arrives
+     *  wrapped; the wrapper delegates its targets to it). */
+    public static SpellAbility unwrap(SpellAbility sa) {
+        return sa != null && sa.isWrapper() ? ((WrappedAbility) sa).getWrappedAbility() : sa;
+    }
+
+    /** The legal targets right now — TargetRestrictions.getAllCandidates
+     *  (players, then the cards of the ability's zones), optionally filtered
+     *  (chooseNewTargetsFor). Empty when the ability does not target or
+     *  divides an amount among its targets (an allocation the answer shape
+     *  cannot carry: the natural line, never a window). */
+    public static List<GameEntity> targetOptions(SpellAbility sa, Predicate<GameObject> filter) {
+        try {
+            SpellAbility u = unwrap(sa);
+            if (u == null || !u.usesTargeting() || u.isDividedAsYouChoose()) {
+                return Collections.emptyList();
+            }
+            List<GameEntity> all = u.getTargetRestrictions().getAllCandidates(u);
+            if (filter == null) {
+                return all;
+            }
+            List<GameEntity> out = new ArrayList<>(all.size());
+            for (GameEntity e : all) {
+                if (filter.test(e)) {
+                    out.add(e);
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+    public static int targetMin(SpellAbility sa) {
+        try {
+            SpellAbility u = unwrap(sa);
+            return u.getTargetRestrictions().getMinTargets(u.getHostCard(), u);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static int targetMax(SpellAbility sa) {
+        try {
+            SpellAbility u = unwrap(sa);
+            return u.getTargetRestrictions().getMaxTargets(u.getHostCard(), u);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** The legal-target count of a mode's ability (the mode option feature
+     *  routed at evening 2); -1 = does not target / not resolvable yet. */
+    static int legalTargetCount(SpellAbility sa) {
+        try {
+            SpellAbility u = unwrap(sa);
+            if (u == null || !u.usesTargeting()) {
+                return -1;
+            }
+            return u.getTargetRestrictions().getAllCandidates(u).size();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** The target side of ChangeTargets' (stack instance, target) pairs. */
+    public static List<GameObject> pairTargets(List<Pair<SpellAbilityStackInstance, GameObject>> allTargets) {
+        List<GameObject> out = new ArrayList<>();
+        if (allTargets != null) {
+            for (Pair<SpellAbilityStackInstance, GameObject> pr : allTargets) {
+                out.add(pr.getRight());
+            }
+        }
+        return out;
+    }
+
+    /** The sentinel forceNewTargets returns for "keep the old targets" (an
+     *  empty answer on an optional window): the caller returns the ability's
+     *  own targets and records a decline. */
+    public static final TargetChoices KEEP_TARGETS = new TargetChoices();
+
+    /** A TARGET answer: the copy's directive (used[0]), else the bridged ask;
+     *  null = the natural line. Not yet applied — the caller applies, then
+     *  traces the answer as the window's natural line. */
+    static int[] targetAnswer(Game g, Player p, List<?> opts, int min, int max, String m, String label,
+            SurfaceDirective[] used) {
+        SurfaceDirective d = SurfaceDirective.match(g, p, TARGET, opts.size(), max, label);
+        if (d != null) {
+            used[0] = d;
+            if (!validIndices(d.answer, opts.size(), min, max, true)) {
+                d.miss("idx");
+                return null;
+            }
+            return d.answer;
+        }
+        AnvilBridge b = bridgeFor(p, TARGET);
+        if (b == null || !nontrivial(TARGET, opts.size(), max) || (min >= opts.size() && max >= opts.size())) {
+            return null;
+        }
+        int[] a = b.selectSet(PlayerControllerAnvil.TAG_SURFACE_TARGET, labels(opts), min, max);
+        boolean ok = a != null && validIndices(a, opts.size(), min, max, true);
+        Census.rec(g, p, m, "by", "bridge", "n", opts.size(), "k", a == null ? -1 : a.length, "ok", ok);
+        return ok ? a : null;
+    }
+
+    /** Re-target sa to the picks: each still targetable in turn (unique /
+     *  same-controller restrictions read the picks so far), the count valid
+     *  after. false = left untargeted; the caller restores or falls back. */
+    static boolean applyTargets(SpellAbility sa, List<GameEntity> opts, int[] a) {
+        SpellAbility u = unwrap(sa);
+        u.resetTargets();
+        for (int i : a) {
+            GameEntity o = opts.get(i);
+            if (!u.canTarget(o) || !u.getTargets().add(o)) {
+                u.resetTargets();
+                return false;
+            }
+        }
+        if (!u.isTargetNumberValid()) {
+            u.resetTargets();
+            return false;
+        }
+        return true;
+    }
+
+    /** chooseTargetsFor: a directed / bridged target set applied to sa; false
+     *  = the natural line (the heuristic's trigger logic picks). */
+    public static boolean forceTargets(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa) {
+        try {
+            if (Census.loopTripped(g) || opts.isEmpty()) {
+                return false;
+            }
+            SurfaceDirective[] d = new SurfaceDirective[1];
+            int[] a = targetAnswer(g, p, opts, min, max, "chooseTargetsFor", labelOf(sa), d);
+            if (a == null) {
+                return false;
+            }
+            if (!applyTargets(sa, opts, a)) {
+                if (d[0] != null) {
+                    d[0].miss("legal");
+                }
+                return false;
+            }
+            if (d[0] != null) {
+                d[0].fired(opts.size());
+            }
+            trace(g, p, TARGET, labelOf(sa), opts.size(), min, max, a, null); // the answer = the natural line
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void afterTargets(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa,
+            boolean ok) {
+        int[] natural = null;
+        try {
+            natural = ok ? indicesOf(opts, unwrap(sa).getTargets()) : null;
+        } catch (Exception ignored) {
+        }
+        trace(g, p, TARGET, labelOf(sa), opts.size(), min, max, natural, null);
+    }
+
+    /** chooseNewTargetsFor: the window's min is 0 when optional (the empty
+     *  answer = keep the old targets, KEEP_TARGETS); a non-empty answer must
+     *  still meet the ability's own min. null = the natural line. */
+    public static TargetChoices forceNewTargets(Game g, Player p, List<GameEntity> opts, int min, int max,
+            SpellAbility sa, boolean optional) {
+        try {
+            if (Census.loopTripped(g) || opts.isEmpty()) {
+                return null;
+            }
+            SpellAbility u = unwrap(sa);
+            int lo = optional ? 0 : min;
+            SurfaceDirective[] d = new SurfaceDirective[1];
+            int[] a = targetAnswer(g, p, opts, lo, max, "chooseNewTargetsFor", labelOf(sa), d);
+            if (a == null) {
+                return null;
+            }
+            if (a.length == 0) {
+                if (d[0] != null) {
+                    d[0].fired(opts.size());
+                }
+                trace(g, p, TARGET, labelOf(sa), opts.size(), lo, max, a, null);
+                return KEEP_TARGETS;
+            }
+            TargetChoices old = u.getTargets();
+            if (a.length < min || !applyTargets(sa, opts, a)) {
+                u.setTargets(old);
+                if (d[0] != null) {
+                    d[0].miss("legal");
+                }
+                return null;
+            }
+            if (d[0] != null) {
+                d[0].fired(opts.size());
+            }
+            trace(g, p, TARGET, labelOf(sa), opts.size(), lo, max, a, null);
+            return u.getTargets();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static void afterNewTargets(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa,
+            boolean optional, TargetChoices chosen) {
+        int[] natural = chosen == null ? new int[0] : indicesOf(opts, chosen);
+        trace(g, p, TARGET, labelOf(sa), opts.size(), optional ? 0 : min, max, natural, null);
+    }
+
+    /** chooseTarget (ChangeTargets): which pair; -1 = the natural line. */
+    public static int forceTargetIndex(Game g, Player p, List<GameObject> opts, SpellAbility sa) {
+        try {
+            if (Census.loopTripped(g) || opts.size() < 2) {
+                return -1;
+            }
+            SurfaceDirective[] d = new SurfaceDirective[1];
+            int[] a = targetAnswer(g, p, opts, 1, 1, "chooseTarget", labelOf(sa), d);
+            if (a == null) {
+                return -1;
+            }
+            if (d[0] != null) {
+                d[0].fired(opts.size());
+            }
+            trace(g, p, TARGET, labelOf(sa), opts.size(), 1, 1, a, null);
+            return a[0];
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static void afterTargetIndex(Game g, Player p, List<GameObject> opts, SpellAbility sa, int chosen) {
+        trace(g, p, TARGET, labelOf(sa), opts.size(), 1, 1, chosen >= 0 ? new int[] {chosen} : null, null);
     }
 
     // ---- ORDER

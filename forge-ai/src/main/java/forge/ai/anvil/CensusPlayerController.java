@@ -193,11 +193,27 @@ public class CensusPlayerController extends PlayerControllerAi {
         return __r;
     }
 
+    // Build 4 (ADR-0109): the target surface — the three choosers below record
+    // a TARGET window over the engine's legal-target set, take a directed /
+    // bridged answer when one applies, else the heuristic's own line.
+
     @Override
     public TargetChoices chooseNewTargetsFor(SpellAbility ability, Predicate<GameObject> filter, boolean optional) {
         Census.rec(getGame(), getPlayer(), "chooseNewTargetsFor", "ability", Census.str(ability), "optional", optional);
-        long __s = Obs.dec(getGame(), getPlayer(), "chooseNewTargetsFor", "ability", Census.str(ability), "optional", optional);
+        List<GameEntity> __o = Surfaces.targetOptions(ability, filter);
+        int __min = Surfaces.targetMin(ability), __max = Surfaces.targetMax(ability);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseNewTargetsFor", Surfaces.TARGET, __o, "ability", Census.str(ability), "optional", optional, "min", optional ? 0 : __min, "max", __max, "candidates", __o.size(), "sak", Surfaces.unwrap(ability));
+        TargetChoices __f = Surfaces.forceNewTargets(getGame(), getPlayer(), __o, __min, __max, ability, optional);
+        if (__f == Surfaces.KEEP_TARGETS) {
+            Obs.ret(getGame(), __s, null);
+            return Surfaces.unwrap(ability).getTargets();
+        }
+        if (__f != null) {
+            Obs.ret(getGame(), __s, __f);
+            return __f;
+        }
         TargetChoices __r = super.chooseNewTargetsFor(ability, filter, optional);
+        Surfaces.afterNewTargets(getGame(), getPlayer(), __o, __min, __max, ability, optional, __r);
         Obs.ret(getGame(), __s, __r);
         return __r;
     }
@@ -205,18 +221,32 @@ public class CensusPlayerController extends PlayerControllerAi {
     @Override
     public boolean chooseTargetsFor(SpellAbility currentAbility) {
         Census.rec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));
-        long __s = Obs.dec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));
+        List<GameEntity> __o = Surfaces.targetOptions(currentAbility, null);
+        int __min = Surfaces.targetMin(currentAbility), __max = Surfaces.targetMax(currentAbility);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseTargetsFor", Surfaces.TARGET, __o, "currentAbility", Census.str(currentAbility), "min", __min, "max", __max, "candidates", __o.size(), "sak", Surfaces.unwrap(currentAbility));
+        if (Surfaces.forceTargets(getGame(), getPlayer(), __o, __min, __max, currentAbility)) {
+            Obs.ret(getGame(), __s, Surfaces.unwrap(currentAbility).getTargets());
+            return true;
+        }
         boolean __r = super.chooseTargetsFor(currentAbility);
-        Obs.ret(getGame(), __s, __r);
+        Surfaces.afterTargets(getGame(), getPlayer(), __o, __min, __max, currentAbility, __r);
+        Obs.ret(getGame(), __s, __r ? Surfaces.unwrap(currentAbility).getTargets() : null);
         return __r;
     }
 
     @Override
     public Pair<SpellAbilityStackInstance, GameObject> chooseTarget(SpellAbility sa, List<Pair<SpellAbilityStackInstance, GameObject>> allTargets) {
         Census.rec(getGame(), getPlayer(), "chooseTarget", "sa", Census.str(sa), "allTargets", Census.sz(allTargets));
-        long __s = Obs.dec(getGame(), getPlayer(), "chooseTarget", "sa", Census.str(sa), "allTargets", Census.sz(allTargets));
+        List<GameObject> __o = Surfaces.pairTargets(allTargets);
+        long __s = Surfaces.dec(getGame(), getPlayer(), "chooseTarget", Surfaces.TARGET, __o, "sa", Census.str(sa), "allTargets", Census.sz(allTargets), "min", 1, "max", 1, "sak", Surfaces.unwrap(sa));
+        int __i = Surfaces.forceTargetIndex(getGame(), getPlayer(), __o, sa);
+        if (__i >= 0) {
+            Obs.ret(getGame(), __s, __o.get(__i));
+            return allTargets.get(__i);
+        }
         Pair<SpellAbilityStackInstance, GameObject> __r = super.chooseTarget(sa, allTargets);
-        Obs.ret(getGame(), __s, __r);
+        Surfaces.afterTargetIndex(getGame(), getPlayer(), __o, sa, __r == null ? -1 : allTargets.indexOf(__r));
+        Obs.ret(getGame(), __s, __r == null ? null : __r.getRight());
         return __r;
     }
 

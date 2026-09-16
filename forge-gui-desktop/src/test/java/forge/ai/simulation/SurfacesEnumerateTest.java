@@ -247,4 +247,17 @@ public class SurfacesEnumerateTest {
             AssertJUnit.assertTrue(x.length >= 1 && x.length <= 2);
         }
     }
+
+    @Test
+    public void targetEnumeratesSetsInRangeNaturalFirst() {
+        // Build 4: TARGET = the entity-set family over the legal-target set
+        List<int[]> r = Surfaces.enumerate(Surfaces.TARGET, 4, 1, 2, a(2), null, 12, new Random(3));
+        AssertJUnit.assertEquals("[2]", java.util.Arrays.toString(r.get(0)));
+        AssertJUnit.assertEquals(10, r.size()); // C(4,1) + C(4,2)
+        AssertJUnit.assertEquals(10, keys(r).size());
+        for (int[] x : r) {
+            AssertJUnit.assertTrue(x.length >= 1 && x.length <= 2);
+        }
+        AssertJUnit.assertEquals("target", Surfaces.KIND_NAMES[Surfaces.TARGET]);
+    }
 }
