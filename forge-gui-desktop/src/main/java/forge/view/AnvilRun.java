@@ -360,6 +360,9 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchdeepbar").get(0)) : Double.NaN;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
+        // Build 4 (ADR-0109): -modegate off lifts the mode playability gate (the targets read's third arm)
+        forge.ai.anvil.Surfaces.modeGate = !(params.containsKey("modegate") && !params.get("modegate").isEmpty()
+                && "off".equals(params.get("modegate").get(0)));
         // ADR-0110 (the 09-16 merge): -searchvoidskip 0|1 (default 1) — a first-ply
         // candidate whose roll-0 copy voided is not re-rolled (kind "skip").
         SearchMonitor.VOID_SKIP = !params.containsKey("searchvoidskip")

@@ -79,6 +79,10 @@ public final class Surfaces {
     public static final String[] KIND_NAMES = {
         "entity_one", "entity_set", "order", "scry", "mode", "name", "damage", "pay", "target"};
 
+    /** The mode playability gate (09-08, ADR-0105 addendum) — AnvilRun -modegate off
+     *  lifts it (Build 4: the targets read's third arm, ADR-0109). Serve-only. */
+    public static volatile boolean modeGate = true;
+
     /** Enumeration cap per callback (the search's -searchopts analogue). */
     public static final int DEFAULT_CAP = 12;
 
@@ -1413,8 +1417,8 @@ public final class Surfaces {
         // (the heuristic would decline — the Confluences) the head answers
         // freely. A stopgap until the model aims its own modes (targets as a
         // surface) or mainline surface acting values the answers.
-        String gate = "free";
-        if (ok) {
+        String gate = modeGate ? "free" : "off";
+        if (ok && modeGate) {
             Set<Integer> playable = playableModes(p, opts);
             // the gate applies only where the heuristic could fill the window's
             // minimum with playable modes (its own answer); below that it would
