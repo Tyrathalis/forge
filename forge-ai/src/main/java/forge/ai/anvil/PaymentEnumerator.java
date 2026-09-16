@@ -342,7 +342,7 @@ public final class PaymentEnumerator {
             unitMasks = new byte[amount];
             java.util.Arrays.fill(unitMasks, mask);
         } else {
-            final String predicted = ComputerUtilMana.predictManafromSpellAbility(ma, payer, ManaCostShard.GENERIC);
+            final String predicted = ComputerUtilMana.predictMana(ma, payer, ManaCostShard.GENERIC);
             if (predicted == null || predicted.isEmpty()) {
                 return null;
             }
