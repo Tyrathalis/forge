@@ -97,6 +97,13 @@ public class PlayerControllerAnvil extends CensusPlayerController {
      *  insurance against pathologically wide windows re-vetoing in chains. */
     private static final int REASK_CAP = 8;
 
+    /** Build 4 (09-17, ADR-0111 addendum): on a CastPlan veto of the model's pick, realize the
+     *  pick through the heuristic's own planner (heuristicRealize — exactly how a search copy
+     *  realizes a directed option) instead of re-asking. The model chooses the option, the
+     *  engine's AI plans its details; the search's leaf values were computed under that
+     *  realization. AnvilRun -vetofallback heuristic; default off = the re-ask path unchanged. */
+    public static volatile boolean vetoFallbackHeuristic = false;
+
     public static void setReaskOnVeto(boolean v) {
         reaskOnVeto = v;
     }
@@ -544,6 +551,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         }
                     }
                     return r.sas; // realized cast, model pass, or oor pass
+                }
+                if (vetoFallbackHeuristic && !forcedAct && !seqAct && !schedForce && r.vetoedOption > 0) {
+                    SpellAbility pick = options.get(r.vetoedOption - 1);
+                    List<SpellAbility> hr = heuristicRealize(pick);
+                    Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay", "by", "bridge_hplan",
+                            "pick", Census.str(pick), "realized", hr != null);
+                    if (hr != null) {
+                        Obs.ret(getGame(), obsSeq, hr);
+                        return hr;
+                    }
                 }
                 if (forcedAct || seqAct || schedForce) {
                     // Forced/seq/sched act re-asks on veto regardless of the

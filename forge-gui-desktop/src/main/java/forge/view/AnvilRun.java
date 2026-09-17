@@ -360,6 +360,9 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchdeepbar").get(0)) : Double.NaN;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
+        // Build 4 (09-17): -vetofallback heuristic — the model's vetoed pick realized by the heuristic's planner
+        PlayerControllerAnvil.vetoFallbackHeuristic = params.containsKey("vetofallback")
+                && !params.get("vetofallback").isEmpty() && "heuristic".equals(params.get("vetofallback").get(0));
         // Build 4 (ADR-0109): -modegate off lifts the mode playability gate (the targets read's third arm)
         forge.ai.anvil.Surfaces.modeGate = !(params.containsKey("modegate") && !params.get("modegate").isEmpty()
                 && "off".equals(params.get("modegate").get(0)));
