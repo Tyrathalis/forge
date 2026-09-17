@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>]] "
+                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchalloc <tau> [-searchfloor <p>]]] "
                     + "[-payrescue]");
             return;
         }
@@ -360,6 +360,21 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchdeepbar").get(0)) : Double.NaN;
         final boolean searchPayBridge = params.containsKey("searchpaybridge");
         PlayerControllerAnvil.copyPayBridge = searchPayBridge;
+        // Build 4 (ADR-0109 item 2, 09-17): THE ALLOCATION HEAD. At every
+        // candidate window (after the -searchrate draw) an "anvil.alloc" ask
+        // on the value-ask wire (observation = Obs.peekPriority, the leaf
+        // value's own record shape) returns the head's P(the search would act
+        // here: its margin >= the acting bar). The window is searched where
+        // p >= tau, or on a seeded uniform-floor draw at -searchfloor (ungated
+        // windows keep producing labels for the head: the self-sealing
+        // hazard), or where the ask is unserved (NaN: the uniform rate, as
+        // before). Skipped windows leave an "alloc" row (p, by: skip) so the
+        // allocation is auditable. Off (NaN) = the rate draw alone: the
+        // mainline is byte-identical (no ask, no scan).
+        final double searchAlloc = params.containsKey("searchalloc")
+                ? Double.parseDouble(params.get("searchalloc").get(0)) : Double.NaN;
+        final double searchFloor = params.containsKey("searchfloor")
+                ? Double.parseDouble(params.get("searchfloor").get(0)) : 0.1;
         // Build 4 (09-17): -vetofallback heuristic — the model's vetoed pick realized by the heuristic's planner
         PlayerControllerAnvil.vetoFallbackHeuristic = params.containsKey("vetofallback")
                 && !params.get("vetofallback").isEmpty() && "heuristic".equals(params.get("vetofallback").get(0));
@@ -433,7 +448,7 @@ public final class AnvilRun {
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
                     + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d,"
-                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s,\"voidskip\":%b}",
+                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s,\"voidskip\":%b,\"alloc\":%s,\"floor\":%s}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
@@ -443,7 +458,9 @@ public final class AnvilRun {
                     searchDeep, searchDeepLeaf, searchDeepRolls, String.valueOf(searchDeepLo),
                     String.valueOf(searchDeepFloor),
                     Double.isNaN(searchDeepBar) ? "null" : String.valueOf(searchDeepBar),
-                    SearchMonitor.VOID_SKIP);
+                    SearchMonitor.VOID_SKIP,
+                    Double.isNaN(searchAlloc) ? "null" : String.valueOf(searchAlloc),
+                    String.valueOf(searchFloor));
         }
 
         // Fork-session store (M4 D3): -forkobs streams every completion's
@@ -892,7 +909,7 @@ public final class AnvilRun {
                             searchMana, searchSurf, searchSurfCap, searchAct, searchTemp, searchSeats,
                             searchPay, searchPayLeaf, searchLeaf, actKinds, searchRollSalt,
                             searchDeep, searchDeepLeaf, searchDeepRolls, searchDeepLo, searchDeepFloor,
-                            searchDeepBar));
+                            searchDeepBar, searchAlloc, searchFloor));
                     // The deterministic caps bound the game; the wall clock is
                     // a crash guard only under search (copies run inside it).
                     // 900 s (was 3,600): the widest boards the smokes showed
@@ -1380,6 +1397,10 @@ public final class AnvilRun {
         final double deepLo;
         final double deepFloor;
         final double deepBar;
+        /** Build 4 (ADR-0109 item 2): the allocation head's threshold (NaN =
+         *  off: the rate draw alone) and the uniform exploration floor. */
+        final double alloc;
+        final double allocFloor;
         /** ADR-0110: skip rolls ≥ 1 of a first-ply candidate whose roll-0 copy
          *  voided (the forced option absent on the copy — a copy-fidelity
          *  artifact, deterministic per candidate, so it repeats on every roll;
@@ -1451,7 +1472,7 @@ public final class AnvilRun {
                 String prioLeaf, boolean[] actKinds, long rollSalt) {
             this(game, gameIdx, seed, bridge, fmt, labels, watchdogs, rate, rolls, optCap, includeMana, surfTop,
                     surfCap, actBar, actTemp, seats, payTop, payLeaf, prioLeaf, actKinds, rollSalt,
-                    0, "h2", 4, 0.02, 0.1, Double.NaN);
+                    0, "h2", 4, 0.02, 0.1, Double.NaN, Double.NaN, 0.1);
         }
 
         SearchMonitor(Game game, int gameIdx, long seed, AnvilBridge bridge, String fmt,
@@ -1459,7 +1480,10 @@ public final class AnvilRun {
                 int optCap, boolean includeMana, int surfTop, int surfCap,
                 double actBar, double actTemp, Set<Integer> seats, int payTop, String payLeaf,
                 String prioLeaf, boolean[] actKinds, long rollSalt, int deepTop, String deepLeaf,
-                int deepRolls, double deepLo, double deepFloor, double deepBar) {
+                int deepRolls, double deepLo, double deepFloor, double deepBar,
+                double alloc, double allocFloor) {
+            this.alloc = alloc;
+            this.allocFloor = allocFloor;
             this.deepTop = Math.max(0, deepTop);
             this.deepLeaf = deepLeaf == null ? "h2" : deepLeaf;
             this.deepLeafH = payLeafHorizon(this.deepLeaf);
@@ -1537,7 +1561,44 @@ public final class AnvilRun {
                     return;
                 }
             }
-            doSearch(prio, ph.getTurn(), String.valueOf(ev.phase()), mySw);
+            List<SpellAbility> options = null;
+            String allocJson = null;
+            if (!Double.isNaN(alloc)) {
+                // The allocation ask: the window's own peek record (the leaf
+                // value's shape, with the session's history ring) to the
+                // head; the scan + the ask under an RNG snapshot (the scan is
+                // RNG-neutral by Build 0's proof; the snapshot is insurance),
+                // the options handed to doSearch so the searched window scans once.
+                final long a0 = System.nanoTime();
+                byte[] rs = snapshotRng();
+                double p;
+                try {
+                    options = Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
+                    p = bridge.value(TAG_ALLOC, Obs.peekPriority(game, prio, options, true));
+                } finally {
+                    MyRandom.setRandom(restoreRng(rs));
+                }
+                long fh = splitmix64(seed ^ (mySw * 0x9E3779B97F4A7C15L) ^ 0xA110CL);
+                boolean floorHit = ((fh >>> 11) * 0x1.0p-53) < allocFloor;
+                String by = Double.isNaN(p) ? "unserved" : p >= alloc ? "head" : floorHit ? "floor" : "skip";
+                allocJson = "{\"p\":" + (Double.isNaN(p) ? "null" : String.format(java.util.Locale.ROOT, "%.4f", p))
+                        + ",\"by\":\"" + by + "\",\"ms\":" + (System.nanoTime() - a0) / 1_000_000 + "}";
+                Census.rec(game, prio, "searchAlloc", "by", by, "n_opts", options.size());
+                if ("skip".equals(by)) {
+                    if (labels != null) {
+                        String row = "{\"ev\":\"alloc\",\"i\":" + gameIdx + ",\"seed\":" + seed
+                                + ",\"t\":" + ph.getTurn() + ",\"ph\":\"" + ev.phase() + "\",\"sw\":" + mySw
+                                + ",\"seat\":" + game.getRegisteredPlayers().indexOf(prio)
+                                + ",\"n_opts\":" + options.size() + ",\"alloc\":" + allocJson + "}";
+                        synchronized (labels) {
+                            labels.println(row);
+                            labels.flush();
+                        }
+                    }
+                    return;
+                }
+            }
+            doSearch(prio, ph.getTurn(), String.valueOf(ev.phase()), mySw, options, allocJson);
         }
 
         /** One candidate copy's outcome. */
@@ -1951,10 +2012,12 @@ public final class AnvilRun {
             return new SearchDirective.Pending.DeepRound.Result(v, sb.toString());
         }
 
-        private void doSearch(Player prio, int turn, String phase, int mySw) {
+        private void doSearch(Player prio, int turn, String phase, int mySw, List<SpellAbility> scanned,
+                String allocJson) {
             final long block0 = System.nanoTime();
             int prioSeat = game.getRegisteredPlayers().indexOf(prio);
-            List<SpellAbility> options = Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
+            List<SpellAbility> options = scanned != null ? scanned
+                    : Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
             List<String> cands = new ArrayList<>(options.size() + 1);
             cands.add(null); // pass
             int manaSkipped = 0;
@@ -2067,6 +2130,9 @@ public final class AnvilRun {
             copyMsTotal = copyMsBox[0];
             sb.append(",\"copy_ms\":").append(copyMsTotal)
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
+            if (allocJson != null) {
+                sb.append(",\"alloc\":").append(allocJson);
+            }
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
             final PrintWriter out = labels;
             final java.util.function.Consumer<String> sink = out == null ? null : row -> {
@@ -2160,6 +2226,9 @@ public final class AnvilRun {
     static final String TAG_CERTIFY = "anvil.certify";
     /** M12 Build 0: the search-leaf value ask (AnvilBridge.value). */
     static final String TAG_VALUE = "anvil.value";
+    /** Build 4 (ADR-0109 item 2): the allocation ask on the value wire —
+     *  P(the search acts at this window), micro-units; NaN = unserved. */
+    static final String TAG_ALLOC = "anvil.alloc";
     // Fork-store synthetic game ids live in their own namespace above any
     // reachable mainline index: base + ns*STRIDE + (gameIdx*100 + fp)*100 + r.
     // Without the base, a drilled source game with gameIdx=0 encodes forks
