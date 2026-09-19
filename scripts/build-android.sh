@@ -26,11 +26,10 @@
 # ALWAYS pin -R (this clone's gh default repo is Card-Forge/forge):
 #   gh release upload daily-snapshots forge-gui-android/target/android-release/* --clobber -R Tyrathalis/forge
 #
-# NOTE version.txt/build.txt are shared with the desktop channel at the same
-# URL. Desktop clients tolerate an android-only bump: the delta updater prices
-# the update exactly and a 0-file plan reads as "silently current". Still,
-# prefer publishing android + desktop together (build the jar first, run
-# release-playable.sh, then this, then upload both).
+# NOTE version.txt is shared with the desktop channel at the same URL (the APK
+# asset name is derived from it), so publish android + desktop together from one
+# build day. Build stamps are per channel: this script publishes the APK's as
+# build-android.txt and never touches build.txt (the desktop jar's).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -111,7 +110,13 @@ rm -rf "$STAGE"
 echo "== Staging android-release/ =="
 OUT=target/android-release
 rm -rf "$OUT"; mkdir -p "$OUT"
-cp "$SIGNED" target/assets.zip target/cardsfolder.zip target/classes/assets/version.txt target/classes/assets/build.txt "$OUT/"
+# The APK's stamp is published as build-android.txt: the updater's Android gate reads it
+# (with build.txt as the fallback for releases without one). build.txt itself is the
+# desktop jar's and is NOT staged here, so this upload can never clobber it - before
+# this split, whichever channel uploaded last set the shared stamp and an APK built
+# minutes before the jar re-offered itself on every boot (the v25 install loop).
+cp "$SIGNED" target/assets.zip target/cardsfolder.zip target/classes/assets/version.txt "$OUT/"
+cp target/classes/assets/build.txt "$OUT/build-android.txt"
 ls -lh "$OUT"
 echo
 echo "Publish (deliberate step — note -R pin):"

@@ -100,8 +100,17 @@ public class AssetsDownloader {
                 }
                 String snapsBuildDate = "", buildDate = "";
                 if (isSnapshots) {
-                    URL url = new URL(snapsURL + "build.txt");
+                    //fork: each channel publishes its own build stamp. The desktop jar and the
+                    //APK share one release, and whichever channel uploaded last set build.txt;
+                    //the Android gate below compares the APK's own stamp against it, so an APK
+                    //built minutes before the jar read as "older" on every boot and re-offered
+                    //itself after installing (the v25 install loop). build-android.sh publishes
+                    //build-android.txt; a release without it falls back to the shared stamp.
+                    URL url = new URL(snapsURL + (GuiBase.isAndroid() ? "build-android.txt" : "build.txt"));
                     snapsBuildTxt = FileUtil.readFileToString(url).strip();
+                    if (GuiBase.isAndroid() && snapsBuildTxt.isEmpty()) {
+                        snapsBuildTxt = FileUtil.readFileToString(new URL(snapsURL + "build.txt")).strip();
+                    }
                     snapsTimestamp = format.parse(snapsBuildTxt);
                     snapsBuildDate = snapsTimestamp.toString();
                     if (!GuiBase.isAndroid()) {
