@@ -4,7 +4,6 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.controllers.Controller;
 import com.badlogic.gdx.graphics.GL20;
-import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
@@ -304,9 +303,7 @@ public class UIScene extends Scene {
         Gdx.gl.glClearColor(0, 0, 0, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
         stage.draw();
-        if (Forge.showFPS) {
-            FrameRate.getInstance().sampleAdventure((SpriteBatch) stage.getBatch());
-        }
+        FrameRate.getInstance().sampleAdventure(stage.getBatch(), Forge.showFPS);
     }
 
     public UIActor getUI() {
@@ -639,7 +636,6 @@ public class UIScene extends Scene {
     }
 
     Image screenImage;
-    TextureRegion backgroundTexture;
 
     @Override
     public boolean leave() {
@@ -651,11 +647,11 @@ public class UIScene extends Scene {
     @Override
     public void enter() {
         if (screenImage != null) {
-            //create from lastPreview from header...
             try {
-                backgroundTexture = new TextureRegion(Forge.lastPreview);
-                //backgroundTexture.flip(false, true);
-                screenImage.setDrawable(new TextureRegionDrawable(backgroundTexture));
+                if (Forge.lastPreview != null) {
+                    // set shaderDrawable to screenImage
+                    screenImage.setDrawable(getLastPreviewDrawable(new TextureRegion(Forge.lastPreview)));
+                }
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -725,15 +721,39 @@ public class UIScene extends Scene {
 
     public TextureRegion getUIBackground() {
         try {
-            Actor a = ui.getChild(0);
-            if (a instanceof Image) {
-                Drawable d = ((Image) a).getDrawable();
-                if (d instanceof TextureRegionDrawable) {
-                    return ((TextureRegionDrawable) d).getRegion();
+            Actor actor = ui.getChild(0);
+            if (actor instanceof Image image) {
+                Drawable originalDrawable = image.getDrawable();
+                if (originalDrawable instanceof TextureRegionDrawable textureRegionDrawable) {
+                    return textureRegionDrawable.getRegion();
                 }
             }
         } catch (Exception e) {
             return null;
+        }
+        return null;
+    }
+
+    public void setUIBackground(Drawable drawable) {
+        try {
+            Actor actor = ui.getChild(0);
+            if (actor instanceof Image image) {
+                Drawable originalDrawable = image.getDrawable();
+                image.setDrawable(drawable);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public Drawable getBGDrawable() {
+        try {
+            Actor actor = ui.getChild(0);
+            if (actor instanceof Image image) {
+                return image.getDrawable();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
         return null;
     }

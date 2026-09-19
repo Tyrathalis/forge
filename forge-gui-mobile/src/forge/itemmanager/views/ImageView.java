@@ -68,7 +68,8 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     private static final Color UNOWNED_TINT = new Color(0, 0, 0, 0.6f);
     private static final Color NEW_BADGE_COLOR = new Color(1f, 0.84f, 0.28f, 0.9f);
 
-    private Supplier<List<Integer>> selectedIndices = Suppliers.memoize(ArrayList::new);
+    // pre-size init capacity could be cards or decks to prevent arraylist excessive growth, could prevent OOM
+    private Supplier<List<Integer>> selectedIndices = Suppliers.memoize(() -> new ArrayList<>(512));
     private int columnCount = 4;
     private float scrollHeight = 0;
     private ColumnDef pileBy = null;
@@ -78,12 +79,25 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     private ItemInfo focalItem;
     private boolean updatingLayout;
     private float totalZoomAmount;
-    private Supplier<List<ItemInfo>> orderedItems = Suppliers.memoize(ArrayList::new);
-    private Supplier<List<Group>> groups = Suppliers.memoize(ArrayList::new);
+    private Supplier<List<ItemInfo>> orderedItems = Suppliers.memoize(() -> new ArrayList<>(512));
+    private Supplier<List<Group>> groups = Suppliers.memoize(() -> new ArrayList<>(60));
     private Function<Entry<? extends InventoryItem, Integer>, ?> fnIsFavorite = ColumnDef.FAVORITE.fnDisplay, fnPrice = null;
     //collection browsing decorations, active only when a NEW/OWNED column override supplies them (e.g. the Chronicle binder)
     private Function<Entry<? extends InventoryItem, Integer>, ?> fnIsNew = null, fnOwnedCount = null;
     private Function<String, String> groupCaptionFn = null;
+
+    private long lastRefreshTime = 0;
+    private static final long REFRESH_DEBOUNCE_MS = 50;
+
+    // prevent ui updates too quickly though 50ms maybe a good default
+    // TODO: find a way to refresh the list before drawing consecutively
+    private void scheduleLayout(boolean forRefresh) {
+        long now = System.currentTimeMillis();
+        if (now - lastRefreshTime < REFRESH_DEBOUNCE_MS)
+            return;
+        lastRefreshTime = now;
+        updateLayout(forRefresh);
+    }
 
     private class SafeList<T> {
         private final List<T> internalList;
@@ -464,6 +478,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
 
         for (Group group : groups.get()) {
             group.items.clear();
+            group.piles.clear();
         }
         clearSelection();
 
@@ -475,10 +490,9 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
 
                 Group group;
                 if (groupIndex >= 0) {
-                    if (groupIndex >= groups.get().size())
-                        group = groups.get().get(groups.get().size() - 1);
-                    else
-                        group = groups.get().get(groupIndex);
+                    group = groupIndex < groups.get().size()
+                            ? groups.get().get(groupIndex)
+                            : groups.get().get(groups.get().size() - 1);
                 } else {
                     if (otherItems == null) {
                         //reuse existing Other group if possible
@@ -506,13 +520,15 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
 
         if (otherItems == null && groups.get().size() > groupBy.getGroups().length) {
             int index = groups.get().size() - 1;
-            if (index < groups.get().size() && index >= 0)
+            if (index >= 0 && index < groups.get().size()) {
                 groups.get().remove(index); //remove Other group if empty
+            }
             btnExpandCollapseAll.updateIsAllCollapsed();
         }
-
         updateLayout(true);
+        // scheduleLayout(true);
     }
+
 
     private boolean showQtyOnCard(T item) {
         return item instanceof PaperCard && itemManager.getAllowGroupIdentical() && FModel.getPreferences().getPrefBoolean(FPref.UI_GROUP_IDENTICAL_CARDS);
@@ -892,8 +908,21 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
     }
 
     private void updateSelection() {
-        for (Integer i : selectedIndices.get()) {
-            orderedItems.get().get(i).selected = true;
+        List<Integer> indices = selectedIndices.get();
+        List<ItemInfo> items = orderedItems.get();
+
+        if (indices == null || indices.isEmpty() || items == null || items.isEmpty()) {
+            return; // nothing to select
+        }
+
+        for (Integer i : indices) {
+            if (i == null || i < 0 || i >= items.size()) {
+                continue; // skip invalid index
+            }
+            ItemInfo itemInfo = items.get(i);
+            if (itemInfo != null) {
+                itemInfo.selected = true; // safe now
+            }
         }
     }
 
@@ -1273,7 +1302,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                     //composed placeholder when no image is on disk) and skip decorations
                     Texture img = ImageCache.getInstance().getImage(pc.getImageKey(false), true);
                     if (img != null && img != ImageCache.getInstance().getDefaultImage()) {
-                        g.drawCardImage(img, null, x, y, w, h, true, false);
+                        g.drawCardImage(img, null, x, y, w, h, true, false, false);
                     } else {
                         CardRenderer.drawCard(g, pc, x, y, w, h, pos);
                         g.fillRect(UNOWNED_TINT, x, y, w, h);

@@ -75,6 +75,7 @@ public class SettingsScene extends UIScene {
             }
             Config.instance().getSettingData().plane = "<user>" + newPlaneName.getText();
             Config.instance().saveSettings();
+            Forge.getLocalizer().loadAdventureBundle(Config.instance().getPlanePath(Config.instance().getSettingData().plane) + "languages/");
             showDialog(copyPlane);
         }
     }
@@ -109,6 +110,7 @@ public class SettingsScene extends UIScene {
         SelectBox plane = Controls.newComboBox(Config.instance().getAllAdventures(), Config.instance().getSettingData().plane, o -> {
             Config.instance().getSettingData().plane = (String) o;
             Config.instance().saveSettings();
+            Forge.getLocalizer().loadAdventureBundle(Config.instance().getPlanePath((String) o) + "languages/");
             return null;
         });
         plane.addListener(new ChangeListener() {
