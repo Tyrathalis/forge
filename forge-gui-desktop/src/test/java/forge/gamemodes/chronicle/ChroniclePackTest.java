@@ -1,6 +1,7 @@
 package forge.gamemodes.chronicle;
 
 import static org.testng.Assert.assertEquals;
+import forge.model.FModel;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
@@ -11,7 +12,6 @@ import java.util.Map;
 
 import org.testng.annotations.Test;
 
-import forge.StaticData;
 import forge.ai.AITest;
 import forge.item.PaperCard;
 import forge.item.PaperCardPredicates;
@@ -76,7 +76,7 @@ public class ChroniclePackTest extends AITest {
         for (String name : ChroniclePricing.parseNotables(
                 forge.util.FileUtil.readFile(forge.localinstance.properties.ForgeConstants.CHRONICLE_DATA_DIR
                         + ChronicleData.NOTABLES_FILE)).keySet()) {
-            PaperCard card = StaticData.instance().getCommonCards().getCard(name);
+            PaperCard card = FModel.getMagicDb().getCommonCards().getCard(name);
             assertTrue(card != null, "notable not in card DB: " + name);
             assertTrue(pricing.isNotable(name));
             assertTrue(pricing.buylistCents(card) > config.buylistBaseCents.get(forge.card.CardRarity.Common),
@@ -114,7 +114,7 @@ public class ChroniclePackTest extends AITest {
     @Test
     public void completionCountsDistinctPrintingsAgainstSetUniverse() {
         List<PaperCard> universe = new ArrayList<>(
-                StaticData.instance().getCommonCards().getAllCards(PaperCardPredicates.printedInSet("ARN")));
+                FModel.getMagicDb().getCommonCards().getAllCards(PaperCardPredicates.printedInSet("ARN")));
         assertTrue(universe.size() >= 78, "ARN universe should carry at least its 78 distinct names");
 
         ChronicleCollection collection = new ChronicleCollection();
@@ -167,13 +167,13 @@ public class ChroniclePackTest extends AITest {
         assertEquals(ChronicleAcquisitionLog.sourcesFor(arnCommon, calendar),
                 java.util.Arrays.asList(SealedItem.Kind.BOOSTER), "ARN has no starter: booster only");
 
-        PaperCard leaPlains = StaticData.instance().getCommonCards().getCard("Plains", "LEA");
+        PaperCard leaPlains = FModel.getMagicDb().getCommonCards().getCard("Plains", "LEA");
         assertTrue(leaPlains != null);
         assertEquals(ChronicleAcquisitionLog.sourcesFor(leaPlains, calendar),
                 java.util.Arrays.asList(SealedItem.Kind.STARTER),
                 "basic lands never appear in Forge's era booster sheets: starter only");
 
-        PaperCard leaRare = StaticData.instance().getCommonCards().getCard("Black Lotus", "LEA");
+        PaperCard leaRare = FModel.getMagicDb().getCommonCards().getCard("Black Lotus", "LEA");
         assertEquals(ChronicleAcquisitionLog.sourcesFor(leaRare, calendar),
                 java.util.Arrays.asList(SealedItem.Kind.BOOSTER, SealedItem.Kind.STARTER));
     }

@@ -1,12 +1,12 @@
 package forge.gamemodes.chronicle;
 
 import java.util.ArrayList;
+import forge.model.FModel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-import forge.StaticData;
 import forge.card.CardEdition;
 import forge.card.MagicColor;
 import forge.deck.CardPool;
@@ -198,8 +198,8 @@ public final class ChronicleDeckBuilder implements ChronicleDeckSource {
 
     private static PaperCard basicFor(byte color, String edition) {
         String landName = MagicColor.Constant.BASIC_LANDS.get(indexOfColor(color));
-        PaperCard card = StaticData.instance().getCommonCards().getCard(landName, edition);
-        return card != null ? card : StaticData.instance().getCommonCards().getCard(landName);
+        PaperCard card = FModel.getMagicDb().getCommonCards().getCard(landName, edition);
+        return card != null ? card : FModel.getMagicDb().getCommonCards().getCard(landName);
     }
 
     private static int indexOfColor(byte color) {
@@ -220,7 +220,7 @@ public final class ChronicleDeckBuilder implements ChronicleDeckSource {
         String best = null;
         int bestCount = -1;
         for (Map.Entry<String, Integer> e : counts.entrySet()) {
-            CardEdition edition = StaticData.instance().getEditions().get(e.getKey());
+            CardEdition edition = FModel.getMagicDb().getEditions().get(e.getKey());
             //only core/expansion sets actually print basics; skip anything that doesn't
             if (edition == null) {
                 continue;

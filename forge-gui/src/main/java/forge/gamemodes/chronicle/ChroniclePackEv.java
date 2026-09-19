@@ -1,12 +1,12 @@
 package forge.gamemodes.chronicle;
 
 import java.util.HashMap;
+import forge.model.FModel;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.lang3.tuple.Pair;
 
-import forge.StaticData;
 import forge.card.PrintSheet;
 import forge.item.PaperCard;
 import forge.item.SealedTemplate;
@@ -44,10 +44,10 @@ public final class ChroniclePackEv {
         String setCode = template.getEdition();
         double ev = 0;
         for (Pair<String, Integer> slot : template.getSlots()) {
-            String sheetKey = StaticData.instance().getEditions().contains(setCode)
+            String sheetKey = FModel.getMagicDb().getEditions().contains(setCode)
                     ? slot.getLeft().trim() + " " + setCode : slot.getLeft().trim();
             PrintSheet sheet = BoosterGenerator.makeSheet(sheetKey,
-                    StaticData.instance().getCommonCards().getAllCards());
+                    FModel.getMagicDb().getCommonCards().getAllCards());
             List<PaperCard> flat = sheet.toFlatList();
             if (flat.isEmpty()) {
                 continue;

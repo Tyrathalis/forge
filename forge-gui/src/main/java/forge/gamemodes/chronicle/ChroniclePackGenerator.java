@@ -1,9 +1,9 @@
 package forge.gamemodes.chronicle;
 
 import java.util.List;
+import forge.model.FModel;
 import java.util.Random;
 
-import forge.StaticData;
 import forge.item.PaperCard;
 import forge.item.SealedTemplate;
 import forge.item.generation.BoosterGenerator;
@@ -45,10 +45,10 @@ public final class ChroniclePackGenerator {
         SealedTemplate template;
         switch (kind) {
             case BOOSTER:
-                template = StaticData.instance().getBoosters().get(editionCode);
+                template = FModel.getMagicDb().getBoosters().get(editionCode);
                 break;
             case STARTER:
-                template = StaticData.instance().getTournamentPacks().get(editionCode);
+                template = FModel.getMagicDb().getTournamentPacks().get(editionCode);
                 break;
             default:
                 template = null;

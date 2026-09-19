@@ -1,6 +1,7 @@
 package forge.gamemodes.chronicle;
 
 import java.io.File;
+import forge.model.FModel;
 import java.time.Clock;
 import java.util.List;
 
@@ -121,7 +122,7 @@ public final class ChronicleData {
      */
     public static synchronized List<forge.item.PaperCard> setUniverse(String editionCode) {
         return setUniverses.computeIfAbsent(editionCode, code -> {
-            forge.card.CardEdition edition = forge.StaticData.instance().getEditions().get(code);
+            forge.card.CardEdition edition = FModel.getMagicDb().getEditions().get(code);
             if (edition == null) {
                 return new java.util.ArrayList<>();
             }
@@ -130,7 +131,7 @@ public final class ChronicleData {
                     .compareTo(forge.card.CardEdition.getSortableCollectorNumber(b.collectorNumber())));
             java.util.Set<forge.item.PaperCard> resolved = new java.util.LinkedHashSet<>();
             for (forge.card.CardEdition.EditionEntry entry : entries) {
-                forge.item.PaperCard card = forge.StaticData.instance().getCommonCards()
+                forge.item.PaperCard card = FModel.getMagicDb().getCommonCards()
                         .getCard(entry.name(), code, entry.collectorNumber());
                 if (card != null) {
                     resolved.add(card);

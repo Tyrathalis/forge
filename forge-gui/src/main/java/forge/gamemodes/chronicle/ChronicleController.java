@@ -1,12 +1,12 @@
 package forge.gamemodes.chronicle;
 
 import java.io.File;
+import forge.model.FModel;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import forge.StaticData;
 import forge.deck.CardPool;
 import forge.deck.Deck;
 import forge.item.PaperCard;
@@ -76,7 +76,7 @@ public final class ChronicleController {
     /** Production card resolver backed by the loaded card DB. */
     public static ChronicleCollection.CardResolver cardDbResolver() {
         return (name, edition, artIndex, foil) -> {
-            PaperCard card = StaticData.instance().getCommonCards().getCard(name, edition, artIndex);
+            PaperCard card = FModel.getMagicDb().getCommonCards().getCard(name, edition, artIndex);
             if (card == null) {
                 return null;
             }

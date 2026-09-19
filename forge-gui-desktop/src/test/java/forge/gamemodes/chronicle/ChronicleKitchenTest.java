@@ -1,6 +1,7 @@
 package forge.gamemodes.chronicle;
 
 import static org.testng.Assert.assertEquals;
+import forge.model.FModel;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
@@ -547,7 +548,7 @@ public class ChronicleKitchenTest extends AITest {
     // --- helpers ------------------------------------------------------------
 
     private static PaperCard card(String name) {
-        return forge.StaticData.instance().getCommonCards().getUniqueByName(name);
+        return FModel.getMagicDb().getCommonCards().getUniqueByName(name);
     }
 
     private static String digest(CardPool pool) {
