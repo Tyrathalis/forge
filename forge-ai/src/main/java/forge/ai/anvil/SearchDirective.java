@@ -53,6 +53,16 @@ public final class SearchDirective {
      *  horizon, where a payment's consequence — what stayed untapped — is
      *  visible). -1 = the next quiescent window (fork A, every other copy). */
     public volatile int leafAfterTurn = -1;
+    /** ADR-0114 (the void-rescue instrument): on this copy the forced option
+     *  is realized by the heuristic's planner even on a bridged seat
+     *  (PlayerControllerAnvil.heuristicForce) — the plan it set (Obs.planJson)
+     *  or the AI's refusal recorded here; and, on any copy, why the forced
+     *  ask voided (the realizer's veto code, pass_masked, veto_cap,
+     *  no_oneshot, heur_refuse). Recording only. */
+    public volatile boolean heuristicForce = false;
+    public volatile String voidReason = null;
+    public volatile String plan = null;
+    public volatile String refuse = null;
 
     /** M12 Build 3: one traced surface callback of the seat on this copy
      *  (after the forced option applied) — what the monitor may expand. */

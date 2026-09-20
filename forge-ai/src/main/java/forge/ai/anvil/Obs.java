@@ -1062,6 +1062,15 @@ public final class Obs {
      * which is logged as its own dec/ret. Sub-abilities contribute their own
      * pre-set targets.
      */
+    /** ADR-0114: one SpellAbility's realized plan (host, targets, X, alt /
+     *  optional costs, bound modes) in the ret-record idiom — the void-rescue
+     *  copy's record of the heuristic's plan. Reads state only. */
+    public static String planJson(SpellAbility sa) {
+        StringBuilder sb = new StringBuilder(160);
+        castPlan(sb, sa, 0);
+        return sb.toString();
+    }
+
     private static void castPlan(StringBuilder sb, SpellAbility sa, int depth) {
         sb.append('{');
         if (sa.getHostCard() != null) {

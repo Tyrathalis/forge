@@ -387,7 +387,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             if (w.kind == SearchDirective.W_FORCE) {
                 List<SpellAbility> r = heuristicRealize(w.ask.get(0));
                 if (r == null) {
-                    searchVoid(sr);
+                    searchVoid(sr, "heur_refuse");
                 }
                 return r;
             }
@@ -476,6 +476,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 return null;
             }
             if (w.kind == SearchDirective.W_FORCE) {
+                if (sr.heuristicForce) {
+                    // ADR-0114: the void-rescue copy — the forced option realized
+                    // by the heuristic's planner on a bridged seat (the plan or the
+                    // refusal recorded on the directive); the seat's later windows
+                    // stay the network's, as on every copy. Recording only.
+                    List<SpellAbility> hr = heuristicForce(w.ask.get(0), sr);
+                    if (hr == null) {
+                        searchVoid(sr, "heur_refuse");
+                    }
+                    return hr;
+                }
                 options = w.ask; // single-option forbid-decline ask
                 schedForce = true;
             }
@@ -530,9 +541,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     } else if (schedForce && sr != null && (r.sas == null || r.sas.isEmpty())) {
                         // search copy: the server passed despite the single-
                         // option forbid-decline mask — the option is VOID here.
-                        sr.outcome = "void";
-                        getGame().setAnvilCapReason("search_void");
-                        getGame().setGameOver(forge.game.GameEndReason.Draw);
+                        searchVoid(sr, "pass_masked");
                     } else if (sd != null && sd.mode == SeqMode.OBSERVE
                             && r.sas != null) {
                         // M8 D1: pure recording — the ask above ran exactly
@@ -576,7 +585,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         } else if (sc != null) {
                             sc.onExhaust("veto_cap");
                         } else if (sr != null) {
-                            searchVoid(sr);
+                            searchVoid(sr, "veto_cap");
                         }
                         return null;
                     }
@@ -599,7 +608,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                     } else if (schedForce && sc != null) {
                         sc.onExhaust("veto");
                     } else if (schedForce && sr != null) {
-                        searchVoid(sr); // the forced option vetoed at apply
+                        searchVoid(sr, r.veto == null ? "veto" : r.veto); // the forced option vetoed at apply
                     }
                     return null; // only pass remains; nothing left to ask
                 }
@@ -615,7 +624,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 sc.onExhaust("no_oneshot"); // M0-shape bridge can't honor the mask
                 return null;
             } else if (schedForce && sr != null) {
-                searchVoid(sr);
+                searchVoid(sr, "no_oneshot");
                 return null;
             }
             return selectOnePick(options, labels, obsSeq);
@@ -632,11 +641,30 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return Lists.newArrayList(sa);
     }
 
+    /** ADR-0114 (the void-rescue instrument): the heuristic's realization of
+     *  the forced option on a rescue copy — the realized plan (targets, X;
+     *  Obs.planJson) or the AI's refusal recorded on the directive. */
+    private List<SpellAbility> heuristicForce(SpellAbility sa, SearchDirective sr) {
+        AnvilOptions.invalidate(getGame(), player);
+        if (!sa.isLandAbility()) {
+            AiPlayDecision d = getAi().canPlaySa(sa);
+            if (d != AiPlayDecision.WillPlay) {
+                sr.refuse = d.name();
+                return null;
+            }
+        }
+        sr.plan = Obs.planJson(sa);
+        Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
+                "by", "search_hplan", "pick", Census.str(sa));
+        return Lists.newArrayList(sa);
+    }
+
     /** Search copy (M12 Build 0): the forced option could not be applied
      *  (vetoed at apply / unhonored mask) — the candidate is VOID and the
      *  copy ends; a pass here would mislabel the pass leaf as this option. */
-    private void searchVoid(SearchDirective sr) {
+    private void searchVoid(SearchDirective sr, String reason) {
         sr.outcome = "void";
+        sr.voidReason = reason;
         getGame().setAnvilCapReason("search_void");
         getGame().setGameOver(forge.game.GameEndReason.Draw);
     }
@@ -675,9 +703,17 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         final List<SpellAbility> sas;
         final int vetoedOption;
 
+        /** ADR-0114: the realizer's veto code on a veto (null otherwise). */
+        final String veto;
+
         OneShot(List<SpellAbility> sas, int vetoedOption) {
+            this(sas, vetoedOption, null);
+        }
+
+        OneShot(List<SpellAbility> sas, int vetoedOption, String veto) {
             this.sas = sas;
             this.vetoedOption = vetoedOption;
+            this.veto = veto;
         }
     }
 
@@ -729,7 +765,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                         "oneshot", true, "veto", r.veto, "hostSas", r.hostSas, "fits", r.fitCount);
             }
             Obs.ret(getGame(), obsSeq, null);
-            return new OneShot(null, plan.optionIndex);
+            return new OneShot(null, plan.optionIndex, r.veto);
         }
         if (attempt > 0) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",

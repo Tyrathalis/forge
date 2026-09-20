@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchalloc <tau> [-searchfloor <p>]]] "
+                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchvoidrescue] [-searchalloc <tau> [-searchfloor <p>]]] "
                     + "[-payrescue]");
             return;
         }
@@ -375,6 +375,12 @@ public final class AnvilRun {
                 ? Double.parseDouble(params.get("searchalloc").get(0)) : Double.NaN;
         final double searchFloor = params.containsKey("searchfloor")
                 ? Double.parseDouble(params.get("searchfloor").get(0)) : 0.1;
+        // ADR-0114 (the void-rescue instrument): -searchvoidrescue — a first-ply
+        // candidate whose roll-0 copy voided gets ONE more copy on the same roll
+        // seed with the forced option realized by the heuristic's planner; its
+        // leaf value, the plan and the void's reason are recorded on the row's
+        // option ("vr", "h") and never enter the acting rule. Off = byte-identical.
+        SearchMonitor.VOID_RESCUE = params.containsKey("searchvoidrescue");
         // Build 4 (09-17): -vetofallback heuristic — the model's vetoed pick realized by the heuristic's planner
         PlayerControllerAnvil.vetoFallbackHeuristic = params.containsKey("vetofallback")
                 && !params.get("vetofallback").isEmpty() && "heuristic".equals(params.get("vetofallback").get(0));
@@ -448,7 +454,7 @@ public final class AnvilRun {
                     "{\"rate\":%s,\"rolls\":%d,\"opts\":%d,\"mana\":%b,\"surf\":%d,\"surfcap\":%d,"
                     + "\"bar\":%s,\"temp\":%s,\"seats\":%s,\"pay\":%d,\"payleaf\":\"%s\",\"paybridge\":%b,"
                     + "\"leaf\":\"%s\",\"actkinds\":%s,\"rollsalt\":%d,"
-                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s,\"voidskip\":%b,\"alloc\":%s,\"floor\":%s}",
+                    + "\"deep\":%d,\"deepleaf\":\"%s\",\"deeprolls\":%d,\"deeplo\":%s,\"deepfloor\":%s,\"deepbar\":%s,\"voidskip\":%b,\"voidrescue\":%b,\"alloc\":%s,\"floor\":%s}",
                     searchRate, searchRolls, searchOpts, searchMana, searchSurf, searchSurfCap,
                     Double.isNaN(searchAct) ? "null" : String.valueOf(searchAct),
                     String.valueOf(searchTemp),
@@ -458,7 +464,7 @@ public final class AnvilRun {
                     searchDeep, searchDeepLeaf, searchDeepRolls, String.valueOf(searchDeepLo),
                     String.valueOf(searchDeepFloor),
                     Double.isNaN(searchDeepBar) ? "null" : String.valueOf(searchDeepBar),
-                    SearchMonitor.VOID_SKIP,
+                    SearchMonitor.VOID_SKIP, SearchMonitor.VOID_RESCUE,
                     Double.isNaN(searchAlloc) ? "null" : String.valueOf(searchAlloc),
                     String.valueOf(searchFloor));
         }
@@ -1407,6 +1413,9 @@ public final class AnvilRun {
          *  its value is NaN either way; 29.6% of first-ply copies on the 09-15
          *  bench cell, ≈ 15% of them at rolls 2). Search-copy / recording only. */
         static boolean VOID_SKIP = true;
+        /** ADR-0114: the void-rescue instrument — one heuristic-realized copy per
+         *  voided first-ply candidate, recorded on the row, never acted on. */
+        static boolean VOID_RESCUE = false;
         int sw = 0;
         private static final java.util.Set<String> crashClassesPrinted =
                 java.util.Collections.synchronizedSet(new HashSet<>());
@@ -1616,6 +1625,11 @@ public final class AnvilRun {
             /** Pay answer copies under a horizon leaf: the certify axes at the
              *  copy's stop (JSON array), the calibration read's rollout side. */
             String snap = null;
+            /** ADR-0114: why the forced ask voided; on a rescue copy the
+             *  heuristic's plan (Obs.planJson) or its refusal. */
+            String voidReason = null;
+            String plan = null;
+            String refuse = null;
         }
 
         /** The certify-style end snapshot of a copy (CensusRun.certRow's
@@ -1665,6 +1679,14 @@ public final class AnvilRun {
         /** @param leafAfterTurn ≥ 0: the end-of-turn leaf (SearchDirective.leafAfterTurn) */
         private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
                 byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn) {
+            return runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, surfKind, surfOrd, surfAnswer,
+                    leafAfterTurn, false);
+        }
+
+        /** @param rescue ADR-0114: the forced option realized by the heuristic's planner */
+        private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
+                byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn,
+                boolean rescue) {
             CopyResult res = new CopyResult();
             long c0 = System.nanoTime();
             Game copy;
@@ -1684,6 +1706,7 @@ public final class AnvilRun {
             bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
             SearchDirective dir = SearchDirective.arm(copy, seatName, label);
             dir.leafAfterTurn = leafAfterTurn;
+            dir.heuristicForce = rescue;
             SurfaceDirective sdir = surfAnswer == null ? null
                     : SurfaceDirective.arm(copy, seatName, surfKind, surfOrd, surfAnswer);
             long asks0 = bridge.asksSoFar();
@@ -1737,6 +1760,9 @@ public final class AnvilRun {
                     res.v = wi < 0 ? 0.5 : (wi == prioSeat ? 1.0 : 0.0);
                 }
                 res.surfaces = new ArrayList<>(dir.surfaces);
+                res.voidReason = dir.voidReason;
+                res.plan = dir.plan;
+                res.refuse = dir.refuse;
                 if (sdir != null) {
                     res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
                     res.surfFrame = sdir.frame;
@@ -2062,6 +2088,7 @@ public final class AnvilRun {
                 StringBuilder snaps = new StringBuilder();
                 long optMs = 0;
                 List<SearchDirective.Surface> surf0 = Collections.emptyList();
+                String voidReason0 = null;
                 final int prioLeafAfter = prioLeafAfter(turn);
                 for (int r = 0; r < rolls; r++) {
                     // PAIRED across candidates: same determinization per roll.
@@ -2091,6 +2118,7 @@ public final class AnvilRun {
                     firstV[c][r] = cr.v;
                     if (r == 0) {
                         surf0 = cr.surfaces;
+                        voidReason0 = cr.voidReason;
                     }
                     if (!Double.isNaN(cr.v)) {
                         meanV[c] += cr.v;
@@ -2105,6 +2133,32 @@ public final class AnvilRun {
                         .append("],\"ms\":").append(optMs).append(",\"n_surf\":").append(surf0.size());
                 if (prioLeafAfter >= 0) {
                     sb.append(",\"snap\":[").append(snaps).append(']');
+                }
+                if (VOID_RESCUE && label != null && "void".equals(firstKind[c][0])) {
+                    // ADR-0114: the void-rescue instrument — one more copy on roll 0's
+                    // seed (CRN with every other candidate's roll 0), the forced
+                    // option realized by the heuristic's planner; recorded under
+                    // "h", outside the value arrays the acting rule reads.
+                    if (voidReason0 != null) {
+                        sb.append(",\"vr\":\"").append(jstr(voidReason0)).append('"');
+                    }
+                    CopyResult hr = runCopy(label, rollSeedOf(turn, mySw, 0),
+                            "g" + gameIdx + ".s" + mySw + "r0o" + c + "h", prioSeat, seatName, rngState,
+                            -1, -1, null, prioLeafAfter, true);
+                    copyMsTotal += hr.copyMs;
+                    sb.append(",\"h\":{\"kind\":\"").append(hr.kind).append('"')
+                            .append(",\"v\":").append(Double.isNaN(hr.v) ? "null"
+                                    : String.format(java.util.Locale.ROOT, "%.5f", hr.v))
+                            .append(",\"calls\":").append(hr.asks).append(",\"ms\":").append(hr.ms);
+                    if (hr.plan != null) {
+                        sb.append(",\"plan\":").append(hr.plan);
+                    }
+                    if (hr.refuse != null) {
+                        sb.append(",\"refuse\":\"").append(jstr(hr.refuse)).append('"');
+                    }
+                    sb.append('}');
+                    Census.rec(game, prio, "searchRescue", "kind", hr.kind,
+                            "refused", hr.refuse != null, "calls", hr.asks, "ms", hr.ms);
                 }
                 sb.append('}');
             }
