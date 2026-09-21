@@ -2134,14 +2134,16 @@ public final class AnvilRun {
                 if (prioLeafAfter >= 0) {
                     sb.append(",\"snap\":[").append(snaps).append(']');
                 }
+                if (label != null && "void".equals(firstKind[c][0]) && voidReason0 != null) {
+                    // 09-21 (ADR-0114 routed): the void reason is a standing census,
+                    // recorded on every voided first-ply candidate, flag or no flag.
+                    sb.append(",\"vr\":\"").append(jstr(voidReason0)).append('"');
+                }
                 if (VOID_RESCUE && label != null && "void".equals(firstKind[c][0])) {
                     // ADR-0114: the void-rescue instrument — one more copy on roll 0's
                     // seed (CRN with every other candidate's roll 0), the forced
                     // option realized by the heuristic's planner; recorded under
                     // "h", outside the value arrays the acting rule reads.
-                    if (voidReason0 != null) {
-                        sb.append(",\"vr\":\"").append(jstr(voidReason0)).append('"');
-                    }
                     CopyResult hr = runCopy(label, rollSeedOf(turn, mySw, 0),
                             "g" + gameIdx + ".s" + mySw + "r0o" + c + "h", prioSeat, seatName, rngState,
                             -1, -1, null, prioLeafAfter, true);

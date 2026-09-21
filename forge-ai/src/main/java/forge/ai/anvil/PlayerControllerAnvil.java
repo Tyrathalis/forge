@@ -285,11 +285,13 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             pend.complete(natural, d, "pass");
             return null;
         }
-        List<SpellAbility> forced = searchForcedAsk(label);
+        ForcedAsk fa = searchForcedAsk(label);
+        List<SpellAbility> forced = fa.sas;
         if (forced == null || forced.isEmpty()) {
+            final String why = fa.voidReason == null ? "empty" : fa.voidReason;
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
-                    "by", d.by, "pick", label, "nat", natural, "margin", d.margin, "void", true);
-            pend.complete(natural, d, "act_void");
+                    "by", d.by, "pick", label, "nat", natural, "margin", d.margin, "void", true, "vr", why);
+            pend.complete(natural, d, "act_void", why);
             return picked;
         }
         Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
@@ -330,7 +332,20 @@ public class PlayerControllerAnvil extends CensusPlayerController {
      *  (the caller plays the natural line and counts it). The dec is logged
      *  under by="search" so the store can tell the forced re-ask from the
      *  window's natural ask that precedes it. */
-    private List<SpellAbility> searchForcedAsk(String label) {
+    /** The mainline's forced ask (the acting rule's sampled option): the
+     *  answer, or why it voided (09-21, ADR-0114 routed — the act_void class
+     *  by reason; the mainline analogue of the copies' {@code vr}). */
+    private static final class ForcedAsk {
+        final List<SpellAbility> sas;
+        final String voidReason;
+
+        ForcedAsk(List<SpellAbility> sas, String voidReason) {
+            this.sas = sas;
+            this.voidReason = voidReason;
+        }
+    }
+
+    private ForcedAsk searchForcedAsk(String label) {
         SpellAbility target = null;
         for (SpellAbility sa : AnvilOptions.priorityOptions(getGame(), player)) {
             if (label.equals(Census.str(sa))) {
@@ -339,10 +354,11 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             }
         }
         if (target == null) {
-            return null;
+            return new ForcedAsk(null, "no_option");
         }
         if (!bridged(TAG_PRIORITY)) {
-            return heuristicRealize(target); // the control arm: no network plan
+            List<SpellAbility> h = heuristicRealize(target); // the control arm: no network plan
+            return new ForcedAsk(h, h == null ? "heur_refuse" : null);
         }
         List<SpellAbility> options = Lists.newArrayList(target);
         List<String> labels = Lists.newArrayList("pass", label);
@@ -351,11 +367,14 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 Obs.lastDecForBridge(getGame()), 0, true);
         if (plan == null) {
             Obs.ret(getGame(), obsSeq, null);
-            return null;
+            return new ForcedAsk(null, "no_plan");
         }
         OneShot r = oneShotCast(options, plan, obsSeq, 0);
         AnvilOptions.invalidate(getGame(), player);
-        return r.vetoedOption > 0 ? null : r.sas;
+        if (r.vetoedOption > 0) {
+            return new ForcedAsk(null, r.veto == null ? "veto" : r.veto);
+        }
+        return new ForcedAsk(r.sas, r.sas == null ? "pass" : null);
     }
 
     private List<SpellAbility> chooseSpellAbilityToPlayInner() {

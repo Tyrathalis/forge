@@ -133,6 +133,14 @@ public final class SearchDirective {
         return d != null && d.playerName.equals(p.getName()) ? d : null;
     }
 
+    /** True for a search copy (a game armed by {@link #arm}); the mainline
+     *  game never enters the map. Census rows on copies carry {@code copy:true}
+     *  (09-21, ADR-0114 routed): the copies' forced asks are what made a
+     *  searched arm's "mainline" veto rate unreadable (ADR-0112's banked 14%). */
+    public static boolean isCopy(Game g) {
+        return g != null && armed.containsKey(g);
+    }
+
     /** The cast-window rule (see the class doc). */
     public Window window(List<SpellAbility> options, boolean quiescent) {
         return window(options, quiescent, Integer.MAX_VALUE);
@@ -565,6 +573,14 @@ public final class SearchDirective {
          *  act_void (the sampled option could not be applied; the natural
          *  line played). */
         public void complete(String natural, Decision d, String applied) {
+            complete(natural, d, applied, null);
+        }
+
+        /** @param actVoid on act_void, why the sampled option could not be
+         *                 applied on the mainline (no_option | no_plan | the
+         *                 realizer's veto code | pass | heur_refuse); recorded
+         *                 as {@code act_vr} (09-21, ADR-0114 routed) */
+        public void complete(String natural, Decision d, String applied, String actVoid) {
             StringBuilder sb = new StringBuilder(rowPrefix.length() + 256);
             sb.append(rowPrefix).append(",\"nat\":").append(Obs.q(natural));
             if (d != null) {
@@ -587,6 +603,9 @@ public final class SearchDirective {
                 }
                 if (applied != null) {
                     sb.append(",\"applied\":\"").append(applied).append('"');
+                }
+                if (actVoid != null) {
+                    sb.append(",\"act_vr\":\"").append(actVoid).append('"');
                 }
                 if (d.lifted != null) {
                     sb.append(",\"lifted\":[");

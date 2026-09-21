@@ -109,6 +109,26 @@ public class SearchActTest {
         AssertJUnit.assertEquals("{\"ev\":\"search\",\"nat\":\"pass\"}", got.toString());
     }
 
+    @Test
+    public void actVoidRowCarriesItsReason() {
+        // 09-21 (ADR-0114 routed): the mainline's forced ask voided -> act_vr
+        StringBuilder got = new StringBuilder();
+        String[] cands = {null, "opt1"};
+        double[] v = {0.40, 0.60};
+        SearchDirective.Pending p = new SearchDirective.Pending("{\"ev\":\"search\"", got::append,
+                cands, v, 0.05, 0.0, 1);
+        SearchDirective.Pending.Decision d = p.decide("pass");
+        AssertJUnit.assertEquals(1, d.actIdx);
+        p.complete("pass", d, "act_void", "no_shape_fit");
+        String row = got.toString();
+        AssertJUnit.assertTrue(row, row.contains("\"applied\":\"act_void\""));
+        AssertJUnit.assertTrue(row, row.contains("\"act_vr\":\"no_shape_fit\""));
+        got.setLength(0);
+        p = new SearchDirective.Pending("{\"ev\":\"search\"", got::append, cands, v, 0.05, 0.0, 1);
+        p.complete("pass", p.decide("pass"), "act");
+        AssertJUnit.assertFalse(got.toString(), got.toString().contains("act_vr"));
+    }
+
     // ---- Evening 5 (ADR-0106 A): the answer stage
 
     private static SearchDirective.Pending.SurfAnswers ans(int natIdx, double... v) {

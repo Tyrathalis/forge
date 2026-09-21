@@ -153,6 +153,21 @@ public final class Census {
                 .append(",\"p\":").append(quote(p == null ? null : p.getName()))
                 .append(",\"m\":\"").append(method).append('"')
                 .append(",\"d\":").append(Thread.currentThread().getStackTrace().length);
+        // 09-21 (ADR-0114 routed): a search copy's rows are marked so a
+        // searched arm's mainline rates read from the mainline decs alone
+        // (the copies' forced asks dominated the raw priority census).
+        if (SearchDirective.isCopy(g)) {
+            boolean explicit = false;
+            for (int i = 0; i + 1 < kv.length; i += 2) {
+                if ("copy".equals(kv[i])) {
+                    explicit = true;
+                    break;
+                }
+            }
+            if (!explicit) {
+                sb.append(",\"copy\":true");
+            }
+        }
         for (int i = 0; i + 1 < kv.length; i += 2) {
             sb.append(",\"").append(kv[i]).append("\":").append(val(kv[i + 1]));
         }
