@@ -191,8 +191,29 @@ public class CardMockTestCase {
                 .thenReturn(true);
     }
 
+    /**
+     * Order immunity (Anvil, 2026-09-23): core code such as {@code DeckRecognizer}
+     * resolves cards through {@link StaticData#instance()} — the LAST StaticData
+     * constructed in the JVM — while this base mocks {@code FModel.getMagicDb()} to
+     * the cached one. TestNG interleaves classes, so a class that built its own
+     * database earlier in the run leaves {@code instance()} pointing elsewhere and
+     * the recognizer answers UNKNOWN_CARD (the 09-23 CI run: 43 DeckRecognizerTest
+     * failures after an unrelated test class joined the suite). Both views of the
+     * database are pinned to the same object before every test method.
+     */
+    protected static void pinStaticDataInstance(StaticData data) {
+        try {
+            java.lang.reflect.Field f = StaticData.class.getDeclaredField("lastInstance");
+            f.setAccessible(true);
+            f.set(null, data);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot pin StaticData.instance()", e);
+        }
+    }
+
     protected void initializeStaticData() {
         StaticData data = CardDatabaseHelper.getStaticDataToPopulateOtherMocks();
         fModelMock.when(FModel::getMagicDb).thenReturn(data);
+        pinStaticDataInstance(data);
     }
 }
