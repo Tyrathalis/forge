@@ -475,7 +475,7 @@ public final class CensusRun {
     /** Minimal flat-JSON object parser (string/number/bool values, no
      *  nesting) — the jobs contract is flat and the fork carries no JSON
      *  dependency. Values land as raw strings; CertJob converts. */
-    private static Map<String, String> flatJson(String line) {
+    static Map<String, String> flatJson(String line) {
         Map<String, String> m = new HashMap<>();
         int n = line.length();
         int i = line.indexOf('{');

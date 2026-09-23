@@ -135,7 +135,7 @@ public final class AnvilRun {
         }
         boolean fixedPair = params != null && params.containsKey("d") && params.get("d").size() == 2;
         boolean pairFile = params != null && params.containsKey("pairs");
-        if (params == null || fixedPair == pairFile) {
+        if (params == null || (fixedPair == pairFile && !params.containsKey("replay"))) {
             System.out.println("Syntax: forge anvil (-d <deck1> <deck2> | -pairs <file> [-gpp <n>]) [-f <format>] "
                     + "[-b local-random|grpc:host:port] [-tags <csv>] [-bridgeseats <csv>] [-reask] "
                     + "[-census <out.jsonl>] [-obs <out.zst>] [-paytelemetry] "
@@ -148,7 +148,7 @@ public final class AnvilRun {
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
                     + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchvoidrescue] [-searchalloc <tau> [-searchfloor <p>]]] "
-                    + "[-payrescue]");
+                    + "[-payrescue] [-replay <jobs.jsonl>]");
             return;
         }
 
@@ -646,6 +646,51 @@ public final class AnvilRun {
             drillStop = true;
         }
 
+        // The certifier merge (09-23; m12-plan "the certifier merge", ADR-0108
+        // routed): -replay <jobs.jsonl> = replay a stored window and adjudicate
+        // its payment answers on SEARCH COPIES — the one fork-and-adjudicate
+        // primitive, the M9 CensusRun -certify's second entry point. One job
+        // per line (CensusRun.CertJob's flat contract + seat / profiles): job,
+        // seed, deck1, deck2, p (the seat's name, "(N)" = seat N-1) or seat, t,
+        // sa (an option-label substring), ord, arms, k, horizon (turns past t
+        // the copies play; < 0 = to the outcome), mode ("observe" = arm 0 roll
+        // 0 only, the window's dec record on the row), profile1 / profile2
+        // (else the seed-derived pair; recorded on every row). The mainline
+        // plays the job's game (idx = job) to the ord-th quiescent priority
+        // window on turn t where the seat holds an option matching sa; there
+        // every (arm, roll) forks a search copy with that option forced and a
+        // PAY SurfaceDirective answering `arm` at the forced option's own
+        // payment window (0 = auto, the paired baseline), played to the
+        // horizon leaf, one ev:"certify" row per copy (CensusRun.certRow's
+        // schema + kind / calls / i / seat / profiles); a job whose window
+        // never comes gets one never_fired row per arm. Roll 0 = the TRUE
+        // continuation (the mainline's RNG, no determinization), rolls >= 1
+        // determinized per fork J — the M9 semantics. The mainline ends at the
+        // fork point (the completions are the product). Its own mode: excludes
+        // every rollout / search genre; needs -labels; needs no bridge (every
+        // seat heuristic under -b local-random; the outcome leaf makes no head
+        // call) but runs on a bridged arm as well. The prefix trajectory is
+        // AnvilRun's (seed-derived profiles, the caps): a coordinate mined from
+        // an AnvilRun game replays exactly under the same flags; an M9
+        // CensusRun coordinate reaches its window only where the two runners'
+        // play agrees (the 09-23 parity smoke measures that rate).
+        List<ReplayJob> replayJobs = null;
+        if (params.containsKey("replay")) {
+            if (!params.containsKey("labels")) {
+                System.err.println("FATAL: -replay requires -labels <out.jsonl>");
+                System.exit(2);
+            }
+            if (rolloutK > 0 || search || drillTargets != null || schedJobs != null || choiceJobs != null
+                    || certifyHorizon >= 0 || forkObs) {
+                System.err.println("FATAL: -replay excludes "
+                        + "-rollout/-search/-drillfile/-forceschedule/-forcechoice/-certify/-forkobs");
+                System.exit(2);
+            }
+            replayJobs = ReplayJob.read(params.get("replay").get(0));
+            nGames = replayJobs.size();
+            rangeStart = 0;
+        }
+
         final AnvilBridge bridge;
         if ("local-random".equals(bridgeMode)) {
             bridge = new LocalRandomBridge();
@@ -685,7 +730,7 @@ public final class AnvilRun {
         if (fixedPair) {
             pairNames.add(new String[] { params.get("d").get(0), params.get("d").get(1) });
             gamesPerPair = Integer.MAX_VALUE;
-        } else {
+        } else if (params.containsKey("pairs")) {
             try {
                 for (String line : Files.readAllLines(Paths.get(params.get("pairs").get(0)),
                         StandardCharsets.UTF_8)) {
@@ -829,8 +874,9 @@ public final class AnvilRun {
                             + g + "/" + nGames + " games — harness will recycle");
                     break;
                 }
-                int idx = rangeStart + g;
-                long seed = seedBase != null
+                final ReplayJob rjob = replayJobs != null ? replayJobs.get(g) : null;
+                int idx = rjob != null ? rjob.job : rangeStart + g;
+                long seed = rjob != null ? rjob.seed : seedBase != null
                         ? splitmix64(seedBase + idx * 0x9E3779B97F4A7C15L) : legacyBaseSeed + idx;
                 if (drillTargets != null && !drillTargets.containsKey(idx)) {
                     tally.merge("drill_skip", 1, Integer::sum);
@@ -845,7 +891,8 @@ public final class AnvilRun {
                 }
                 MyRandom.setRandom(new Random(seed));
 
-                String[] pair = pairNames.get((int) ((idx / (long) gamesPerPair) % pairNames.size()));
+                String[] pair = rjob != null ? new String[] { rjob.deck1, rjob.deck2 }
+                        : pairNames.get((int) ((idx / (long) gamesPerPair) % pairNames.size()));
                 List<Deck> decks = new ArrayList<>();
                 for (String deckName : pair) {
                     Deck d = deckCache.computeIfAbsent(deckName,
@@ -865,6 +912,9 @@ public final class AnvilRun {
                     Deck d = decks.get(j);
                     seatProfiles[j] = profiles.get((int) Long.remainderUnsigned(
                             splitmix64(seed + (j + 1) * 0x9E3779B97F4A7C15L), profiles.size()));
+                    if (rjob != null && rjob.profiles != null) {
+                        seatProfiles[j] = rjob.profiles[j]; // the coordinate's own pair
+                    }
                     RegisteredPlayer rp = type.equals(GameType.Commander)
                             ? RegisteredPlayer.forCommander(d) : new RegisteredPlayer(d);
                     // Mixed-seat arms (M1 D8): seats outside -bridgeseats get an
@@ -924,6 +974,16 @@ public final class AnvilRun {
                     // leaf's run names its own allowance (-searchclock).
                     extraS += searchClock;
                 }
+                ReplayMonitor replay = null;
+                if (rjob != null) {
+                    replay = new ReplayMonitor(game, rjob, seed, seatProfiles, bridge, type.toString(),
+                            labels, watchdogs);
+                    game.subscribeToEvents(replay); // the turn-passed miss
+                    PlayerControllerAnvil.armPickHook(game, replay); // the fork point
+                    // the copies run inside the mainline's wall: a rollout-leaf
+                    // allowance per copy (ROLLOUT_END_TIMEOUT_S bounds each)
+                    extraS += (rjob.maxArm() + 1) * Math.max(1, rjob.k) * 45;
+                }
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
                     drawClockHit[0] = true;
@@ -955,6 +1015,10 @@ public final class AnvilRun {
                     }
                 } finally {
                     drawClock.cancel(false);
+                }
+                if (replay != null) {
+                    PlayerControllerAnvil.clearPickHook(game);
+                    replay.finish("never_fired"); // the window never came (game over / drift)
                 }
                 long wallMs = System.currentTimeMillis() - gameT0;
                 final int uw = uniqueWinner(game);
@@ -1630,12 +1694,41 @@ public final class AnvilRun {
             String voidReason = null;
             String plan = null;
             String refuse = null;
+            /** The certifier merge (09-23): the certify row's fields off the
+             *  copy — the unique winner at an end / draw (registered index,
+             *  -1 otherwise), the snapshot's ints, and the fired PAY answer's
+             *  execution record (SurfaceDirective.exec / goals / kinds / ncand / turn). */
+            int winner = -1;
+            int[] snapInts = null;
+            String surfExec = null;
+            List<String> surfGoals = null;
+            List<Integer> surfKinds = null;
+            int surfN = -1;
+            int surfTurn = -1;
+            /** The copy's wire game header (the observe row's header). */
+            String wireHeader = null;
         }
 
         /** The certify-style end snapshot of a copy (CensusRun.certRow's
          *  axes, seat order = registered order): [t_end, ended, life0, life1,
          *  creatures0, creatures1, power0, power1, hand0, hand1, lands0, lands1]. */
         private static String certSnap(Game copy, boolean ended) {
+            return certSnapJson(certSnapInts(copy, ended));
+        }
+
+        static String certSnapJson(int[] a) {
+            StringBuilder sb = new StringBuilder(64).append('[');
+            for (int i = 0; i < a.length; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(a[i]);
+            }
+            return sb.append(']').toString();
+        }
+
+        /** The snapshot's ints in certSnap's order. */
+        static int[] certSnapInts(Game copy, boolean ended) {
             int tEnd = -1;
             try {
                 tEnd = copy.getPhaseHandler().getTurn();
@@ -1661,9 +1754,8 @@ public final class AnvilRun {
                 }
             } catch (Exception ignored) {
             }
-            return "[" + tEnd + "," + (ended ? 1 : 0) + "," + life[0] + "," + life[1] + "," + creatures[0] + ","
-                    + creatures[1] + "," + power[0] + "," + power[1] + "," + hand[0] + "," + hand[1] + ","
-                    + lands[0] + "," + lands[1] + "]";
+            return new int[] { tEnd, ended ? 1 : 0, life[0], life[1], creatures[0], creatures[1], power[0],
+                    power[1], hand[0], hand[1], lands[0], lands[1] };
         }
 
         /** One candidate copy: the forced option (label; null = pass) at the
@@ -1687,6 +1779,31 @@ public final class AnvilRun {
         private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
                 byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn,
                 boolean rescue) {
+            return runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, surfKind, surfOrd, surfAnswer,
+                    leafAfterTurn, rescue, false);
+        }
+
+        /** @param trueLine the certifier merge (09-23): the TRUE continuation —
+         *                  no determinization (the M9 certify's roll 0); every
+         *                  search copy passes false (fork J) */
+        private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
+                byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn,
+                boolean rescue, boolean trueLine) {
+            return runCopy(label, rollSeed, wid, prioSeat, seatName, rngState, surfKind, surfOrd, surfAnswer,
+                    leafAfterTurn, rescue, trueLine, null);
+        }
+
+        /** @param playRng the certifier merge (09-23, ADR-0117): a REPLAY copy —
+         *                 the copy plays under this RNG state (the mainline's
+         *                 state before the seat's decision) and its seat
+         *                 continues the mainline's decision through its own
+         *                 natural chooser (SearchDirective.replayNatural); the
+         *                 roll seed determinizes rolls ≥ 1 only. null = the
+         *                 search's copy (the roll seed's stream, the option
+         *                 forced) */
+        private CopyResult runCopy(String label, long rollSeed, String wid, int prioSeat, String seatName,
+                byte[] rngState, int surfKind, int surfOrd, int[] surfAnswer, int leafAfterTurn,
+                boolean rescue, boolean trueLine, byte[] playRng) {
             CopyResult res = new CopyResult();
             long c0 = System.nanoTime();
             Game copy;
@@ -1699,14 +1816,23 @@ public final class AnvilRun {
             }
             res.copyMs = (System.nanoTime() - c0) / 1_000_000;
             Random rollRng = new Random(rollSeed);
-            determinize(copy, seatName, rollRng);
+            if (!trueLine) {
+                determinize(copy, seatName, rollRng);
+            }
+            if (playRng != null) {
+                rollRng = restoreRng(playRng); // the mainline's pre-decision stream
+            } else if (trueLine) {
+                rollRng = restoreRng(rngState);
+            }
             copy.getPhaseHandler().devResumeAtPriority();
             copy.copyLastState();
             Obs.startWireGame(copy, wid, rollSeed, fmt, game);
-            bridge.gameStart(wid, rollSeed, Obs.lastHeaderForBridge(copy));
+            res.wireHeader = Obs.lastHeaderForBridge(copy);
+            bridge.gameStart(wid, rollSeed, res.wireHeader);
             SearchDirective dir = SearchDirective.arm(copy, seatName, label);
             dir.leafAfterTurn = leafAfterTurn;
             dir.heuristicForce = rescue;
+            dir.replayNatural = playRng != null;
             SurfaceDirective sdir = surfAnswer == null ? null
                     : SurfaceDirective.arm(copy, seatName, surfKind, surfOrd, surfAnswer);
             long asks0 = bridge.asksSoFar();
@@ -1758,6 +1884,7 @@ public final class AnvilRun {
                     int wi = uniqueWinner(copy);
                     res.kind = wi >= 0 ? "end" : "draw";
                     res.v = wi < 0 ? 0.5 : (wi == prioSeat ? 1.0 : 0.0);
+                    res.winner = wi;
                 }
                 res.surfaces = new ArrayList<>(dir.surfaces);
                 res.voidReason = dir.voidReason;
@@ -1766,12 +1893,18 @@ public final class AnvilRun {
                 if (sdir != null) {
                     res.surfMiss = !sdir.fired ? "unfired" : sdir.miss;
                     res.surfFrame = sdir.frame;
+                    res.surfExec = sdir.exec;
+                    res.surfGoals = sdir.goals;
+                    res.surfKinds = sdir.kinds;
+                    res.surfN = sdir.ncand;
+                    res.surfTurn = sdir.turn;
                 }
                 if (leafAfterTurn >= 0) {
                     // the calibration reads' rollout side (the pay slot's,
                     // evening 4; the priority slot's, evening 5): where the
                     // copy stopped and what the board looked like there
-                    res.snap = certSnap(copy, "end".equals(res.kind) || "draw".equals(res.kind));
+                    res.snapInts = certSnapInts(copy, "end".equals(res.kind) || "draw".equals(res.kind));
+                    res.snap = certSnapJson(res.snapInts);
                 }
             } catch (RuntimeException e) {
                 throw e; // a poisoned bridge ends the game (protocol law)
@@ -2243,6 +2376,335 @@ public final class AnvilRun {
             }
             Collections.shuffle(lib, rng);
             p.getZone(ZoneType.Library).setCards(lib);
+        }
+    }
+
+    /** The certifier merge (09-23): one -replay job — the M9 certify jobs
+     *  contract (CensusRun.CertJob) plus seat / profiles. Immutable. */
+    static final class ReplayJob {
+        final int job;
+        final long seed;
+        final String deck1, deck2, sa;
+        final int seat, t, ord, arms, k, horizon;
+        final boolean observe;
+        /** The coordinate's own AI profiles (profile1 / profile2), or null =
+         *  AnvilRun's seed-derived pair. */
+        final String[] profiles;
+        /** The window's phase (the census row's ph: MAIN1 / MAIN2 / UPKEEP …),
+         *  or null = any phase. The 09-23 smoke: a main-2 cast forked at main 1
+         *  is a window the AI declines (heur_refuse), so the phase is part of
+         *  the coordinate whenever the miner has it. */
+        final String ph;
+
+        ReplayJob(Map<String, String> m) {
+            job = Integer.parseInt(m.get("job"));
+            seed = Long.parseLong(m.get("seed"));
+            deck1 = m.get("deck1");
+            deck2 = m.get("deck2");
+            sa = m.get("sa") == null ? "" : m.get("sa");
+            t = Integer.parseInt(m.get("t"));
+            ord = m.containsKey("ord") ? Integer.parseInt(m.get("ord")) : 0;
+            arms = m.containsKey("arms") ? Integer.parseInt(m.get("arms")) : 8;
+            k = m.containsKey("k") ? Integer.parseInt(m.get("k")) : 1;
+            horizon = m.containsKey("horizon") ? Integer.parseInt(m.get("horizon")) : 2;
+            observe = "observe".equals(m.get("mode"));
+            seat = m.containsKey("seat") ? Integer.parseInt(m.get("seat")) : seatOf(m.get("p"));
+            String p1 = m.get("profile1");
+            String p2 = m.get("profile2");
+            profiles = p1 != null && p2 != null ? new String[] { p1, p2 } : null;
+            ph = m.get("ph");
+            if (deck1 == null || deck2 == null) {
+                throw new IllegalArgumentException("job " + job + ": deck1 / deck2 required");
+            }
+        }
+
+        /** Arms 0..maxArm run (observe: arm 0 only). */
+        int maxArm() {
+            return observe ? 0 : Math.max(0, arms);
+        }
+
+        /** SearchDirective.leafAfterTurn for the copies forked at `turn`:
+         *  turn + horizon, or the outcome (horizon < 0). */
+        int leafAfter(int turn) {
+            return horizon < 0 ? Integer.MAX_VALUE : turn + horizon;
+        }
+
+        /** The seat index from a player name of the census / Anvil shape
+         *  ("Census(2)-deck" / "Anvil(1)-deck" / "Heur(1)-deck" = the (N)
+         *  group minus one); 0 when the name carries none. */
+        static int seatOf(String p) {
+            if (p == null) {
+                return 0;
+            }
+            int a = p.indexOf('(');
+            int b = a < 0 ? -1 : p.indexOf(')', a);
+            if (a < 0 || b < 0) {
+                return 0;
+            }
+            try {
+                return Math.max(0, Integer.parseInt(p.substring(a + 1, b)) - 1);
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        static List<ReplayJob> read(String path) {
+            List<ReplayJob> jobs = new ArrayList<>();
+            java.util.Set<Integer> ids = new HashSet<>();
+            try {
+                for (String line : Files.readAllLines(Paths.get(path), StandardCharsets.UTF_8)) {
+                    if (line.isBlank()) {
+                        continue;
+                    }
+                    ReplayJob j = new ReplayJob(CensusRun.flatJson(line));
+                    if (!ids.add(j.job)) {
+                        System.err.println("FATAL: -replay: duplicate job id " + j.job);
+                        System.exit(2);
+                    }
+                    jobs.add(j);
+                }
+            } catch (Exception e) {
+                System.err.println("FATAL: cannot read -replay jobs " + path + ": " + e);
+                System.exit(2);
+            }
+            if (jobs.isEmpty()) {
+                System.err.println("FATAL: -replay: no jobs in " + path);
+                System.exit(2);
+            }
+            return jobs;
+        }
+    }
+
+    /**
+     * The certifier merge (09-23): the -replay job's fork point on its
+     * mainline = the window where the seat's NATURAL PICK is the stored
+     * option (PlayerControllerAnvil.PickHook: the pick before the play), on
+     * the job's turn (and phase when named), the active player's priority on
+     * an empty stack (the fork-fidelity rule), the ord-th such pick. Forks
+     * one search copy per (arm, roll) through the SearchMonitor's copy runner
+     * (never subscribed: rate 0) with the option forced and a PAY
+     * SurfaceDirective answering the arm at the option's own payment window,
+     * and writes one certify row per copy. The mainline ends at the fork
+     * point; a window that never comes (the turn passes, the game ends, the
+     * pick was made on the opponent's turn or with the stack non-empty —
+     * no faithful fork point) gets one never_fired row per arm from finish().
+     */
+    static final class ReplayMonitor implements PlayerControllerAnvil.PickHook {
+        final Game game;
+        final ReplayJob job;
+        final long seed;
+        final String[] profiles;
+        final AnvilBridge bridge;
+        final PrintWriter labels;
+        final SearchMonitor copies;
+        int seen = 0;
+        volatile boolean done = false;
+        /** The RNG state at the seat's latest priority event on the job's
+         *  turn = the state before the decision the pick hook reports (the
+         *  copies continue the mainline's decision under it). */
+        private byte[] preAskRng = null;
+
+        ReplayMonitor(Game game, ReplayJob job, long seed, String[] profiles, AnvilBridge bridge, String fmt,
+                PrintWriter labels, ScheduledExecutorService watchdogs) {
+            this.game = game;
+            this.job = job;
+            this.seed = seed;
+            this.profiles = profiles;
+            this.bridge = bridge;
+            this.labels = labels;
+            this.copies = new SearchMonitor(game, job.job, seed, bridge, fmt, null, watchdogs, 0.0, 1, 0, false,
+                    0, 1, Double.NaN, 0.025, null, 0, "next", "next");
+        }
+
+        @Subscribe
+        public void onTurnBegan(GameEventTurnBegan ev) {
+            if (!done && !game.isGameOver() && ev.turnNumber() > job.t) {
+                finish("never_fired");
+                game.setGameOver(GameEndReason.Draw);
+            }
+        }
+
+        @Subscribe
+        public void onPriority(GameEventPlayerPriority ev) {
+            if (done || game.isGameOver()) {
+                return;
+            }
+            PhaseHandler ph = game.getPhaseHandler();
+            if (ph.getTurn() != job.t) {
+                return;
+            }
+            Player prio = ph.getPriorityPlayer();
+            if (prio != null && game.getRegisteredPlayers().indexOf(prio) == job.seat) {
+                preAskRng = snapshotRng();
+            }
+        }
+
+        /** The seat's natural pick at a mainline ask (before the play). */
+        @Override
+        public void picked(Player p, List<SpellAbility> picked) {
+            if (done || game.isGameOver() || picked == null || picked.isEmpty()) {
+                return;
+            }
+            PhaseHandler ph = game.getPhaseHandler();
+            if (ph.getTurn() != job.t) {
+                return;
+            }
+            // Any phase where the ACTIVE player holds priority on an empty
+            // stack (the fork-fidelity rule: GameCopier resumes copies at the
+            // active player's priority); the job's phase when it names one.
+            // A cast on the opponent's turn or in response (stack non-empty)
+            // has no faithful fork point — its job reads never_fired.
+            if (job.ph != null && !job.ph.equals(String.valueOf(ph.getPhase()))) {
+                return;
+            }
+            if (!game.getStack().isEmpty() || ph.getPriorityPlayer() != p || ph.getPlayerTurn() != p) {
+                return;
+            }
+            int prioSeat = game.getRegisteredPlayers().indexOf(p);
+            if (prioSeat != job.seat) {
+                return;
+            }
+            String label = Census.str(picked.get(0));
+            if (label == null || !label.contains(job.sa) || seen++ != job.ord) {
+                return;
+            }
+            fork(p, prioSeat, label, ph.getTurn());
+            done = true;
+            game.setGameOver(GameEndReason.Draw);
+        }
+
+        private void fork(Player prio, int prioSeat, String label, int turn) {
+            Obs.mark(game, "fork", "fp", 0, "kr", Math.max(1, job.k));
+            byte[] rngState = snapshotRng();
+            String seatName = prio.getName();
+            int leafAfter = job.leafAfter(turn);
+            int maxArm = job.maxArm();
+            for (int arm = 0; arm <= maxArm; arm++) {
+                for (int roll = 0; roll < Math.max(1, job.k); roll++) {
+                    // CensusRun.certifyGame's roll seed: shared across arms so
+                    // completions pair; roll 0 = the true continuation
+                    long rollSeed = splitmix64(job.seed ^ (job.job * 0x9E3779B97F4A7C15L)
+                            ^ (roll * 0xBF58476D1CE4E5B9L));
+                    String wid = "g" + job.job + ".c" + arm + "r" + roll;
+                    // every roll continues the mainline's decision (replayNatural
+                    // under the pre-decision RNG); roll 0 on the true line,
+                    // rolls >= 1 on a determinized copy
+                    SearchMonitor.CopyResult cr = copies.runCopy(label, rollSeed, wid, prioSeat, seatName,
+                            rngState, Surfaces.PAY, 0, new int[] { arm }, leafAfter, false, roll == 0,
+                            preAskRng != null ? preAskRng : rngState);
+                    boolean fired = writeRow(arm, roll, turn, label, cr);
+                    System.out.printf("job %d arm %d roll %d -> %s%n", job.job, arm, roll,
+                            fired ? cr.surfExec : "miss:" + cr.kind);
+                    if (roll == 0 && !fired) {
+                        break; // the identical prefix cannot fire later (CensusRun's rule)
+                    }
+                    if (job.observe) {
+                        break;
+                    }
+                }
+            }
+            bridge.gameStart("g" + job.job, seed, Obs.lastHeaderForBridge(game));
+        }
+
+        /** One certify row (CensusRun.certRow's contract, additive fields);
+         *  returns the fired bit. */
+        private boolean writeRow(int arm, int roll, int turn, String label, SearchMonitor.CopyResult cr) {
+            boolean fired = cr.surfMiss == null && cr.surfN >= 0;
+            String reason = fired ? null
+                    : "void".equals(cr.kind) ? "void:" + (cr.voidReason == null ? "?" : cr.voidReason)
+                    : "crash".equals(cr.kind) || "timeout".equals(cr.kind) || "copy_crash".equals(cr.kind) ? cr.kind
+                    : "idx".equals(cr.surfMiss) ? "no_such_option"
+                    : cr.surfMiss == null ? "unfired" : cr.surfMiss;
+            StringBuilder sb = new StringBuilder(400);
+            sb.append("{\"ev\":\"certify\",\"job\":").append(job.job)
+                    .append(",\"arm\":").append(arm)
+                    .append(",\"roll\":").append(roll)
+                    .append(",\"fired\":").append(fired);
+            if (!fired) {
+                sb.append(",\"reason\":\"").append(jstr(reason)).append('"');
+            }
+            if (fired && arm > 0 && cr.surfGoals != null) {
+                sb.append(",\"goals\":[");
+                for (int i = 0; i < cr.surfGoals.size(); i++) {
+                    if (i > 0) {
+                        sb.append(',');
+                    }
+                    sb.append('"').append(jstr(cr.surfGoals.get(i))).append('"');
+                }
+                sb.append("],\"gk\":[");
+                for (int i = 0; cr.surfKinds != null && i < cr.surfKinds.size(); i++) {
+                    if (i > 0) {
+                        sb.append(',');
+                    }
+                    sb.append(cr.surfKinds.get(i));
+                }
+                sb.append(']');
+            }
+            if (fired) {
+                sb.append(",\"exec\":\"").append(job.observe ? "observed" : jstr(cr.surfExec)).append('"')
+                        .append(",\"t_fired\":").append(cr.surfTurn >= 0 ? cr.surfTurn : turn);
+            }
+            int[] a = cr.snapInts != null ? cr.snapInts : new int[12];
+            if (cr.snapInts == null) {
+                a[0] = -1;
+            }
+            sb.append(",\"t_end\":").append(a[0])
+                    .append(",\"ended\":").append(a[1] == 1)
+                    .append(",\"winner\":").append(cr.winner)
+                    .append(",\"snap\":{\"life\":[").append(a[2]).append(',').append(a[3])
+                    .append("],\"creatures\":[").append(a[4]).append(',').append(a[5])
+                    .append("],\"power\":[").append(a[6]).append(',').append(a[7])
+                    .append("],\"hand\":[").append(a[8]).append(',').append(a[9])
+                    .append("],\"lands\":[").append(a[10]).append(',').append(a[11])
+                    .append("],\"avail_options\":").append(fired ? cr.surfN - 1 : -1)
+                    .append("},\"kind\":\"").append(cr.kind).append('"')
+                    .append(",\"calls\":").append(cr.asks)
+                    .append(",\"ms\":").append(cr.ms)
+                    .append(",\"i\":").append(job.job)
+                    .append(",\"seed\":").append(seed)
+                    .append(",\"seat\":").append(job.seat)
+                    .append(",\"t\":").append(turn)
+                    .append(",\"ph\":\"").append(String.valueOf(game.getPhaseHandler().getPhase())).append('"')
+                    .append(",\"label\":\"").append(jstr(label)).append('"')
+                    .append(",\"profiles\":[\"").append(jstr(profiles[0])).append("\",\"")
+                    .append(jstr(profiles[1])).append("\"]");
+            if (job.observe && cr.surfFrame != null) {
+                // the scorer's input (payment_drill_score --rows): the window's
+                // dec record (the wire shape, hist spliced) + the copy's game header
+                sb.append(",\"frame\":").append(cr.surfFrame);
+                String header = cr.wireHeader != null ? cr.wireHeader : Obs.lastHeaderForBridge(game);
+                if (header != null) {
+                    sb.append(",\"header\":").append(header);
+                }
+            }
+            sb.append('}');
+            synchronized (labels) {
+                labels.println(sb);
+                labels.flush();
+            }
+            return fired;
+        }
+
+        /** The window never came: one miss row per arm (the reader's
+         *  no-baseline / miss accounting), once. */
+        void finish(String reason) {
+            if (done) {
+                return;
+            }
+            done = true;
+            System.out.printf("job %d -> miss:%s (seen %d)%n", job.job, reason, seen);
+            for (int arm = 0; arm <= job.maxArm(); arm++) {
+                String row = "{\"ev\":\"certify\",\"job\":" + job.job + ",\"arm\":" + arm + ",\"roll\":0"
+                        + ",\"fired\":false,\"reason\":\"" + jstr(reason) + "\",\"t_end\":-1,\"ended\":false"
+                        + ",\"winner\":-1,\"snap\":{\"life\":[0,0],\"creatures\":[0,0],\"power\":[0,0]"
+                        + ",\"hand\":[0,0],\"lands\":[0,0],\"avail_options\":-1},\"kind\":\"miss\""
+                        + ",\"i\":" + job.job + ",\"seed\":" + seed + ",\"seat\":" + job.seat
+                        + ",\"profiles\":[\"" + jstr(profiles[0]) + "\",\"" + jstr(profiles[1]) + "\"]}";
+                synchronized (labels) {
+                    labels.println(row);
+                    labels.flush();
+                }
+            }
         }
     }
 

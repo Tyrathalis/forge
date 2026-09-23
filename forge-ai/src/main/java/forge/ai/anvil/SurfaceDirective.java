@@ -49,6 +49,14 @@ public final class SurfaceDirective {
      *  until fired (a miss still carries it). */
     public volatile String frame = null;
     volatile String pendingFrame = null;
+    /** The certifier merge (09-23): a fired PAY answer's execution record —
+     *  auto | directed_ok | directed_salvage | directed_fail (the M9 certify
+     *  row's exec), the chosen option's goal names + kind codes (pick > 0),
+     *  and the window's turn. Recording only; null until the copy pays. */
+    public volatile String exec = null;
+    public volatile java.util.List<String> goals = null;
+    public volatile java.util.List<Integer> kinds = null;
+    public volatile int turn = -1;
 
     private SurfaceDirective(String playerName, int kind, int ordinal, int[] answer) {
         this(playerName, kind, ordinal, answer, false, null);

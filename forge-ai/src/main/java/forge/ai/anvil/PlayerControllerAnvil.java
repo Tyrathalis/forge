@@ -239,6 +239,28 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         return f;
     }
 
+    /** The certifier merge (09-23): a mainline pick hook — told the seat's
+     *  natural pick at every priority ask, before the play, so a replay
+     *  runner can fork at the window where the mainline ACTUALLY chose the
+     *  stored option (the 09-23 smoke: the first window holding the option
+     *  is often one the AI declines — heur_refuse — the cast came later in
+     *  the phase). Keyed on Game identity (the directive idiom); never on a
+     *  search copy (a copy is its own Game). */
+    public interface PickHook {
+        void picked(Player p, List<SpellAbility> picked);
+    }
+
+    private static final java.util.Map<Game, PickHook> pickHooks =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    public static void armPickHook(Game g, PickHook h) {
+        pickHooks.put(g, h);
+    }
+
+    public static void clearPickHook(Game g) {
+        pickHooks.remove(g);
+    }
+
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         // Evening 5: a mainline surface arm lives until the seat's next
@@ -253,6 +275,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             }
         }
         List<SpellAbility> picked = chooseSpellAbilityToPlayInner();
+        final PickHook hook = pickHooks.get(getGame());
+        if (hook != null) {
+            try {
+                hook.picked(player, picked);
+            } catch (RuntimeException e) {
+                throw e; // a poisoned bridge ends the game (protocol law)
+            } catch (Exception e) {
+                System.err.println("[anvil] pick hook: " + e);
+            }
+        }
         // M12 Build 0: a searched mainline window's row waits for the natural
         // pick (what the policy did here); complete it once, after the answer.
         SearchDirective.Pending pend = SearchDirective.takePending(getGame());
@@ -404,6 +436,18 @@ public class PlayerControllerAnvil extends CensusPlayerController {
                 return null;
             }
             if (w.kind == SearchDirective.W_FORCE) {
+                if (sr.replayNatural) {
+                    // ADR-0117: the mainline's decision continued — the AI's
+                    // own chooser (the same state and RNG stream as the
+                    // mainline's ask), the pick verified against the coordinate
+                    List<SpellAbility> nat = super.chooseSpellAbilityToPlay();
+                    String got = nat == null || nat.isEmpty() ? "pass" : Census.str(nat.get(0));
+                    if (!sr.optionLabel.equals(got)) {
+                        searchVoid(sr, "diverged:" + got); // the copy's own pick, for the census
+                        return null;
+                    }
+                    return nat;
+                }
                 List<SpellAbility> r = heuristicRealize(w.ask.get(0));
                 if (r == null) {
                     searchVoid(sr, "heur_refuse");
@@ -1280,6 +1324,16 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             exec = !paid ? "directed_fail"
                     : out == PaymentEnumerator.ExecOutcome.DIRECTED_OK ? "directed_ok" : "directed_salvage";
             cousinsNote = pc.hasCousins() ? cousins.summary() : null;
+        }
+        if (d != null && d.fired && d.miss == null) {
+            // the certifier merge (09-23): the certify row reads the answer's
+            // execution off the directive (CensusRun.certRow's exec / goals)
+            d.exec = exec;
+            d.turn = getGame().getPhaseHandler().getTurn();
+            if (pick > 0) {
+                d.goals = new java.util.ArrayList<>(r.options.get(pick - 1).goals);
+                d.kinds = new java.util.ArrayList<>(r.options.get(pick - 1).kinds);
+            }
         }
         Object[] recKv = kvPlus(combat, new Object[] {
                 "by", by, "copy", true, "options", n, "pick", pick == 0 ? "auto" : String.valueOf(pick),

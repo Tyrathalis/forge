@@ -40,7 +40,7 @@ public final class SearchDirective {
 
     final String playerName;
     /** null = the pass option. */
-    final String optionLabel;
+    public final String optionLabel;
     public volatile boolean applied = false;
     public volatile String leafPeek = null;
     /** "leaf" | "void" (the option was absent at apply); the driver adds
@@ -60,6 +60,15 @@ public final class SearchDirective {
      *  ask voided (the realizer's veto code, pass_masked, veto_cap,
      *  no_oneshot, heur_refuse). Recording only. */
     public volatile boolean heuristicForce = false;
+    /** The certifier merge (09-23, ADR-0117): a REPLAY copy — at the seat's
+     *  first window the copy runs the seat's own natural chooser (a heuristic
+     *  seat: the AI's full decision, under the mainline's pre-decision RNG
+     *  state) and verifies the pick is the stored option; a different pick
+     *  voids the copy ("diverged"). The forced option is never re-approved
+     *  through canPlaySa (whose chance-based checks re-roll — the 09-23
+     *  smoke's heur_refuse class on matched picks). Bridged seats keep the
+     *  forced path (the model's plan is deterministic). */
+    public volatile boolean replayNatural = false;
     public volatile String voidReason = null;
     public volatile String plan = null;
     public volatile String refuse = null;
@@ -155,6 +164,9 @@ public final class SearchDirective {
             applied = true;
             if (optionLabel == null) {
                 return new Window(W_PASS, null);
+            }
+            if (replayNatural) {
+                return new Window(W_FORCE, null); // the chooser decides; the controller verifies
             }
             for (SpellAbility sa : options) {
                 if (optionLabel.equals(Census.str(sa))) {
