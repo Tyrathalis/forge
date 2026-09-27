@@ -1,10 +1,12 @@
 package forge.ai.anvil;
 
 import com.github.luben.zstd.ZstdOutputStream;
+import com.google.common.eventbus.Subscribe;
 import forge.LobbyPlayer;
 import forge.ai.LobbyPlayerAi;
 import forge.game.Game;
 import forge.game.card.Card;
+import forge.game.event.GameEventShuffle;
 import forge.game.keyword.Keyword;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
@@ -289,6 +291,46 @@ public final class Obs {
         sessions.put(g, s);
         lastStartedSession = s;
         write(sb);
+        g.subscribeToEvents(new ShuffleMarker(g)); // ADR-0121: the shuffle mark, store sessions only
+    }
+
+    /**
+     * ADR-0121 (Anvil, 09-27): the SHUFFLE mark — {"k":"mark","m":"shuffle",
+     * "s":seq,"t":turn,"p":seat}, one per Player.shuffle on the store
+     * session's game, either seat. Draw chance nodes in the Ante ledger are
+     * corrected only while the drawing player's library order is provably
+     * unknown; an order-revealing decision (scry, surveil, put-on-top) used
+     * to poison that player for the rest of the game because the shuffle
+     * that cleanses the knowledge was not observable in the record stream
+     * (the poison rule skipped about half of all draw nodes on the 09-16
+     * read). The mark is the cleanse event. Recording only: the listener
+     * reads the event and writes through mark(), which is gated on the
+     * store session and the current game, so search / fidelity copies (a
+     * fresh EventBus per Game, never a store session) write nothing and the
+     * game path is byte-identical (ADR-0025: the forkcheck is the proof).
+     * The EventBus dispatches on the posting (game) thread, so the mark's
+     * stream position is exact relative to the surrounding decs. Registered
+     * once per store game; the Game's bus dies with the game.
+     */
+    static final class ShuffleMarker {
+        private final Game g;
+
+        ShuffleMarker(Game g) {
+            this.g = g;
+        }
+
+        @Subscribe
+        public void onShuffle(GameEventShuffle ev) {
+            int seat = -1;
+            java.util.List<Player> ps = g.getRegisteredPlayers();
+            for (int i = 0; i < ps.size(); i++) {
+                if (ps.get(i).getView() == ev.player()) {
+                    seat = i;
+                    break;
+                }
+            }
+            mark(g, "shuffle", "p", seat);
+        }
     }
 
     /**
