@@ -262,6 +262,25 @@ public final class CastPlanRealizer {
         if (!sa.isLegalAfterStack()) {
             return "after_stack";
         }
+        if (!passesRestrictions(game, player, sa)) {
+            return "restrictions";
+        }
+        return null;
+    }
+
+    /**
+     * The cast-restrictions clause of legality(), shared with the priority
+     * option scan (AnvilOptions.buildPriorityOptions; 2026-10-03). Spell.canPlay()
+     * never consults the CantBeCast statics — AiController.canPlaySa checks
+     * them in a second step on an LKI copy placed in the stack zone (the
+     * stack-CMC dance) — so a scan that asked canPlay() alone offered
+     * Spider-Man 2099 ("you can't cast this during your first, second, or
+     * third turns") on the model's third turn and the realizer vetoed it
+     * here: 2,655 of the 10-01 alloc read's 3,587 "restrictions" vetoes, on
+     * game turns 5–6. The option mask runs the same check, so a served
+     * option is castable on its restrictions as the engine sees them.
+     */
+    static boolean passesRestrictions(Game game, Player player, SpellAbility sa) {
         Card host = sa.getHostCard();
         Card spellHost = host;
         if (sa.isSpell() && host != null) {
@@ -270,10 +289,7 @@ public final class CastPlanRealizer {
             spellHost.setLastKnownZone(game.getStackZone());
             spellHost.setCastFrom(host.getZone());
         }
-        if (!sa.checkRestrictions(spellHost, player)) {
-            return "restrictions";
-        }
-        return null;
+        return sa.checkRestrictions(spellHost, player);
     }
 
     private static boolean isModal(SpellAbility sa) {

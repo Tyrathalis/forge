@@ -309,13 +309,21 @@ public final class AnvilOptions {
         // payable ONLY via its alternative cost (e.g. Snuff Out's 4 life)
         // must appear as an option or the logged legality mask would forbid
         // the heuristic's own pick (found by the D2 smoke validator).
-        int scanned = 0, rejected = 0, rescue = 0;
+        int scanned = 0, rejected = 0, rescue = 0, restricted = 0;
         // the mana-source memo (ComputerUtilMana, 2026-09-14): one grouping per scan
         forge.ai.ComputerUtilMana.armSourceMemo(player);
         try {
         for (SpellAbility sa : ComputerUtilAbility.getOriginalAndAltCostAbilities(
                 ComputerUtilAbility.getSpellAbilities(cards, player), player)) {
             if (sa.isLandAbility() || !sa.canPlay()) {
+                continue;
+            }
+            // 2026-10-03: the realizer's cast-restrictions clause on the option
+            // mask too — canPlay() skips the CantBeCast statics (Spider-Man
+            // 2099's first-three-turns clause), so the scan offered what the
+            // realizer then vetoed as "restrictions" (28% of all vetoes).
+            if (!CastPlanRealizer.passesRestrictions(game, player, sa)) {
+                restricted++;
                 continue;
             }
             scanned++;
@@ -337,6 +345,9 @@ public final class AnvilOptions {
         if (PAYSHADOW || PAYRESCUE) {
             Census.rec(game, player, "paymask", "n", scanned, "rej", rejected, "rescue", rescue,
                     "admitted", PAYRESCUE);
+        }
+        if (restricted > 0) {
+            Census.rec(game, player, "optmask", "restricted", restricted);
         }
         CardCollectionView lands = ComputerUtilAbility.getAvailableLandsToPlay(game, player);
         if (lands != null) {
