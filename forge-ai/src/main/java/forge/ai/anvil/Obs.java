@@ -1194,6 +1194,20 @@ public final class Obs {
         }
         java.util.List<String> refs = new java.util.ArrayList<>(4);
         for (Object t : tc) {
+            // ADR-0122 (10-04): the engine's own verdict on the recorded pick.
+            // The heuristic's targeting logics sometimes bypass canTarget (the
+            // agreement read: Explore onto a shrouded creature, divided damage
+            // at a hexproof player) — such a label is not a legal target the
+            // mask excluded, so the ref carries "ill":1 and the validator
+            // counts it apart. Read-only (canTarget inspects, never binds).
+            String ill = "";
+            try {
+                if (t instanceof forge.game.GameObject && sa.usesTargeting()
+                        && !sa.canTarget((forge.game.GameObject) t)) {
+                    ill = ",\"ill\":1";
+                }
+            } catch (Exception ignored) {
+            }
             if (t instanceof Card) {
                 Card c = (Card) t;
                 // Stale-evaluation guard (D3 validation batch): a modal
@@ -1204,10 +1218,10 @@ public final class Obs {
                 if (c.getZone() == null || !c.getZone().contains(c)) {
                     continue;
                 }
-                refs.add("{\"e\":" + c.getId() + '}');
+                refs.add("{\"e\":" + c.getId() + ill + '}');
             } else if (t instanceof Player) {
                 Player tp = (Player) t;
-                refs.add("{\"pi\":" + tp.getGame().getRegisteredPlayers().indexOf(tp) + '}');
+                refs.add("{\"pi\":" + tp.getGame().getRegisteredPlayers().indexOf(tp) + ill + '}');
             } else if (t instanceof SpellAbility) {
                 // A stack-SA target joins on its host card id; stale if that
                 // spell is no longer on the stack.
@@ -1217,7 +1231,7 @@ public final class Obs {
                         || !h.getZone().contains(h)) {
                     continue;
                 }
-                refs.add("{\"e\":" + h.getId() + ",\"stk\":1}");
+                refs.add("{\"e\":" + h.getId() + ",\"stk\":1" + ill + '}');
             } else {
                 refs.add("{\"str\":" + q(trunc(String.valueOf(t))) + '}');
             }

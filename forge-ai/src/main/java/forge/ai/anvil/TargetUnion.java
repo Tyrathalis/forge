@@ -8,8 +8,10 @@ import java.util.regex.Pattern;
 
 import forge.game.Game;
 import forge.game.GameEntity;
+import forge.game.ability.ApiType;
 import forge.game.card.Card;
 import forge.game.player.Player;
+import forge.game.spellability.AbilitySub;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.SpellAbilityStackInstance;
 import forge.game.spellability.TargetChoices;
@@ -119,27 +121,35 @@ public final class TargetUnion {
         if (root == null) {
             return Union.unmasked("null");
         }
+        // The chain's own targeting nodes, then (10-04, the agreement read's
+        // first class: 1,522 of 1,586 misses) the MODES of every Charm node —
+        // a modal spell's targets live in its "Choices" until one is bound at
+        // cast time, and the label records the chosen mode's targets on the
+        // plan, so the union walks every mode's chain too. Mode nodes feed the
+        // refs only: their minimums are not the spell's (choose one), and a
+        // mode with no candidate is simply not choosable.
         List<SpellAbility> nodes = new ArrayList<>(2);
-        for (SpellAbility node = root; node != null; node = node.getSubAbility()) {
-            if (node.usesTargeting()) {
-                nodes.add(node);
-            }
-        }
-        if (nodes.isEmpty()) {
+        List<SpellAbility> modeNodes = new ArrayList<>(2);
+        collect(root, nodes, modeNodes, 0);
+        if (nodes.isEmpty() && modeNodes.isEmpty()) {
             return new Union(new ArrayList<>(0), 0, false, null);
         }
         if (root.getActivatingPlayer() == null) {
-            root.setActivatingPlayer(p); // trickles down the chain; the scan has set it already
+            root.setActivatingPlayer(p); // trickles down the chain and the mode lists; the scan has set it already
         }
+        // X in ANY cost part (mana X, "Pay X {E}", ...): the scan reads X as 0
         boolean hasX = !root.isLandAbility() && root.getPayCosts() != null
-                && root.getPayCosts().getTotalMana() != null
-                && root.getPayCosts().getTotalMana().countX() > 0;
-        for (SpellAbility node : nodes) {
+                && root.getPayCosts().hasXInAnyCostPart();
+        List<SpellAbility> all = new ArrayList<>(nodes);
+        all.addAll(modeNodes);
+        for (SpellAbility node : all) {
             String why = unmaskable(node, hasX);
             if (why != null) {
                 return Union.unmasked(why);
             }
         }
+        nodes = all; // enumerate every node; the chain's prefix carries the minimums
+        int chainNodes = all.size() - modeNodes.size();
         // Clear every node's targets (a stale TargetChoices from an earlier AI
         // evaluation pass would feed the unique / same-controller reads), then
         // restore them — the enumeration must leave the option as it found it.
@@ -153,7 +163,9 @@ public final class TargetUnion {
             int min = 0;
             boolean unfit = false;
             List<Player> seats = g.getRegisteredPlayers();
-            for (SpellAbility node : nodes) {
+            for (int ni = 0; ni < nodes.size(); ni++) {
+                SpellAbility node = nodes.get(ni);
+                boolean chain = ni < chainNodes;
                 TargetRestrictions tr = node.getTargetRestrictions();
                 int hits = 0; // the node's own candidates, whether or not an earlier node listed them
                 for (GameEntity ge : tr.getAllCandidates(node)) {
@@ -161,11 +173,11 @@ public final class TargetUnion {
                         refs.add("{\"pi\":" + seats.indexOf((Player) ge) + '}');
                         hits++;
                     } else if (ge instanceof Card) {
-                        Card c = (Card) ge;
-                        if (c.getZone() != null && c.getZone().getZoneType() == ZoneType.Stack) {
-                            continue; // a spell on the stack joins as its stack entry below
-                        }
-                        refs.add("{\"e\":" + c.getId() + '}');
+                        // a card in the stack zone is the engine's own candidate
+                        // for "target spell" (the heuristic targets it as a card;
+                        // the agreement read's Reprieve class) — listed as is;
+                        // the abilities on the stack follow below
+                        refs.add("{\"e\":" + ((Card) ge).getId() + '}');
                         hits++;
                     }
                 }
@@ -182,16 +194,37 @@ public final class TargetUnion {
                         }
                     }
                 }
-                int nodeMin = tr.getMinTargets(node.getHostCard(), node);
-                min += Math.max(0, nodeMin);
-                if (nodeMin >= 1 && hits == 0) {
-                    unfit = true; // a required node with nothing to point at
+                if (chain) {
+                    int nodeMin = tr.getMinTargets(node.getHostCard(), node);
+                    min += Math.max(0, nodeMin);
+                    if (nodeMin >= 1 && hits == 0) {
+                        unfit = true; // a required node with nothing to point at
+                    }
                 }
             }
             return new Union(new ArrayList<>(refs), min, unfit, null);
         } finally {
             for (int i = 0; i < nodes.size(); i++) {
                 nodes.get(i).setTargets(saved[i]);
+            }
+        }
+    }
+
+    /** The chain's targeting nodes into {@code nodes}; every Charm node's
+     *  modes (and their chains) into {@code modeNodes}. Depth-capped: a mode
+     *  may itself be modal. */
+    private static void collect(SpellAbility root, List<SpellAbility> nodes, List<SpellAbility> modeNodes, int depth) {
+        for (SpellAbility node = root; node != null; node = node.getSubAbility()) {
+            if (node.usesTargeting()) {
+                (depth == 0 ? nodes : modeNodes).add(node);
+            }
+            if (node.getApi() == ApiType.Charm && depth < 3) {
+                List<AbilitySub> modes = node.getAdditionalAbilityList("Choices");
+                if (modes != null) {
+                    for (AbilitySub mode : modes) {
+                        collect(mode, nodes, modeNodes, depth + 1);
+                    }
+                }
             }
         }
     }
@@ -206,20 +239,25 @@ public final class TargetUnion {
         if (node.hasParam("TargetingPlayerControls")) {
             return "tgtplayer"; // the targeting player is bound at cast time
         }
-        for (String k : new String[] {"TargetsWithDefinedController", "TargetsWithSharedCardType"}) {
-            String v = node.getParam(k);
-            if (v != null && (v.contains("ParentTarget") || v.contains("Targeted"))) {
-                return "parent"; // defined by a parent's pick, which is empty at scan time
+        TargetRestrictions tr = node.getTargetRestrictions();
+        StringBuilder text = new StringBuilder();
+        if (tr.getValidTgts() != null) {
+            for (String s : tr.getValidTgts()) {
+                text.append(s).append(',');
             }
         }
-        if (hasX) {
-            TargetRestrictions tr = node.getTargetRestrictions();
-            StringBuilder text = new StringBuilder();
-            if (tr.getValidTgts() != null) {
-                for (String s : tr.getValidTgts()) {
-                    text.append(s).append(',');
-                }
+        for (String k : new String[] {"TargetsWithDefinedController", "TargetsWithSharedCardType"}) {
+            String v = node.getParam(k);
+            if (v != null) {
+                text.append(v).append(',');
             }
+        }
+        // a restriction defined by a parent's pick (Searing Blaze's
+        // "Creature.ControlledBy ParentTarget"), empty at scan time
+        if (text.indexOf("ParentTarget") >= 0 || text.indexOf("Targeted") >= 0) {
+            return "parent";
+        }
+        if (hasX) {
             text.append(tr.getMinTargets()).append(',').append(tr.getMaxTargets());
             if (X_REF.matcher(text).find()) {
                 return "x"; // the plan's X is unknown at scan time (read as 0)
