@@ -214,9 +214,17 @@ public final class TargetUnion {
      *  modes (and their chains) into {@code modeNodes}. Depth-capped: a mode
      *  may itself be modal. */
     private static void collect(SpellAbility root, List<SpellAbility> nodes, List<SpellAbility> modeNodes, int depth) {
+        boolean belowCharm = depth > 0;
         for (SpellAbility node = root; node != null; node = node.getSubAbility()) {
             if (node.usesTargeting()) {
-                (depth == 0 ? nodes : modeNodes).add(node);
+                // the chain below a Charm node is a BOUND mode (the AI's last
+                // evaluation leaves one attached: Cryptic Command carried a
+                // stale "Counter target spell" sub on an empty stack and read
+                // as unfit while castable) — refs only, never the minimums
+                (belowCharm ? modeNodes : nodes).add(node);
+            }
+            if (node.getApi() == ApiType.Charm) {
+                belowCharm = true;
             }
             if (node.getApi() == ApiType.Charm && depth < 3) {
                 List<AbilitySub> modes = node.getAdditionalAbilityList("Choices");

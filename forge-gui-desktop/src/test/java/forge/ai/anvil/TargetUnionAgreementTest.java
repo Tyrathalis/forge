@@ -54,6 +54,35 @@ public class TargetUnionAgreementTest extends SimulationTest {
     }
 
     @Test
+    public void staleBoundModeBelowACharmNeverMakesTheSpellUnfit() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(0);
+        for (int i = 0; i < 4; i++) {
+            addCard("Island", p);
+        }
+        Card bear = addCard("Grizzly Bears", game.getPlayers().get(1));
+        Card cryptic = addCardToZone("Cryptic Command", p, ZoneType.Hand);
+        game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
+        SpellAbility sa = cryptic.getFirstSpellAbility();
+        sa.setActivatingPlayer(p);
+        // the AI's last evaluation leaves a mode bound below the Charm node:
+        // "Counter target spell" on an empty stack
+        List<forge.game.spellability.AbilitySub> modes = sa.getAdditionalAbilityList("Choices");
+        AssertJUnit.assertTrue(modes.size() >= 4);
+        for (forge.game.spellability.AbilitySub m : modes) {
+            if (m.getApi() == forge.game.ability.ApiType.Counter) {
+                sa.setSubAbility(m);
+            }
+        }
+        AssertJUnit.assertNotNull(sa.getSubAbility());
+        TargetUnion.Union u = TargetUnion.of(game, p, sa);
+        AssertJUnit.assertNotNull("unmasked: " + u.why, u.refs);
+        AssertJUnit.assertTrue(u.refs.toString(), u.refs.contains("{\"e\":" + bear.getId() + "}"));
+        AssertJUnit.assertEquals(0, u.min);
+        AssertJUnit.assertFalse("a bound mode must not flag the spell unfit", u.unfit);
+    }
+
+    @Test
     public void tokenAbilityListsTheControllersCreatures() {
         Game game = initAndCreateGame();
         Player p = game.getPlayers().get(0);
