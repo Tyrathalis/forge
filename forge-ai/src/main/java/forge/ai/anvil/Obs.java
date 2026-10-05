@@ -735,6 +735,13 @@ public final class Obs {
                         .append(",\"sa\":").append(q(trunc(String.valueOf(sa))))
                         .append(",\"kind\":\"").append(kind(sa)).append('"');
                 ak(ob, sa);
+                if (TargetUnion.ENABLED) {
+                    // ADR-0122: the option's legal-target union ("tg"), the
+                    // decoder's pointer mask. Logged + served windows only
+                    // (this writer); the search leaf's peekPriority stays
+                    // without it — leaf values decode no targets.
+                    TargetUnion.append(ob, g, p, sa);
+                }
                 ob.append('}');
                 opts.add(ob.toString());
                 // Hosts castable from an unwalked zone (library top): the
