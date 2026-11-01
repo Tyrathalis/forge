@@ -1,7 +1,9 @@
 package forge.gamemodes.planarconquest;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 
 import forge.LobbyPlayer;
@@ -321,6 +323,21 @@ public class ConquestEvent {
             }
             int spot = (int)(wheelRotation / ANGLE_PER_SPOT);
             return wheelSpots[spot];
+        }
+
+        public static ChaosWheelOutcome random() {
+            return wheelSpots[Aggregates.randomInt(0, wheelSpots.length - 1)];
+        }
+
+        /** A rotation at the middle of a spot that holds the outcome, chosen at random among those that do. */
+        public static float restingRotation(ChaosWheelOutcome outcome) {
+            List<Integer> spots = new ArrayList<>();
+            for (int i = 0; i < wheelSpots.length; i++) {
+                if (wheelSpots[i] == outcome) {
+                    spots.add(i);
+                }
+            }
+            return (Aggregates.random(spots) + 0.5f) * ANGLE_PER_SPOT;
         }
     }
 }

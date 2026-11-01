@@ -1,0 +1,123 @@
+/* Quest. The save shelf reuses the Limited shelf (limited.css). The bar, side panel and reveal reuse the campaign styles in conquest.css. */
+
+.qu-save .ev-line .cq-coin { margin-left: 6px; }
+.qu-save.current { border-color: color-mix(in srgb, var(--accent-2) 60%, #000); }
+
+.qu-list { min-width: 0; overflow-y: auto; padding: 20px 28px 90px; display: grid; gap: 14px; align-content: start; background: radial-gradient(100% 80% at 50% 40%, #131a26 0%, #080b11 100%); }
+.qu-list-head { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.qu-list-head h2 { margin: 0; font: 700 22px/1.2 Georgia, "Times New Roman", serif; letter-spacing: .02em; }
+.qu-list-head p { margin: 0 0 2px; color: var(--muted); font-size: 13.5px; }
+.qu-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.qu-status .cq-chip b { font-weight: 700; color: var(--text); }
+
+.qu-events { display: grid; grid-template-columns: repeat(auto-fill, minmax(224px, 1fr)); gap: 14px; align-items: stretch; }
+.qu-ev { display: grid; grid-template-rows: 172px minmax(0, 1fr); padding: 0; overflow: hidden; border-radius: 12px; background: var(--surface); text-align: left; color: var(--text); }
+.qu-ev .a { background: #111 center 22% / cover; position: relative; }
+.qu-ev .a::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 60%, var(--surface) 100%); }
+.qu-ev .a.unknown { display: grid; place-items: center; background: repeating-linear-gradient(135deg, var(--back-a) 0 10px, var(--back-b) 10px 20px); }
+.qu-ev .a.unknown b { position: relative; z-index: 1; font: 700 64px/1 Georgia, "Times New Roman", serif; color: var(--accent-2); }
+.qu-ev .t { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 7px; align-content: start; padding: 4px 14px 12px; min-width: 0; }
+.qu-ev .t > b { font-size: 17px; line-height: 1.2; }
+.qu-ev .t p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.qu-ev .l { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qu-ev .f { display: flex; align-items: center; gap: 8px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.qu-ev:hover { border-color: var(--line-bright); }
+.qu-ev[aria-pressed="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2), 0 0 18px var(--accent-glow); }
+
+.qu-diff { display: inline-flex; align-items: flex-end; gap: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.qu-diff i { width: 5px; border-radius: 1.5px; background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line-bright); }
+.qu-diff i:nth-child(1) { height: 6px; } .qu-diff i:nth-child(2) { height: 9px; } .qu-diff i:nth-child(3) { height: 12px; } .qu-diff i:nth-child(4) { height: 15px; }
+.qu-diff i.on { background: var(--text); box-shadow: none; }
+.qu-diff span { margin-left: 5px; line-height: 1; }
+
+/* The player's pet, plant and match length rows under the side panel (questduels.tsx) */
+.qu-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.qu-row > span:first-child { color: var(--muted); flex: 1; }
+.qu-row .seg button { padding: 4px 10px; font-size: 12px; }
+.qu-row select { flex: none; max-width: 170px; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
+.qu-check { display: inline-flex; align-items: center; gap: 7px; }
+
+/* The Decks page. This covers the new-deck button and the questions asked at the bottom of the panel. */
+.qu-new { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 104px; border: 1px dashed color-mix(in srgb, var(--accent-2) 55%, var(--line)); border-radius: 11px; background: var(--surface); }
+.qu-new .plus { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-2); color: #1a1405; font-size: 20px; font-weight: 800; }
+.qu-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; }
+.qu-name input { flex: 1; min-width: 140px; padding: 6px 9px; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.qu-ask { display: grid; gap: 10px; font-size: 13px; color: var(--muted); }
+
+/* The Spell Shop. A row of packs, boxes and decks is shown above the cards for sale. */
+.qu-products { display: flex; align-items: stretch; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.qu-products-head { align-self: center; width: 90px; flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.qu-product { flex: none; width: 132px; display: grid; justify-items: center; gap: 4px; padding: 10px 8px; border-radius: 10px; background: var(--surface); text-align: center; font-size: 12px; }
+.qu-product[aria-pressed="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2), 0 0 18px var(--accent-glow); }
+.qu-product-pic { width: 64px; height: 92px; display: grid; place-items: center; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.qu-product-pic img { max-width: 100%; max-height: 100%; }
+.qu-product-kind { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.qu-extras { border-bottom: 0; padding-bottom: 0; justify-content: flex-end; }
+.qu-price { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.qu-price img { width: 15px; height: 15px; }
+
+/* A new-quest step that shows tiles together with extra choices, such as colours, a checkbox or a number (questnew.tsx) */
+.qu-dist { display: grid; gap: 12px; }
+.qu-dist .tile-choice[aria-pressed="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.qu-dist input[type="number"] { width: 70px; margin-left: 8px; }
+
+/* The terms of a challenge, shown in its panel */
+.qu-facts { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 14px; font-size: 12.5px; }
+.qu-facts dt { color: var(--muted); }
+.qu-facts dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.qu-list-head .sp { flex: 1; }
+.qu-list-head button { font-size: 12.5px; padding: 5px 12px; }
+
+.qu-bazaar { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 0; flex: 1; }
+.qu-stalls { display: grid; align-content: start; gap: 8px; padding: 18px; border-right: 1px solid var(--line); overflow-y: auto; }
+.qu-stall { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface); text-align: left; }
+.qu-stall img { width: 44px; height: 44px; }
+.qu-stall span { display: grid; gap: 2px; font-size: 12px; }
+.qu-stall b { font-size: 13.5px; }
+.qu-stall[aria-pressed="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.qu-stall[aria-pressed="true"] b { color: var(--accent-2); }
+.qu-stall-page { overflow-y: auto; padding: 22px 28px 90px; display: grid; gap: 16px; align-content: start; }
+.qu-stall-head { display: flex; gap: 16px; align-items: center; }
+.qu-stall-head img { width: 72px; height: 72px; }
+.qu-stall-head h2 { margin: 2px 0; font: 700 26px/1.2 Georgia, "Times New Roman", serif; }
+.qu-stall-head p { margin: 0; color: var(--muted); font-style: italic; font-size: 13px; }
+.qu-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+.qu-item { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.qu-item-pic { display: grid; place-items: center; align-self: start; }
+.qu-item-pic img { max-width: 100px; border-radius: 6px; }
+.qu-item-t { display: grid; gap: 8px; align-content: start; }
+.qu-item-t b { font-size: 15px; }
+.qu-item-t p { margin: 0; font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+.qu-item-t .qu-item-stats { color: var(--text); font-weight: 700; }
+.qu-item-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.qu-item-foot .sp { flex: 1; }
+
+/* The tournaments on offer. Each tile shows its packs, its sets and terms, and an Enter button with the price. */
+.qu-tourneys > * { width: min(1100px, 100%); justify-self: center; }
+.qu-tourney-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.qu-tourney { display: grid; grid-template-rows: 104px auto auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.qu-tourney-packs { display: flex; justify-content: center; align-items: flex-end; padding-top: 10px; background: radial-gradient(80% 100% at 50% 100%, #2a2416 0%, #0d0f14 100%); border-bottom: 1px solid var(--line); }
+.qu-tourney-packs img { height: 92px; margin: 0 -6px; box-shadow: 0 4px 10px rgba(0, 0, 0, .5); }
+.qu-tourney-t { display: grid; gap: 4px; padding: 14px 18px; font-size: 12.5px; color: var(--muted); }
+.qu-tourney-t b { font-size: 16px; color: var(--text); }
+.qu-tourney-foot { padding: 12px 18px 14px; border-top: 1px dashed var(--line-bright); }
+
+/* The tournament bracket. Seats are at fixed positions, and a line runs from each match's winner to the next round. A winner is bold with a bar on the left. A loser is struck through. The player's seat has a white outline. */
+.qu-bracket-wrap { min-width: 0; overflow: auto; padding: 22px 28px 90px; background: radial-gradient(100% 80% at 50% 40%, #131a26 0%, #080b11 100%); }
+.qu-bracket-heads { display: flex; gap: 56px; margin-bottom: 18px; }
+.qu-bracket-heads span { flex: none; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.qu-bracket { position: relative; }
+.qu-lines { position: absolute; inset: 0; overflow: visible; }
+.qu-lines path { fill: none; stroke: var(--line-bright); stroke-width: 1.5; }
+.qu-lines path.open { stroke-dasharray: 2 4; }
+.qu-lines path.won { stroke: var(--muted); }
+.qu-lines path.you { stroke: #fff; stroke-width: 2.5; }
+.qu-seat { position: absolute; height: 40px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 13px; }
+.qu-seat .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qu-av { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--surface-3); font-size: 11px; font-weight: 700; }
+.qu-seat.won { font-weight: 700; box-shadow: inset 3px 0 0 var(--accent-2); }
+.qu-seat.out { opacity: .5; }
+.qu-seat.out .n { text-decoration: line-through; }
+.qu-seat.empty { border-style: dashed; color: var(--muted); }
+.qu-seat.you { border: 2px solid #fff; }
+.qu-you { padding: 1px 7px; border-radius: 999px; background: #fff; color: #10131a; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }

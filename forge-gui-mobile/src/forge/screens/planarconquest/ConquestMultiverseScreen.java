@@ -23,19 +23,17 @@ import forge.card.CardImageRenderer;
 import forge.card.CardRenderer;
 import forge.card.CardZoom;
 import forge.card.ColorSet;
-import forge.gamemodes.planarconquest.ConquestAwardPool;
 import forge.gamemodes.planarconquest.ConquestBattle;
 import forge.gamemodes.planarconquest.ConquestChaosBattle;
 import forge.gamemodes.planarconquest.ConquestData;
 import forge.gamemodes.planarconquest.ConquestEvent;
+import forge.gamemodes.planarconquest.ConquestEvent.ChaosWheelOutcome;
 import forge.gamemodes.planarconquest.ConquestEvent.ConquestEventRecord;
 import forge.gamemodes.planarconquest.ConquestLocation;
 import forge.gamemodes.planarconquest.ConquestPlane;
 import forge.gamemodes.planarconquest.ConquestPlaneData;
-import forge.gamemodes.planarconquest.ConquestPreferences.CQPref;
 import forge.gamemodes.planarconquest.ConquestRegion;
-import forge.gamemodes.planarconquest.ConquestReward;
-import forge.gamemodes.planarconquest.ConquestUtil;
+import forge.gamemodes.planarconquest.ConquestRewardStep;
 import forge.gui.FThreads;
 import forge.gui.card.CardDetailUtil;
 import forge.gui.card.CardDetailUtil.DetailColors;
@@ -69,7 +67,6 @@ public class ConquestMultiverseScreen extends FScreen {
     private final BattleBar battleBar;
     private ConquestData model;
     private ConquestBattle activeBattle;
-    private ConquestReward regionCommander;
 
     public ConquestMultiverseScreen() {
         super("", ConquestMenu.getMenu());
@@ -86,28 +83,9 @@ public class ConquestMultiverseScreen extends FScreen {
         }
         else if (activeBattle.isFinished()) {
             //when returning to this screen from launched battle, award prizes if it was conquered
-            if (activeBattle.wasConquered()) {
-                if (activeBattle instanceof ConquestChaosBattle) {
-                    ConquestChaosBattle chaosBattle = (ConquestChaosBattle)activeBattle;
-                    awardBoosters(chaosBattle.getAwardPool(), 3);
-                }
-                else {
-                    ConquestLocation loc = activeBattle.getLocation();
-                    ConquestEventRecord record = model.getCurrentPlaneData().getEventRecord(loc);
-                    if (record.getWins(activeBattle.getTier()) == 1 && record.getHighestConqueredTier() == activeBattle.getTier()) {
-                        //if first time conquering event at the selected tier, show animation of new badge being positioned on location
-                        model.rewardPlaneswalkEmblems(FModel.getConquestPreferences().getPrefInt(CQPref.PLANESWALK_CONQUER_EMBLEMS));
-                        regionCommander = FModel.getConquest().awardRegionCommander(loc);
-                        model.saveData();
-                        planeGrid.animateBadgeIntoPosition(loc, activeBattle.getTier());
-                    }
-                    else {
-                        //just spin Chaos Wheel immediately if event tier was previously conquered
-                        spinChaosWheel();
-                    }
-                }
-            }
+            ConquestBattle battle = activeBattle;
             activeBattle = null;
+            showRewards(battle, FModel.getConquest().claimRewards(battle, ChaosWheelOutcome.random()), 0);
         }
     }
 
@@ -129,81 +107,44 @@ public class ConquestMultiverseScreen extends FScreen {
         battleBar.update();
     }
 
-    private void showRegionCommander() {
-        if (regionCommander == null) {
-            spinChaosWheel();
-            return;
-        }
-        String title = Forge.getLocalizer().getMessage("lblConqueredNReceivedCommander", model.getCurrentLocation().getRegion().getName());
-        ConquestRewardDialog.show(title, List.of(regionCommander), this::spinChaosWheel);
-    }
+    private void showRewards(final ConquestBattle battle, final List<ConquestRewardStep> steps, final int index) {
+        if (index >= steps.size()) { return; }
 
-    private void spinChaosWheel() {
-        ConquestChaosWheel.spin(outcome -> {
-            switch (outcome) {
-            case BOOSTER:
-                awardBoosters(model.getCurrentPlane().getAwardPool(), 1);
-                break;
-            case DOUBLE_BOOSTER:
-                awardBoosters(model.getCurrentPlane().getAwardPool(), 2);
-                break;
-            case SHARDS:
-                awardShards(FModel.getConquestPreferences().getPrefInt(CQPref.AETHER_WHEEL_SHARDS), false);
-                break;
-            case DOUBLE_SHARDS:
-                awardShards(2 * FModel.getConquestPreferences().getPrefInt(CQPref.AETHER_WHEEL_SHARDS), false);
-                break;
-            case PLANESWALK:
-                if (model.getUnlockedPlaneCount() == model.getAccessiblePlaneCount()) {
-                    FOptionPane.showMessageDialog(Forge.getLocalizer().getMessage("lblAllPlanesUnlockedNotify"), Forge.getLocalizer().getMessage("lblAllPlanesUnlocked"), EMBLEM_IMAGE, result -> launchChaosBattle());
-                } else {
-                    awardBonusPlaneswalkEmblems(FModel.getConquestPreferences().getPrefInt(CQPref.PLANESWALK_WHEEL_EMBLEMS));
-                }
-                break;
-            case CHAOS:
-                launchChaosBattle();
-                break;
-            }
-        });
-    }
-
-    private void awardBoosters(ConquestAwardPool pool, int totalCount) {
-        AwardBoosterHelper helper = new AwardBoosterHelper(pool, totalCount);
-        helper.run();
-    }
-
-    private class AwardBoosterHelper implements Runnable {
-        private final ConquestAwardPool pool;
-        private final int totalCount;
-        private final int shardsBefore;
-        private int number;
-
-        private AwardBoosterHelper(ConquestAwardPool pool0, int totalCount0) {
-            pool = pool0;
-            number = 1;
-            totalCount = totalCount0;
-            shardsBefore = model.getAEtherShards();
-        }
-
-        @Override
-        public void run() {
-            if (number > totalCount) {
-                //show total shards received from all boosters once all boosters shown
-                final int shardsReceived = model.getAEtherShards() - shardsBefore;
-                if (shardsReceived > 0) {
-                    awardShards(shardsReceived, true);
-                }
-                model.saveData(); //save data once all cards and shard awarded
-                return;
-            }
-
+        final ConquestRewardStep step = steps.get(index);
+        final Runnable next = () -> showRewards(battle, steps, index + 1);
+        switch (step.kind()) {
+        case CONQUER_EMBLEMS:
+            //show animation of new badge being positioned on location, then go on
+            planeGrid.animateBadgeIntoPosition(battle.getLocation(), battle.getTier(), next);
+            break;
+        case REGION_COMMANDER:
+            ConquestRewardDialog.show(Forge.getLocalizer().getMessage("lblConqueredNReceivedCommander", battle.getLocation().getRegion().getName()), step.cards(), next);
+            break;
+        case WHEEL:
+            ConquestChaosWheel.spin(step.outcome(), next);
+            break;
+        case BOOSTER:
             String title = Forge.getLocalizer().getMessage("lblReceivedBoosterPack");
-            if (totalCount > 1) {
-                title = Forge.getLocalizer().getMessage("lblReceivedBoosterPackNOfTotal", String.valueOf(number), String.valueOf(totalCount));
+            if (step.total() > 1) {
+                title = Forge.getLocalizer().getMessage("lblReceivedBoosterPackNOfTotal", String.valueOf(step.number()), String.valueOf(step.total()));
             }
-            number++;
-            List<ConquestReward> rewards = FModel.getConquest().awardBooster(pool);
-            ConquestRewardDialog.show(title, rewards, this);
+            ConquestRewardDialog.show(title, step.cards(), next);
+            break;
+        case DUPLICATE_SHARDS:
+            FOptionPane.showMessageDialog(String.valueOf(step.amount()), FSkinFont.get(32), Forge.getLocalizer().getMessage("lblReceivedAetherShardsForDuplicateCards"), SHARD_IMAGE);
+            break;
+        case SHARDS:
+            FOptionPane.showMessageDialog(String.valueOf(step.amount()), FSkinFont.get(32), Forge.getLocalizer().getMessage("lblReceivedAetherShards"), SHARD_IMAGE);
+            break;
+        case EMBLEMS:
+            FOptionPane.showMessageDialog(String.valueOf(step.amount()), FSkinFont.get(32), Forge.getLocalizer().getMessage("lblReceivedBonusPlaneswalkEmblems"), EMBLEM_IMAGE);
+            break;
+        case ALL_PLANES_UNLOCKED:
+            FOptionPane.showMessageDialog(Forge.getLocalizer().getMessage("lblAllPlanesUnlockedNotify"), Forge.getLocalizer().getMessage("lblAllPlanesUnlocked"), EMBLEM_IMAGE, result -> next.run());
+            break;
+        case CHAOS_BATTLE:
+            launchChaosBattle();
+            break;
         }
     }
 
@@ -223,18 +164,6 @@ public class ConquestMultiverseScreen extends FScreen {
         }
     };
 
-    private void awardShards(int shards, boolean fromDuplicateCards) {
-        String message = Forge.getLocalizer().getMessage("lblReceivedAetherShards");
-        if (fromDuplicateCards) { //if from duplicate cards, shards already added to model
-            message = Forge.getLocalizer().getMessage("lblReceivedAetherShardsForDuplicateCards");
-        }
-        else {
-            model.rewardAEtherShards(shards);
-            model.saveData();
-        }
-        FOptionPane.showMessageDialog(String.valueOf(shards), FSkinFont.get(32), message, SHARD_IMAGE);
-    }
-
     private static final FImage EMBLEM_IMAGE = new FImage() {
         final float size = Forge.getScreenWidth() * 0.6f;
         @Override
@@ -250,13 +179,6 @@ public class ConquestMultiverseScreen extends FScreen {
             FSkinImage.PW_BADGE_COMMON.draw(g, x, y, w, h);
         }
     };
-
-    private void awardBonusPlaneswalkEmblems(int emblems) {
-        String message = Forge.getLocalizer().getMessage("lblReceivedBonusPlaneswalkEmblems");
-        model.rewardPlaneswalkEmblems(emblems);
-        model.saveData();
-        FOptionPane.showMessageDialog(String.valueOf(emblems), FSkinFont.get(32), message, EMBLEM_IMAGE);
-    }
 
     private void launchEvent() {
         LoadingOverlay.show(Forge.getLocalizer().getMessage("lblStartingBattle"), true, () -> {
@@ -299,8 +221,8 @@ public class ConquestMultiverseScreen extends FScreen {
             return true;
         }
 
-        private void animateBadgeIntoPosition(ConquestLocation loc, int tier) {
-            activeBadgeAnimation = new BadgeAnimation(loc, tier);
+        private void animateBadgeIntoPosition(ConquestLocation loc, int tier, Runnable onEnd) {
+            activeBadgeAnimation = new BadgeAnimation(loc, tier, onEnd);
             activeBadgeAnimation.start();
         }
 
@@ -536,12 +458,7 @@ public class ConquestMultiverseScreen extends FScreen {
 
             @Override
             protected void onEnd(boolean endingAll) {
-                String secretArea = model.getCurrentLocation().getEvent().getTemporaryUnlock();
-                if (secretArea != null) {
-                    ConquestUtil.setPlaneTemporarilyAccessible(secretArea, false);
-                }
-                model.setCurrentLocation(path.get(path.size() - 1));
-                model.saveData(); //save new location
+                model.moveTo(path.get(path.size() - 1));
                 activeMoveAnimation = null;
 
                 battleBar.update();
@@ -554,10 +471,12 @@ public class ConquestMultiverseScreen extends FScreen {
             private final ConquestLocation location;
             private final FSkinImage badge;
             private final Rectangle start, end;
+            private final Runnable onEnd;
             private float progress = -0.5f; //delay animation by a half second
 
-            private BadgeAnimation(ConquestLocation location0, int tier) {
+            private BadgeAnimation(ConquestLocation location0, int tier, Runnable onEnd0) {
                 location = location0;
+                onEnd = onEnd0;
 
                 switch (tier) {
                 case 0:
@@ -602,7 +521,7 @@ public class ConquestMultiverseScreen extends FScreen {
             protected void onEnd(boolean endingAll) {
                 activeBadgeAnimation = null;
                 if (!endingAll) {
-                    showRegionCommander();
+                    onEnd.run(); //spin Chaos Wheel after badge positioned
                 }
             }
         }

@@ -13,7 +13,6 @@ import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.Align;
 import com.google.common.collect.ImmutableList;
 
-import com.google.common.collect.Iterables;
 import forge.Forge;
 import forge.Graphics;
 import forge.animation.ForgeAnimation;
@@ -24,16 +23,14 @@ import forge.assets.FSkinFont;
 import forge.assets.FSkinTexture;
 import forge.assets.TextRenderer;
 import forge.card.CardFaceSymbols;
-import forge.card.CardRarity;
 import forge.card.CardRenderer;
 import forge.card.CardRenderer.CardStackPosition;
 import forge.card.CardZoom;
 import forge.card.ColorSet;
 import forge.card.MagicColor;
+import forge.gamemodes.planarconquest.ConquestAether;
 import forge.gamemodes.planarconquest.ConquestCommander;
 import forge.gamemodes.planarconquest.ConquestData;
-import forge.gamemodes.planarconquest.ConquestPlane;
-import forge.gamemodes.planarconquest.ConquestPreferences.CQPref;
 import forge.gamemodes.planarconquest.ConquestUtil;
 import forge.item.PaperCard;
 import forge.localinstance.skin.FSkinProp;
@@ -77,7 +74,6 @@ public class ConquestAEtherScreen extends FScreen {
     @Override
     public void onActivate() {
         ConquestData model = FModel.getConquest().getModel();
-        ConquestPlane plane = model.getCurrentPlane();
 
         setHeaderCaption(model.getName());
 
@@ -87,12 +83,6 @@ public class ConquestAEtherScreen extends FScreen {
             resetFilters(); //reset filters if commander changed since the last time this screen was opened
         }
 
-        pool.clear();
-        for (PaperCard card : plane.getCardPool().getAllCards()) {
-            if (!model.hasUnlockedCard(card) && !card.getRules().getType().isBasicLand()) { //don't allow pulling basic lands
-                pool.add(card);
-            }
-        }
         updateFilteredPool();
         updateAvailableShards();
     }
@@ -104,33 +94,20 @@ public class ConquestAEtherScreen extends FScreen {
         btnCMCFilter.setSelectedOption(ConquestUtil.CMCFilter.CMC_LOW_MID);
     }
 
+    private ConquestAether.Filter filter() {
+        return new ConquestAether.Filter(btnColorFilter.selectedOption, btnTypeFilter.selectedOption, btnRarityFilter.selectedOption, btnCMCFilter.selectedOption);
+    }
+
     private void updateFilteredPool() {
-        Predicate<PaperCard> predicate = btnColorFilter
-                .and(btnTypeFilter)
-                .and(btnRarityFilter)
-                .and(btnCMCFilter);
-
-        final CardRarity selectedRarity = btnRarityFilter.selectedOption.getRarity();
-
+        ConquestAether.Pools pools = ConquestAether.pools(FModel.getConquest().getModel(), filter());
+        pool.clear();
+        pool.addAll(pools.locked());
         filteredPool.clear();
+        filteredPool.addAll(pools.filtered());
         strictPool.clear();
-        for (PaperCard card : pool) {
-            if (predicate.test(card)) {
-                filteredPool.add(card);
-                if (selectedRarity == card.getRarity()) {
-                    strictPool.add(card);
-                }
-            } else if (card.getRarity() == CardRarity.BasicLand
-                    && !card.isVeryBasicLand()
-                    && !card.getName().equals("Wastes")
-                    && !MagicColor.Constant.SNOW_LANDS.contains(card.getName())
-                    && selectedRarity == CardRarity.Common
-                    && btnCMCFilter.selectedOption == ConquestUtil.CMCFilter.CMC_LOW
-                    && card.getRules().getColorIdentity().hasNoColorsExcept(commander.getCard().getRules().getColorIdentity())) {
-                filteredPool.add(card);
-            }
-        }
-        updateShardCost();
+        strictPool.addAll(pools.strict());
+        shardCost = ConquestAether.cost(pools, filter());
+        display.updateMessage();
     }
 
     private void updateAvailableShards() {
@@ -138,67 +115,14 @@ public class ConquestAEtherScreen extends FScreen {
         lblShards.setText(Forge.getLocalizer().getMessage("lblShardsAE", "{AE}") + availableShards);
     }
 
-    private void updateShardCost() {
-        if (filteredPool.isEmpty()) {
-            shardCost = 0;
-        }
-        else {
-            shardCost = ConquestUtil.getShardValue(btnRarityFilter.selectedOption.getRarity(), CQPref.AETHER_BASE_PULL_COST);
-        }
-        display.updateMessage();
-    }
-
     private void pullFromTheAEther() {
-        if (filteredPool.isEmpty() || strictPool.isEmpty()) { return; }
-
-        ConquestData model = FModel.getConquest().getModel();
-        if (model.getAEtherShards() < shardCost) { return; }
-
-        //determine final pool to pull from based on rarity odds
-        Iterable<PaperCard> rewardPool;
-        CardRarity minRarity = btnRarityFilter.selectedOption.getRarity();
-        CardRarity rarity = btnRarityFilter.selectedOption.getRarity(MyRandom.getRandom().nextDouble());
-        while (true) {
-            final CardRarity allowedRarity = rarity;
-            rewardPool = IterableUtil.filter(filteredPool, card -> allowedRarity == card.getRarity()
-                    || allowedRarity == CardRarity.Rare && card.getRarity() == CardRarity.Special
-                    || allowedRarity == CardRarity.Common && card.getRarity() == CardRarity.BasicLand); // allow L rarity for Common (except very basic lands)
-            if (Iterables.isEmpty(rewardPool)) { //if pool is empty, must reduce rarity and try again
-                if (rarity == minRarity) {
-                    return;
-                }
-                switch (rarity) {
-                case MythicRare:
-                    rarity = CardRarity.Rare;
-                    continue;
-                case Rare:
-                    rarity = CardRarity.Uncommon;
-                    continue;
-                case Uncommon:
-                    rarity = CardRarity.Common;
-                    continue;
-                default:
-                    break;
-                }
-            }
-            break;
-        }
-
-        PaperCard card = Aggregates.random(rewardPool);
-        if (card == null) { return; } //shouldn't happen, but prevent crash if it does
-
-        pool.remove(card);
-        filteredPool.remove(card);
-        strictPool.remove(card); // Card might not have been in strictPool in the first place; that's fine
+        PaperCard card = ConquestAether.pull(FModel.getConquest().getModel(), filter());
+        if (card == null) { return; }
 
         activePullAnimation = new PullAnimation(card);
         activePullAnimation.start();
 
-        model.spendAEtherShards(shardCost);
-        model.unlockCard(card);
-        model.saveData();
-
-        updateShardCost();
+        updateFilteredPool();
         updateAvailableShards();
     }
 

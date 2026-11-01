@@ -9,8 +9,6 @@ import forge.assets.FSkinFont;
 import forge.assets.TextRenderer;
 import forge.gamemodes.planarconquest.ConquestData;
 import forge.gamemodes.planarconquest.ConquestPlane;
-import forge.gamemodes.planarconquest.ConquestPreferences;
-import forge.gamemodes.planarconquest.ConquestPreferences.CQPref;
 import forge.model.FModel;
 import forge.screens.FScreen;
 import forge.toolbox.FLabel;
@@ -80,8 +78,7 @@ public class ConquestPlaneswalkScreen extends FScreen {
                 setText("Planeswalk");
             }
             else {
-                ConquestPreferences prefs = FModel.getConquestPreferences();
-                unlockCost = prefs.getPrefInt(CQPref.PLANESWALK_FIRST_UNLOCK) + prefs.getPrefInt(CQPref.PLANESWALK_UNLOCK_INCREASE) * (model.getUnlockedPlaneCount() - 1);
+                unlockCost = model.getPlaneUnlockCost();
 
                 int emblems = model.getPlaneswalkEmblems();
                 String message = "Unlock {PW}";

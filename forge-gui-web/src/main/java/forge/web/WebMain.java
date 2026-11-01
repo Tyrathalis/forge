@@ -1,0 +1,169 @@
+package forge.web;
+
+import forge.error.ExceptionHandler;
+import forge.gui.GuiBase;
+import forge.localinstance.properties.ForgeConstants;
+import forge.localinstance.properties.ForgePreferences;
+import forge.localinstance.properties.ForgePreferences.FPref;
+import forge.model.FModel;
+import forge.util.IHasForgeLog;
+import forge.util.Localizer;
+import forge.web.console.ServerConsole;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+
+/** The program's entry point. It loads Forge, opens the server window, starts the web service with this launch's link token and opens the link. The token is new on each launch, so a link from an earlier launch no longer works. */
+public final class WebMain implements IHasForgeLog {
+    /** How long the process waits after the last browser leaves before it quits, unless the console is set to keep it open. */
+    private static final long IDLE_MILLIS = 15_000;
+
+    private WebMain() {}
+
+    public static void main(final String[] args) throws Exception {
+        final WebGuiBase ui = new WebGuiBase();
+        GuiBase.setInterface(ui);
+        ExceptionHandler.registerErrorHandling();
+        GuiBase.logHWInfo();
+        final CountDownLatch quit = new CountDownLatch(1);
+        // The console uses the player's language. The language is known before FModel loads the rest
+        Localizer.getInstance().initialize(FModel.getPreferences().getPref(FPref.UI_LANGUAGE), ForgeConstants.LANG_DIR);
+        // The console opens before the cards are read, because reading them takes long enough to look like a failure
+        final ServerConsole console = ServerConsole.open(ui, quit::countDown);
+        FModel.initialize(console, prefs -> null, false);
+        // The data for card-based deck generation takes seconds to load, so the server starts without it. With lazy card loading it is not loaded at all
+        if (!FModel.getPreferences().getPrefBoolean(FPref.LOAD_CARD_SCRIPTS_LAZILY)) {
+            final Thread deckGen = new Thread(FModel::loadDeckGenMatrix, "DeckGenData");
+            deckGen.setDaemon(true);
+            deckGen.start();
+        }
+        final WebService service = new WebService(ui, IDLE_MILLIS, quit::countDown, console != null, newToken());
+        // Ctrl+C or a machine shutdown skips the finally below. Without this hook a forwarded port would stay open on the router
+        Runtime.getRuntime().addShutdownHook(new Thread(service::stop, "ForgeWebShutdown"));
+        try {
+            if (console != null) {
+                console.starting(Localizer.getInstance().getMessage("lblWebConsoleStartingServer"));
+            }
+            Exception failure = null;
+            try {
+                service.start();
+            } catch (final Exception e) {
+                // The console stays open to show the error and to let the host start again. Without a console there is nothing to wait for
+                if (console == null) {
+                    throw e;
+                }
+                netLog.error(e, "Could not start the server");
+                failure = e;
+            }
+            if (console != null) {
+                console.attach(service, failure);
+            }
+            if (Boolean.getBoolean("forge.web.resetOnInput")) {
+                resetOnInput(service);
+            }
+            if (service.running() && !Boolean.getBoolean("forge.web.noBrowser")) {
+                openBrowser(service.url(), ui);
+            }
+            quit.await();
+        } finally {
+            service.stop();
+            if (console != null) {
+                console.close();
+            }
+        }
+        // Some engine and netplay threads are not daemons
+        System.exit(0);
+    }
+
+    /**
+     * Lets a test harness run tests one after another in this process, so the cards stay loaded. Each line "reset" on standard
+     * input, followed by any preferences as key=value, drops every seat and match. It then resets the preferences to their
+     * defaults, applies the given ones, and starts the server again on the same address.
+     */
+    private static void resetOnInput(final WebService service) {
+        // Nobody is connected between tests. Without this call that would end the process
+        service.quitWhenEmpty(false);
+        final Thread reader = new Thread(() -> {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
+                for (String line = in.readLine(); line != null; line = in.readLine()) {
+                    final String[] words = line.trim().split("\\s+");
+                    if (!"reset".equals(words[0])) {
+                        continue;
+                    }
+                    service.stop();
+                    final ForgePreferences prefs = FModel.getPreferences();
+                    prefs.reset();
+                    for (int i = 1; i < words.length; i++) {
+                        final String[] pair = words[i].split("=", 2);
+                        prefs.setPref(FPref.valueOf(pair[0]), pair.length > 1 ? pair[1] : "");
+                    }
+                    prefs.save();
+                    service.start();
+                }
+            } catch (final IOException | InterruptedException e) {
+                netLog.error(e, "Stopped reading resets");
+            }
+        }, "WebReset");
+        reader.setDaemon(true);
+        reader.start();
+    }
+
+    private static String newToken() {
+        final byte[] bytes = new byte[16];
+        new SecureRandom().nextBytes(bytes);
+        return HexFormat.of().formatHex(bytes);
+    }
+
+    public static void openBrowser(final String url, final WebGuiBase ui) {
+        for (final String exe : appModeBrowsers()) {
+            if (new File(exe).isFile()) {
+                try {
+                    // --app gives a window without tabs or an address bar
+                    new ProcessBuilder(exe, "--app=" + url).start();
+                    return;
+                } catch (final IOException e) {
+                    netLog.warn(e, "Could not start {}", exe);
+                }
+            }
+        }
+        try {
+            ui.browseToUrl(url);
+        } catch (final IOException | URISyntaxException e) {
+            netLog.warn(e, "Open {} in a browser", url);
+        }
+    }
+
+    private static List<String> appModeBrowsers() {
+        final List<String> candidates = new ArrayList<>();
+        final String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+        if (os.contains("win")) {
+            for (final String base : new String[]{System.getenv("ProgramFiles(x86)"), System.getenv("ProgramFiles"), System.getenv("LOCALAPPDATA")}) {
+                if (base != null) {
+                    candidates.add(base + "\\Microsoft\\Edge\\Application\\msedge.exe");
+                    candidates.add(base + "\\Google\\Chrome\\Application\\chrome.exe");
+                }
+            }
+        } else if (os.contains("mac")) {
+            candidates.add("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+            candidates.add("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge");
+            candidates.add("/Applications/Chromium.app/Contents/MacOS/Chromium");
+        } else {
+            for (final String dir : System.getenv().getOrDefault("PATH", "").split(File.pathSeparator)) {
+                for (final String name : new String[]{"chromium", "chromium-browser", "google-chrome", "microsoft-edge"}) {
+                    candidates.add(dir + File.separator + name);
+                }
+            }
+        }
+        return candidates;
+    }
+}

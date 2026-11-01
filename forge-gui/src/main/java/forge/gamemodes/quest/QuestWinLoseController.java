@@ -168,7 +168,7 @@ public class QuestWinLoseController {
             view.showCards(Localizer.getInstance().getMessage("lblSpoilsWonAnteCard"), cardsWon);
         }
         if (cardsLost != null && !cardsLost.isEmpty()) {
-            view.showCards(Localizer.getInstance().getMessage("lblLootedLostAnteCard"), cardsLost);
+            view.showLostCards(Localizer.getInstance().getMessage("lblLootedLostAnteCard"), cardsLost);
         }
     }
 

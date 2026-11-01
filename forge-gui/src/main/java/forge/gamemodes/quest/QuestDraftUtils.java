@@ -11,6 +11,7 @@ import forge.game.Match;
 import forge.game.player.RegisteredPlayer;
 import forge.gamemodes.limited.LimitedDeckEvaluator;
 import forge.gamemodes.match.HostedMatch;
+import forge.gamemodes.match.PreparedMatch;
 import forge.gamemodes.quest.data.QuestPreferences;
 import forge.gamemodes.tournament.system.TournamentBracket;
 import forge.gamemodes.tournament.system.TournamentPairing;
@@ -25,6 +26,7 @@ import forge.util.storage.IStorage;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 
 public class QuestDraftUtils {
@@ -223,24 +225,44 @@ public class QuestDraftUtils {
         }
 
         if (humanIndex > -1) {
-            matchup.setHumanPlayer(new RegisteredPlayer(decks.getHumanDeck()).setPlayer(GamePlayerUtil.getGuiPlayer()));
-
-            final int aiName = Integer.parseInt(draft.getStandings()[aiIndex]) - 1;
-
-            final int aiDeckIndex = Integer.parseInt(draft.getStandings()[aiIndex]) - 1;
-            matchup.matchStarter.add(new RegisteredPlayer(decks.getAiDecks().get(aiDeckIndex)).setPlayer(GamePlayerUtil.createAiPlayer(draft.getAINames()[aiName], draft.getAIIcons()[aiName])));
+            matchup.setHumanPlayer(humanPlayer(decks));
+            matchup.matchStarter.add(aiPlayer(draft, decks, aiIndex));
         } else {
-            final int aiName1 = Integer.parseInt(draft.getStandings()[player1]) - 1;
-            final int aiName2 = Integer.parseInt(draft.getStandings()[player2]) - 1;
-
-            int aiDeckIndex = Integer.parseInt(draft.getStandings()[player1]) - 1;
-            matchup.matchStarter.add(new RegisteredPlayer(decks.getAiDecks().get(aiDeckIndex)).setPlayer(GamePlayerUtil.createAiPlayer(draft.getAINames()[aiName1], draft.getAIIcons()[aiName1])));
-
-            aiDeckIndex = Integer.parseInt(draft.getStandings()[player2]) - 1;
-            matchup.matchStarter.add(new RegisteredPlayer(decks.getAiDecks().get(aiDeckIndex)).setPlayer(GamePlayerUtil.createAiPlayer(draft.getAINames()[aiName2], draft.getAIIcons()[aiName2])));
+            matchup.matchStarter.add(aiPlayer(draft, decks, player1));
+            matchup.matchStarter.add(aiPlayer(draft, decks, player2));
         }
 
         matchups.add(matchup);
+    }
+
+    private static RegisteredPlayer humanPlayer(final DeckGroup decks) {
+        return new RegisteredPlayer(decks.getHumanDeck()).setPlayer(GamePlayerUtil.getGuiPlayer());
+    }
+
+    /** The computer in a seat of the standings, which hold its number from 1. */
+    private static RegisteredPlayer aiPlayer(final QuestEventDraft draft, final DeckGroup decks, final int seat) {
+        final int ai = Integer.parseInt(draft.getStandings()[seat]) - 1;
+        return new RegisteredPlayer(decks.getAiDecks().get(ai)).setPlayer(GamePlayerUtil.createAiPlayer(draft.getAINames()[ai], draft.getAIIcons()[ai]));
+    }
+
+    /** The player's next match of the current tournament, built as the queue builds it but not launched, or null when the next match is not the player's. */
+    public static PreparedMatch prepareNextMatch() {
+        final QuestEventDraft draft = FModel.getQuest().getAchievements().getCurrentDraft();
+        final int pos = draft == null ? -1 : Arrays.asList(draft.getStandings()).indexOf(QuestEventDraft.UNDETERMINED);
+        if (pos < 0) {
+            return null;
+        }
+        // The match deciding a place is between the two seats that feed it, as injectRandomMatchOutcome reads them
+        final int offset = (pos - 8) * 2;
+        final String[] standings = draft.getStandings();
+        final int human = QuestEventDraft.HUMAN.equals(standings[offset]) ? offset : QuestEventDraft.HUMAN.equals(standings[offset + 1]) ? offset + 1 : -1;
+        if (human < 0) {
+            return null;
+        }
+        final DeckGroup decks = FModel.getQuest().getAssets().getDraftDeckStorage().get(QuestEventDraft.DECK_NAME);
+        final RegisteredPlayer you = humanPlayer(decks);
+        final List<RegisteredPlayer> players = new ArrayList<>(List.of(you, aiPlayer(draft, decks, human == offset ? offset + 1 : offset)));
+        return new PreparedMatch(createQuestDraftRuleset(), EnumSet.noneOf(GameType.class), players, you);
     }
 
     private static GameRules createQuestDraftRuleset() {

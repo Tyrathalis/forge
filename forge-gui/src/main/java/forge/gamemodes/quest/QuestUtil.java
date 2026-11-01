@@ -26,6 +26,7 @@ import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.player.RegisteredPlayer;
 import forge.gamemodes.match.HostedMatch;
+import forge.gamemodes.match.PreparedMatch;
 import forge.gamemodes.quest.bazaar.IQuestBazaarItem;
 import forge.gamemodes.quest.bazaar.QuestItemType;
 import forge.gamemodes.quest.bazaar.QuestPetController;
@@ -532,6 +533,17 @@ public class QuestUtil {
             qData.save();
         });
 
+        final PreparedMatch prepared = prepareGame();
+        final HostedMatch hostedMatch = GuiBase.getInterface().hostMatch();
+        final IGuiGame gui = GuiBase.getInterface().getNewGuiGame();
+        gui.setPlayerAvatar(prepared.players().get(1).getPlayer(), event);
+        FThreads.invokeInEdtNowOrLater(() -> hostedMatch.startMatch(prepared.rules(), prepared.variants(), prepared.players(), ImmutableMap.of(prepared.human(), gui), null));
+    }
+
+    /** The match for the current event, built but not started, so a client can start it its own way. */
+    public static PreparedMatch prepareGame() {
+        final QuestController qData = FModel.getQuest();
+
         int extraLifeHuman = 0;
         Integer lifeHuman = null;
         boolean useBazaar = true;
@@ -602,11 +614,7 @@ public class QuestUtil {
         if(FModel.getQuest().getDeckConstructionRules() == DeckConstructionRules.Commander){
             variant.add(GameType.Commander);
         }
-
-        final HostedMatch hostedMatch = GuiBase.getInterface().hostMatch();
-        final IGuiGame gui = GuiBase.getInterface().getNewGuiGame();
-        gui.setPlayerAvatar(aiPlayer, event);
-        FThreads.invokeInEdtNowOrLater(() -> hostedMatch.startMatch(rules, variant, starter, ImmutableMap.of(humanStart, gui), null));
+        return new PreparedMatch(rules, variant, starter, humanStart);
     }
 
     /**

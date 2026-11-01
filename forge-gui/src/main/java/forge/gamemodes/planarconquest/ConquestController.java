@@ -28,7 +28,11 @@ import forge.game.GameType;
 import forge.game.GameView;
 import forge.game.player.RegisteredPlayer;
 import forge.gamemodes.match.HostedMatch;
+import forge.gamemodes.match.PreparedMatch;
+import forge.gamemodes.planarconquest.ConquestEvent.ChaosWheelOutcome;
+import forge.gamemodes.planarconquest.ConquestEvent.ConquestEventRecord;
 import forge.gamemodes.planarconquest.ConquestPreferences.CQPref;
+import forge.gamemodes.planarconquest.ConquestRewardStep.Kind;
 import forge.gamemodes.quest.BoosterUtils;
 import forge.gui.FThreads;
 import forge.gui.GuiBase;
@@ -49,6 +53,7 @@ import forge.util.storage.StorageImmediatelySerialized;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -83,8 +88,53 @@ public class ConquestController {
         return decks;
     }
 
-    public void startBattle(ConquestBattle battle) {
-        if (activeBattle != null) { return; }
+    public static List<ConquestData> listSaves() {
+        final List<ConquestData> saves = new ArrayList<>();
+        final File[] files = new File(ForgeConstants.CONQUEST_SAVE_DIR).listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isDirectory()) {
+                    saves.add(new ConquestData(f));
+                }
+            }
+        }
+        saves.sort(Comparator.comparing(d -> d.getName().toLowerCase()));
+        return saves;
+    }
+
+    public ConquestData create(String name, ConquestPlane plane, PaperCard planeswalker, PaperCard commander) {
+        setModel(new ConquestData(name, plane, planeswalker, commander));
+        decks.add(model.getSelectedCommander().getDeck()); //ensure starting deck is saved
+        model.saveData();
+        setCurrent(name);
+        return model;
+    }
+
+    public void load(ConquestData data) {
+        setCurrent(data.getName());
+        setModel(data);
+    }
+
+    public static void delete(ConquestData data) {
+        FileUtil.deleteDirectory(data.getDirectory());
+    }
+
+    public static void rename(ConquestData data, String newName) {
+        if (data.getName().equals(FModel.getConquestPreferences().getPref(CQPref.CURRENT_CONQUEST))) {
+            setCurrent(newName);
+        }
+        data.rename(newName);
+    }
+
+    private static void setCurrent(String name) {
+        ConquestPreferences prefs = FModel.getConquestPreferences();
+        prefs.setPref(CQPref.CURRENT_CONQUEST, name);
+        prefs.save();
+    }
+
+    /** Builds the match for a battle and marks it active; null while another is. gui may be null. */
+    public PreparedMatch prepareBattle(ConquestBattle battle, IGuiGame gui) {
+        if (activeBattle != null) { return null; }
 
         final Set<GameType> variants = battle.getVariants();
         final ConquestCommander commander = model.getSelectedCommander(); 
@@ -129,7 +179,6 @@ public class ConquestController {
         humanPlayer.setAvatarCardImageKey(commander.getCard().getImageKey(false));
         starter.add(humanStart.setPlayer(humanPlayer));
 
-        final IGuiGame gui = GuiBase.getInterface().getNewGuiGame();
         final LobbyPlayer aiPlayer = GamePlayerUtil.createAiPlayer(aiPlayerName, -1, -1);
         battle.setOpponentAvatar(aiPlayer, gui);
         starter.add(aiStart.setPlayer(aiPlayer));
@@ -142,9 +191,17 @@ public class ConquestController {
         rules.setGamesPerMatch(battle.gamesPerMatch());
         rules.setManaBurn(FModel.getPreferences().getPrefBoolean(FPref.LEGACY_MANABURN));
         rules.setOrderCombatants(FModel.getPreferences().getPrefBoolean(FPref.LEGACY_ORDER_COMBATANTS));
-        final HostedMatch hostedMatch = GuiBase.getInterface().hostMatch();
-        FThreads.invokeInEdtNowOrLater(() -> hostedMatch.startMatch(rules, variants, starter, humanStart, gui));
         activeBattle = battle;
+        return new PreparedMatch(rules, variants, starter, humanStart);
+    }
+
+    public void startBattle(ConquestBattle battle) {
+        if (activeBattle != null) { return; }
+
+        final IGuiGame gui = GuiBase.getInterface().getNewGuiGame();
+        final PreparedMatch prepared = prepareBattle(battle, gui);
+        final HostedMatch hostedMatch = GuiBase.getInterface().hostMatch();
+        FThreads.invokeInEdtNowOrLater(() -> hostedMatch.startMatch(prepared.rules(), prepared.variants(), prepared.players(), prepared.human(), gui));
     }
 
     private List<PaperCard> generatePlanarPool() {
@@ -185,11 +242,109 @@ public class ConquestController {
         activeBattle.showGameOutcome(model, game, humanPlayer, view);
     }
 
-    public void finishEvent(final IWinLoseView<? extends IButton> view) {
+    public ConquestBattle.Outcome recordOutcome(final GameView game) {
+        return activeBattle.recordOutcome(model, game, humanPlayer);
+    }
+
+    public ConquestBattle getActiveBattle() {
+        return activeBattle;
+    }
+
+    public void finishBattle() {
         if (activeBattle == null) { return; }
 
-        activeBattle.onFinished(model, view);
+        activeBattle.finish(model);
         activeBattle = null;
+    }
+
+    public void cancelBattle() {
+        activeBattle = null;
+    }
+
+    public void finishEvent(final IWinLoseView<? extends IButton> view) {
+        finishBattle();
+    }
+
+    /** Applies and saves what a won battle gives, and returns it in the order it is shown. */
+    public List<ConquestRewardStep> claimRewards(ConquestBattle battle, ChaosWheelOutcome outcome) {
+        final List<ConquestRewardStep> steps = new ArrayList<>();
+        if (!battle.wasConquered()) { return steps; }
+
+        final ConquestPreferences prefs = FModel.getConquestPreferences();
+        if (battle instanceof ConquestChaosBattle) {
+            addBoosters(steps, ((ConquestChaosBattle) battle).getAwardPool(), 3, true);
+            model.saveData();
+            return steps;
+        }
+
+        ConquestEventRecord record = model.getCurrentPlaneData().getEventRecord(battle.getLocation());
+        if (record.getWins(battle.getTier()) == 1 && record.getHighestConqueredTier() == battle.getTier()) {
+            int emblems = prefs.getPrefInt(CQPref.PLANESWALK_CONQUER_EMBLEMS);
+            model.rewardPlaneswalkEmblems(emblems);
+            steps.add(ConquestRewardStep.of(Kind.CONQUER_EMBLEMS, emblems));
+
+            ConquestReward commander = awardRegionCommander(battle.getLocation());
+            if (commander != null) {
+                steps.add(ConquestRewardStep.commander(commander));
+            }
+        }
+
+        steps.add(ConquestRewardStep.wheel(outcome));
+        switch (outcome) {
+        case BOOSTER:
+            addBoosters(steps, model.getCurrentPlane().getAwardPool(), 1, false);
+            break;
+        case DOUBLE_BOOSTER:
+            addBoosters(steps, model.getCurrentPlane().getAwardPool(), 2, false);
+            break;
+        case SHARDS:
+            addShards(steps, prefs.getPrefInt(CQPref.AETHER_WHEEL_SHARDS));
+            break;
+        case DOUBLE_SHARDS:
+            addShards(steps, 2 * prefs.getPrefInt(CQPref.AETHER_WHEEL_SHARDS));
+            break;
+        case PLANESWALK:
+            if (model.getUnlockedPlaneCount() == model.getAccessiblePlaneCount()) {
+                steps.add(ConquestRewardStep.of(Kind.ALL_PLANES_UNLOCKED));
+                steps.add(ConquestRewardStep.of(Kind.CHAOS_BATTLE));
+            }
+            else {
+                int emblems = prefs.getPrefInt(CQPref.PLANESWALK_WHEEL_EMBLEMS);
+                model.rewardPlaneswalkEmblems(emblems);
+                steps.add(ConquestRewardStep.of(Kind.EMBLEMS, emblems));
+            }
+            break;
+        case CHAOS:
+            steps.add(ConquestRewardStep.of(Kind.CHAOS_BATTLE));
+            break;
+        }
+        model.saveData();
+        return steps;
+    }
+
+    private void addShards(List<ConquestRewardStep> steps, int shards) {
+        model.rewardAEtherShards(shards);
+        steps.add(ConquestRewardStep.of(Kind.SHARDS, shards));
+    }
+
+    private void addBoosters(List<ConquestRewardStep> steps, ConquestAwardPool pool, int count, boolean chaos) {
+        final List<List<ConquestReward>> boosters = new ArrayList<>();
+        int duplicateShards = 0;
+        for (int i = 0; i < count; i++) {
+            List<ConquestReward> cards = awardBooster(pool);
+            if (cards.isEmpty()) { continue; }
+
+            boosters.add(cards);
+            for (ConquestReward reward : cards) {
+                duplicateShards += reward.getReplacementShards();
+            }
+        }
+        for (int i = 0; i < boosters.size(); i++) {
+            steps.add(ConquestRewardStep.booster(boosters.get(i), i + 1, boosters.size(), chaos));
+        }
+        if (duplicateShards > 0) {
+            steps.add(ConquestRewardStep.of(Kind.DUPLICATE_SHARDS, duplicateShards));
+        }
     }
 
     /** Returns null unless this is the event's first win and it completes the region. */

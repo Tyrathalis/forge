@@ -46,10 +46,11 @@ public abstract class ConquestBattle {
         conquered = conquered0;
     }
 
-    public void showGameOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer, final IWinLoseView<? extends IButton> view) {
-        if (game.isMatchWonBy(humanPlayer)) {
-            view.getBtnRestart().setVisible(false);
-            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblGreat"));
+    public enum Outcome { WON, LOST, UNFINISHED }
+
+    public Outcome recordOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer) {
+        final boolean won = game.isMatchWonBy(humanPlayer);
+        if (won) {
             model.addWin(this);
             if (location.getEvent().getTemporaryUnlock() != null) {
                 // secret area for this event, unlock it until the player moves
@@ -57,16 +58,26 @@ public abstract class ConquestBattle {
             }
         }
         else {
-            view.getBtnRestart().setVisible(true);
-            view.getBtnRestart().setText(Localizer.getInstance().getMessage("lblRetry"));
-            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblQuit"));
             model.addLoss(this);
         }
         model.resetNewCards(); //reset new cards after finishing a game
         model.saveData();
+        return won ? Outcome.WON : Outcome.LOST;
     }
 
-    public void onFinished(final ConquestData model, final IWinLoseView<? extends IButton> view) {
+    public void showGameOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer, final IWinLoseView<? extends IButton> view) {
+        if (recordOutcome(model, game, humanPlayer) == Outcome.WON) {
+            view.getBtnRestart().setVisible(false);
+            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblGreat"));
+        }
+        else {
+            view.getBtnRestart().setVisible(true);
+            view.getBtnRestart().setText(Localizer.getInstance().getMessage("lblRetry"));
+            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblQuit"));
+        }
+    }
+
+    public void finish(final ConquestData model) {
         finished = true;
     }
 

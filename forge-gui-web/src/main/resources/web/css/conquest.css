@@ -1,0 +1,609 @@
+/* Planar Conquest, and the pieces every campaign shares (the bar, the side panel, the reveal). The shelves reuse the Limited shelf (limited.css). */
+
+
+.cq-shell { height: 100vh; display: flex; flex-direction: column; }
+/* In landscape, an open save is shown as a panel the same size as the deck editor. It sits one layer below the editor, which can be opened from it. */
+html:not([data-form="portrait"]) #campaign:not([hidden]):has(.cq-shell) { position: fixed; inset: 0; z-index: 34; display: grid; place-items: center; background: var(--scrim); }
+html:not([data-form="portrait"]) .cq-shell { width: min(1500px, 94vw); height: min(880px, 92vh); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow: clip; }
+.cq-shell > .limited-error { margin: 8px 20px 0; }
+.cq-coin { display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px 3px 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-variant-numeric: tabular-nums; }
+.cq-coin img { width: 20px; height: 20px; }
+.cq-coin b { font-size: 13.5px; }
+.cq-save .ev-line .cq-coin { margin-left: 6px; }
+
+/* When the bar is too narrow for one row, the balances and the exit wrap under the tabs instead of running past the edge */
+.cq-bar { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0 22px; padding: 0 20px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.cq-id { display: grid; align-content: center; gap: 1px; padding: 9px 0; min-width: 190px; }
+.cq-id b { font-size: 15px; }
+.cq-id span { font-size: 12px; color: var(--muted); }
+.cq-tabs { display: flex; align-items: stretch; gap: 2px; }
+.cq-tab { position: relative; background: none; border: 0; border-radius: 0; padding: 0 14px; color: var(--muted); font-size: 13.5px; font-weight: 600; border-bottom: 2px solid transparent; }
+.cq-tab:hover:not(:disabled) { color: var(--text); }
+.cq-tab:disabled { opacity: .45; }
+.cq-tab[aria-current="page"] { color: var(--accent-2); background: linear-gradient(180deg, transparent, var(--accent-soft)); }
+/* A tab with items that arrived since it was last open. The pill is the one the new cards carry in the list */
+.cq-tab .new-card { position: static; margin-left: 7px; padding: 1px 6px; font-size: 9.5px; vertical-align: 1px; box-shadow: none; }
+/* The open tab's underline is a separate element, so a tab change can animate it to the new tab */
+.cq-tab-line { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: var(--accent-2); view-transition-name: cq-tab-line; }
+.cq-purse { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+/* The balances are drawn above the reward reveal, because the reveal counts up into them */
+.cq-shell:has(.cq-reveal) .cq-purse { position: relative; z-index: 55; }
+.cq-shell:has(.cq-reveal) .cq-purse > :not(.cq-coin) { visibility: hidden; }
+/* The Next wheel is a dev tool, so it is drawn like one: a muted code icon in a dashed outline, never gold, so it is not taken for a reward. A queued result is named beside the icon */
+.cq-dev { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 7px; border: 1px dashed var(--line-bright); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.cq-dev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cq-dev.set { padding-right: 10px; color: var(--text); }
+.cq-dev-head { display: block; padding: 4px 10px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.cq-purse .deck-menu { width: 190px; }
+.cq-purse .deck-menu [aria-checked="true"] { color: var(--accent-2); }
+/* A tab change slides the page (dialogs.css). A page that arrives any other way, such as on a new plane, rises in. */
+/* The page is one column no wider than the window. So a strip that scrolls by itself, such as the Spell Shop's packs, does not widen the page. */
+.cq-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); view-transition-name: page; }
+/* The slide's snapshots are drawn above every page. So in landscape they are clipped to the panel's page here. */
+html:not([data-form="portrait"]):has(#campaign .cq-shell)::view-transition-image-pair(page) { overflow: clip; }
+.cq-main > * { animation: box-in .18s ease-out; }
+html[data-motion="reduced"] .cq-main > * { animation: none; }
+/* Use a zero duration, not none. With none, the rise animation plays when data-way is removed at the end of the slide. */
+html[data-way] .cq-main > * { animation-duration: 0s; }
+
+.cq-kicker { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.cq-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-bright); background: var(--surface-2); white-space: nowrap; }
+.cq-chip img { width: 13px; height: 13px; }
+.cq-chip.brass { border-color: color-mix(in srgb, var(--accent-2) 55%, #000); color: var(--accent-2); background: var(--accent-soft); font-weight: 600; }
+.cq-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cq-reward-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+
+.cq-map { display: grid; grid-template-columns: minmax(0, 1fr) 352px; min-height: 0; }
+.cq-stage { position: relative; min-width: 0; overflow: hidden; display: flex; flex-direction: column; background: radial-gradient(100% 80% at 50% 40%, #131a26 0%, #080b11 100%); }
+.cq-map-head { display: flex; align-items: baseline; gap: 14px; padding: 18px 28px 12px; }
+.cq-map-head h2 { margin: 0; font-size: 22px; font-family: Georgia, "Times New Roman", serif; letter-spacing: .02em; }
+.cq-map-head .muted { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cq-trail { flex: 1; overflow-x: auto; overflow-y: auto; padding: 0 24px 6px; scrollbar-width: thin; scrollbar-color: #6b7890 #ffffff0f; }
+.cq-trail-in { position: relative; }
+.cq-trail-in.walking .cq-tile { cursor: default; }
+
+.cq-banner { position: absolute; border: 0; border-radius: 12px; background: #111 center 40% / cover; overflow: hidden; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 10px 14px; color: var(--text); text-align: left; opacity: 1; }
+.cq-banner::before { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #0b0e1400 25%, #0b0e14cc 100%); }
+.cq-banner > * { position: relative; }
+.cq-banner b { font: 700 20px/1 Georgia, "Times New Roman", serif; letter-spacing: .02em; text-shadow: 0 2px 6px #000; }
+.cq-banner span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: #d6dde6; font-variant-numeric: tabular-nums; }
+.cq-banner span img { width: 16px; height: 16px; }
+.cq-banner.done span { color: var(--accent-2); font-weight: 700; }
+/* A banner or an empty place can be a disabled button. It is not dimmed. */
+button.cq-banner:disabled, button.cq-tile:disabled { opacity: 1; cursor: default; }
+/* Clicking the banner of any region except yours folds it back to its spine (conquestmap.tsx) */
+button.cq-banner:not(:disabled):hover { filter: brightness(1.15); }
+button.cq-banner:not(:disabled):active { filter: brightness(.75); }
+
+/* A place that can be fought next is in full colour with a gold glow. Conquered places are dimmed. Places not yet found are empty. */
+.cq-tile { position: absolute; padding: 8px; border: 0; border-radius: 9px; background: #141a26 center 20% / cover; overflow: hidden; display: flex; align-items: flex-end; text-align: left; color: var(--text); opacity: 1; transition: transform .12s, box-shadow .12s, filter .12s; }
+.cq-tile span { position: relative; z-index: 1; font-size: 11.5px; font-weight: 600; line-height: 1.2; text-shadow: 0 1px 3px #000; }
+.cq-tile.open { box-shadow: 0 0 0 2px var(--accent-2), 0 0 18px color-mix(in srgb, var(--accent-2) 45%, transparent); }
+.cq-tile.open::before, .cq-tile.here::before { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, #0b0e14e6 100%); }
+.cq-tile.won { filter: saturate(.45) brightness(.7); box-shadow: 0 0 0 1px #ffffff40; }
+.cq-tile.won:is(.hover, .here, .sel) { filter: none; }
+.cq-tile.fog { background: none; box-shadow: inset 0 0 0 1px #ffffff12; cursor: default; }
+.cq-tile.hover { box-shadow: 0 0 0 2px #fff, 0 10px 24px #000c; transform: translateY(-3px); z-index: 5; }
+.cq-tile.open.hover { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent-2), 0 10px 24px #000c; }
+.cq-tile.sel { box-shadow: 0 0 0 2px #fff; z-index: 4; }
+.cq-tile.open.sel { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent-2); }
+.cq-tile.here { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent-2), 0 0 30px 4px color-mix(in srgb, var(--accent-2) 60%, transparent); z-index: 4; }
+
+/* A region that nobody has reached, or one that is finished, is folded to a spine */
+.cq-spine { position: absolute; padding: 0 0 12px; border: 0; border-radius: 12px; overflow: hidden; background: #0d1118; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 10px; color: var(--muted); box-shadow: inset 0 0 0 1px #ffffff12; opacity: 1; }
+.cq-spine i { position: absolute; inset: 0; background: #111 center / cover; opacity: .2; filter: grayscale(.8); }
+.cq-spine b { position: relative; writing-mode: vertical-rl; transform: rotate(180deg); font: 700 16px/1 Georgia, "Times New Roman", serif; letter-spacing: .04em; color: #aeb8c6; white-space: nowrap; }
+.cq-spine span { position: relative; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cq-spine:hover i { opacity: .4; }
+.cq-spine.done i { opacity: .7; filter: none; }
+.cq-spine.done span { color: var(--accent-2); font-weight: 700; }
+.cq-spine.done b { color: #fff; text-shadow: 0 1px 4px #000; }
+
+/* Ties join neighbouring places. A tie between conquered places is light grey. A tie to a place that a conquest opened is gold. */
+.cq-tie { position: absolute; z-index: 1; height: 4px; margin-top: -2px; pointer-events: none; }
+.cq-tie.down { width: 4px; height: auto; margin: 0 0 0 -2px; }
+.cq-tie.won { background: #c3ccd9; }
+.cq-tie.open { background: var(--accent-2); box-shadow: 0 0 8px color-mix(in srgb, var(--accent-2) 60%, transparent); }
+
+/* The player's marker on the map. It has a white ring, and it is the only thing on the map that moves. */
+.cq-you { position: absolute; z-index: 6; pointer-events: none; display: grid; justify-items: center; transform: translate(-50%, -50%); }
+.cq-trail-in.walking .cq-you { transition: left .5s linear, top .5s linear; }
+.cq-you i { width: 58px; height: 58px; border-radius: 50%; background: var(--surface-2) center 15% / cover; border: 3px solid #fff; box-shadow: 0 0 0 2px #0b0e14, 0 0 0 4px var(--accent-2), 0 0 24px 8px #ffffff66, 0 8px 16px #000; }
+.cq-you::before { content: ''; position: absolute; left: 50%; top: 29px; width: 58px; height: 58px; margin: -29px; border-radius: 50%; border: 2px solid #fff; animation: cq-you-pulse 1.8s ease-out infinite; }
+@keyframes cq-you-pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(1.9); opacity: 0; } }
+.cq-you b { margin-top: -9px; font: 800 9.5px/1 system-ui, sans-serif; letter-spacing: .1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #fff; color: #0b0e14; box-shadow: 0 2px 6px #000a; }
+html[data-motion="reduced"] .cq-you::before { animation: none; opacity: 0; }
+/* A region the player opens or folds moves as an accordion (conquestmap.tsx). Everything after it slides along the road while it grows from its spine or shrinks back to one.
+   An opened region's places then fade in step by step along the road. */
+.cq-trail-in.moving :is(.cq-banner, .cq-spine, .cq-you) { transition: left .38s cubic-bezier(.3,.7,.3,1); }
+.cq-trail-in.moving .cq-tie { transition: left .38s cubic-bezier(.3,.7,.3,1), width .38s cubic-bezier(.3,.7,.3,1); }
+.cq-trail-in.moving .cq-tile { transition: left .38s cubic-bezier(.3,.7,.3,1), transform .12s, box-shadow .12s, filter .12s; }
+:is(.cq-banner.grow, .cq-spine.shrink) { animation: cq-grow .38s cubic-bezier(.3,.7,.3,1); }
+@keyframes cq-grow { from { width: var(--from); } }
+.cq-banner.grow > * { animation: cq-arrive .25s .2s ease-out both; }
+.cq-tile.arrive { animation: cq-arrive .3s calc(.18s + var(--step) * .07s) ease-out both; }
+.cq-tie.arrive { animation: cq-arrive .3s .3s ease-out both; }
+@keyframes cq-arrive { from { opacity: 0; } }
+html[data-motion="reduced"] :is(.cq-banner.grow, .cq-banner.grow > *, .cq-spine.shrink, .cq-tile.arrive, .cq-tie.arrive) { animation: none; }
+html[data-motion="reduced"] .cq-trail-in.moving * { transition: none; }
+/* Win animation, played after the reward reveal closes (conquestmap.tsx). The won tile is stamped and new ties grow from it. Then the unlocked tiles fade in one by one, and the counts go up. */
+.cq-map.won .cq-tile.sealed { animation: cq-sealed .65s .3s ease-out; }
+@keyframes cq-sealed { 35% { transform: scale(1.08); filter: brightness(1.6); } }
+.cq-burst { position: absolute; z-index: 7; pointer-events: none; border-radius: 12px; border: 3px solid #f6d37a; box-shadow: 0 0 30px 6px #f2c34499, inset 0 0 20px #f2c34466; opacity: 0; animation: cq-burst .7s .3s cubic-bezier(.2,.7,.3,1); }
+@keyframes cq-burst { from { transform: none; opacity: 1; } to { transform: scale(1.55); opacity: 0; } }
+.cq-stamp { position: absolute; z-index: 8; pointer-events: none; width: 64px; height: 64px; margin: -32px 0 0 -32px; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle, #2a2210 0%, #120e05 70%); border: 2px solid #f6d37a; box-shadow: 0 0 0 3px #0b0e14, 0 0 26px 8px #f2c34488; opacity: 0; animation: cq-stamp 1.3s .3s ease-out; }
+.cq-stamp img { width: 38px; height: 38px; }
+@keyframes cq-stamp { 0% { transform: scale(2.2); opacity: 0; } 22% { transform: scale(.92); opacity: 1; } 32%, 75% { transform: none; opacity: 1; } 100% { transform: scale(.6) translateY(-20px); opacity: 0; } }
+/* The marker fades while the stamp covers it */
+.cq-map.won .cq-you { animation: cq-you-aside 1.3s .3s ease-in-out; }
+@keyframes cq-you-aside { 20%, 75% { opacity: .15; } }
+.cq-map.won .cq-side .cq-chip.brass { animation: cq-chip-in .3s .7s ease-out both; }
+@keyframes cq-chip-in { from { opacity: 0; transform: translateY(4px); } }
+.cq-map.won .cq-tie.drawn { transform-origin: left; animation: cq-draw-x .32s 1s cubic-bezier(.3,.7,.3,1) both; }
+.cq-map.won .cq-tie.drawn.back { transform-origin: right; }
+.cq-map.won .cq-tie.down.drawn { transform-origin: top; animation-name: cq-draw-y; }
+.cq-map.won .cq-tie.down.drawn.back { transform-origin: bottom; }
+@keyframes cq-draw-x { from { transform: scaleX(0); } }
+@keyframes cq-draw-y { from { transform: scaleY(0); } }
+.cq-map.won .cq-tile.unveiled { animation: cq-unveil .75s calc(1.3s + var(--i) * .22s) cubic-bezier(.2,.7,.3,1) both; }
+@keyframes cq-unveil { from { filter: blur(9px) brightness(.15) saturate(0); transform: scale(.9); opacity: 0; } 55% { filter: blur(2px) brightness(1.5) saturate(1.2); transform: scale(1.04); opacity: 1; } }
+.cq-map.won .cq-tile.unveiled span { animation: cq-name-in .38s calc(1.68s + var(--i) * .22s) ease-out both; }
+@keyframes cq-name-in { from { opacity: 0; transform: translateY(10px); } }
+.cq-map.won .cq-tile.unveiled::after { content: ''; position: absolute; inset: 0; z-index: 2; background: linear-gradient(105deg, transparent 30%, #fff7d999 48%, transparent 66%); transform: translateX(-120%); animation: cq-sweep .7s calc(1.55s + var(--i) * .22s) ease-in-out forwards; }
+@keyframes cq-sweep { to { transform: translateX(120%); } }
+.cq-map.won .cq-count { animation: cq-count .6s 2s ease-out; }
+@keyframes cq-count { from { color: #f6d37a; transform: scale(1.3); } }
+
+.cq-hov { position: absolute; z-index: 8; display: grid; gap: 8px; padding: 11px 13px 12px; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--line-bright); box-shadow: 0 14px 34px #000d; pointer-events: none; }
+.cq-hov > b { font-size: 14.5px; line-height: 1.25; }
+
+.cq-side { border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.cq-panel { padding: 18px 20px; display: grid; gap: 12px; align-content: start; overflow-y: auto; }
+.cq-panel h3 { margin: 0; font-size: 20px; line-height: 1.2; text-wrap: balance; }
+.cq-where { display: flex; align-items: center; gap: 8px; }
+.cq-art { height: 132px; padding: 0 10px 9px; border: 0; border-radius: 10px; background: var(--surface-2) center 22% / cover; position: relative; display: flex; align-items: flex-end; box-shadow: 0 0 0 1px var(--line-bright); color: var(--text); text-align: left; opacity: 1; overflow: hidden; }
+.cq-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, #0b0e14d9 100%); }
+.cq-art b { position: relative; z-index: 1; font-size: 14px; text-shadow: 0 1px 3px #000, 0 0 10px #000; }
+.cq-desc { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.cq-steps { margin: 0; font-size: 12px; color: var(--muted); }
+/* The event panel's Format and Reward sections. Each heading has a rule running to the panel's edge */
+.cq-sec { display: grid; gap: 8px; }
+.cq-sec > .cq-kicker { display: flex; align-items: center; gap: 10px; }
+.cq-sec > .cq-kicker::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.cq-sec-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 11px; align-items: start; }
+.cq-sec-icon { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-bright); }
+.cq-sec-icon.brass { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 45%, #000); }
+.cq-sec-icon img { width: 20px; height: 20px; object-fit: contain; }
+.cq-sec-row b { display: block; font-size: 14px; line-height: 1.3; }
+.cq-sec-row p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.cq-sec-tag { margin-left: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent-2); }
+/* The chat dock covers the bottom of the page, so the panel stops above it */
+.cq-foot { margin-top: auto; border-top: 1px solid var(--line); padding: 14px 20px 62px; display: grid; gap: 10px; background: color-mix(in srgb, var(--bg-deep) 35%, transparent); }
+/* In landscape the dock is drawn behind the panel, so the foot does not need to leave room for it */
+html:not([data-form="portrait"]) .cq-foot { padding-bottom: 14px; }
+.cq-mine { display: flex; align-items: center; gap: 10px; }
+.cq-face2 { width: 46px; height: 46px; padding: 0; border: 0; border-radius: 9px; background: var(--surface-2) center 20% / cover; box-shadow: 0 0 0 1px var(--line-bright); flex: none; }
+.cq-face2.round { border-radius: 50%; width: 34px; height: 34px; margin: 0 6px; }
+.cq-mine .t { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.cq-mine .t b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cq-mine .t span { font-size: 12px; color: var(--muted); }
+.cq-mine > button:last-child { font-size: 12.5px; padding: 4px 10px; }
+.cq-big { display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; font-size: 16px; }
+.cq-warn, .cq-mine .t .cq-warn { margin: 0; font-size: 12.5px; color: var(--select); }
+.cq-zoom { max-height: min(86vh, 720px); border-radius: 4.5% / 3.2%; box-shadow: 0 24px 60px #000; }
+
+.backdrop.cq-reveal { --gold: #f0c05a; --gold-hi: #fbe9bd; background: #05070bf0; flex-direction: column; }
+.cq-reveal svg.ln { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cq-reveal-foot { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 16px; }
+.cq-zoom-layer { z-index: 60; }
+@keyframes cq-breathe { 50% { opacity: .6; } }
+
+.cq-gift { min-width: 300px; max-width: 440px; justify-items: center; text-align: center; gap: 14px; padding: 22px 26px; }
+.cq-gift p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.cq-gift-what { display: flex; align-items: center; gap: 12px; }
+.cq-gift-what img { width: 64px; height: 64px; }
+.cq-gift-what b { font: 700 34px/1 Georgia, "Times New Roman", serif; font-variant-numeric: tabular-nums; }
+.cq-gift-lines { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; gap: 4px; text-align: left; font-size: 13px; }
+.cq-gift-lines li { display: flex; justify-content: space-between; gap: 18px; padding: 5px 10px; border-radius: 6px; background: var(--surface-2); }
+.cq-gift-lines li b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cq-gift-lines li:last-child { background: var(--accent-soft); font-weight: 700; }
+.cq-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px 12px; max-width: min(1000px, 92vw); }
+.cq-cards-card { width: 148px; aspect-ratio: 63 / 88; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); box-shadow: 0 8px 20px #000b; }
+.cq-cards-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cq-cards.lost .cq-cards-card { filter: grayscale(.85) brightness(.6); }
+
+/* The Chaos Wheel is drawn as a dial of engraved brass around dark glass. When the spin stops, the flare behind the result pulses slowly. */
+.cq-wheel-stop { display: grid; justify-items: center; gap: 18px; }
+.cq-wheel-first { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--gold-hi); }
+.cq-wheel-first img { width: 22px; height: 22px; }
+.cq-wheel-host { --d: min(440px, 56vh); padding: 40px 36px 32px; }
+.cq-dl { position: relative; width: var(--d); height: var(--d); }
+.cq-dl-glow { position: absolute; inset: -22%; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, #7a5cff33 38%, #3bd0e014 56%, transparent 70%); animation: cq-breathe 5s ease-in-out infinite; }
+.cq-dl-rim { position: absolute; inset: -26px; border-radius: 50%;
+  background: conic-gradient(from 30deg, #4a380f, #d9b85c 10%, #8a6a1e 22%, #3d2e0c 38%, #c9a544 52%, #6f5416 66%, #e8cd7d 78%, #5a4412 90%, #4a380f);
+  box-shadow: 0 0 0 1px #000, 0 24px 60px #000c; }
+.cq-dl-rim::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: repeating-conic-gradient(from -.25deg, #0b0e14cc 0 .5deg, transparent .5deg 5deg);
+  -webkit-mask: radial-gradient(circle, transparent calc(50% - 12px), #000 calc(50% - 11px)); mask: radial-gradient(circle, transparent calc(50% - 12px), #000 calc(50% - 11px)); }
+.cq-dl-rim::after { content: ''; position: absolute; inset: 21px; border-radius: 50%; background: #05070b; box-shadow: inset 0 0 0 1px #000, 0 0 0 1px #2a2008; }
+.cq-dl-spin { position: absolute; inset: 0; border-radius: 50%; }
+.cq-dl-disc { position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 1px #c9a54466, inset 0 0 50px #000; }
+.cq-dl-disc::before { content: ''; position: absolute; inset: 0; border-radius: 50%; background: repeating-conic-gradient(from -22.7deg, #c9a544aa 0 .4deg, transparent .4deg 45deg); }
+.cq-dl-disc::after { content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 32% 22%, #ffffff14 0, transparent 40%), radial-gradient(circle, transparent 0 27%, #c9a54433 27.4% 27.8%, transparent 28.2% 62%, #00000066 100%); }
+/* Each wedge's icon and label scale with the dial and sit in from its edge. The label's letters follow the dial's curve (conquestwheel.ts) */
+.cq-dl-wedge { position: absolute; left: 50%; top: 0; width: 34%; margin-left: -17%; height: 50%; transform-origin: 50% 100%; display: grid; justify-items: center; align-content: start; padding-top: calc(var(--d) * .075);
+  font: 600 calc(var(--d) * .025)/1.15 Georgia, "Times New Roman", serif; letter-spacing: .14em; text-transform: uppercase; color: #dfe5ee; text-align: center; transition: opacity .8s .15s; }
+.cq-dl-face { display: grid; justify-items: center; }
+.cq-dl-word { position: absolute; inset: 0; pointer-events: none; }
+.cq-dl-word span { position: absolute; display: grid; place-items: center; text-align: center; white-space: pre; letter-spacing: 0; }
+.cq-dl-ic { height: calc(var(--d) * .072); display: flex; align-items: center; gap: 3px; color: #e6cf8e; }
+.cq-dl-ic svg { height: calc(var(--d) * .062); width: auto; }
+.cq-dl-ic img { height: calc(var(--d) * .062); width: calc(var(--d) * .062); }
+.cq-dl-hub { position: absolute; inset: 41%; z-index: 2; border-radius: 50%; display: grid; place-items: center; color: #e6cf8e; transition: color 1s;
+  background: radial-gradient(circle at 35% 28%, #2a3142, #0b0e14 70%); box-shadow: 0 0 0 1.5px #c9a544, 0 0 0 5px #0b0e14, 0 0 0 6px #6f5416, 0 8px 18px #000c; }
+.cq-dl-hub svg { width: 52%; height: 52%; stroke-width: 3; }
+/* Brass pegs on the rim at each wedge edge. The needle drags on each one as it passes, and the shadow deepens while the dial turns */
+.cq-dl-pegs { position: absolute; inset: -10px; border-radius: 50%; z-index: 3; pointer-events: none; }
+.cq-dl-pegs i { position: absolute; left: 50%; top: 0; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; transform-origin: 3.5px calc(var(--d) / 2 + 10px);
+  background: radial-gradient(circle at 35% 30%, var(--gold-hi), #8a6a1e); box-shadow: 0 1px 2px #000; }
+.cq-dl.spinning .cq-dl-rim { box-shadow: 0 0 0 1px #000, 0 34px 80px #000f; }
+.cq-dl-needle { position: absolute; left: 50%; top: -30px; width: 16px; height: 46px; margin-left: -8px; z-index: 4; transform-origin: 50% 8px; clip-path: polygon(50% 100%, 0 18%, 50% 0, 100% 18%);
+  background: linear-gradient(90deg, #7a5a16, #fbe9bd 48%, #c9a544 60%, #5a4412); filter: drop-shadow(0 3px 4px #000c); }
+.cq-dl-needle.drag { animation: cq-drag .22s cubic-bezier(.3,.6,.4,1); }
+@keyframes cq-drag { 35% { transform: rotate(-9deg); } }
+/* When the dial stops, a faint shimmer of aether rolls out from the hub to the rim. Then a violet light fills the wedge under the needle and stays, the hub's mark turns violet, and the other wedges fade */
+.cq-dl-wave { position: absolute; inset: -14%; z-index: 3; border-radius: 50%; pointer-events: none; opacity: 0; scale: .12; mix-blend-mode: screen;
+  background: radial-gradient(circle, transparent 60%, #9a85ff00 63%, #b8a8ff59 66%, #9a85ff00 69%, transparent 72%); filter: blur(1px); }
+.cq-dl.done .cq-dl-wave { animation: cq-wave 1.6s cubic-bezier(.25,.6,.3,1) forwards; }
+@keyframes cq-wave { 0% { opacity: 0; scale: .12; } 20% { opacity: .9; } 100% { opacity: 0; scale: 1.02; } }
+.cq-dl-flare { position: absolute; inset: 0; z-index: 1; border-radius: 50%; pointer-events: none; opacity: 0; mask: conic-gradient(from -22.5deg, #000 0 45deg, transparent 0);
+  background: radial-gradient(circle closest-side, #7a5cff70, #7a5cff40 65%, #7a5cff2e); }
+.cq-dl.done .cq-dl-flare { animation: cq-vein 1.2s .25s ease-out forwards; }
+@keyframes cq-vein { 0% { opacity: 0; scale: .15; } 50% { opacity: 1; } 100% { opacity: .9; scale: 1; } }
+.cq-dl.done .cq-dl-hub { color: #b8a8ff; }
+.cq-dl.done .cq-dl-wedge:not(.hit) { opacity: .5; }
+.cq-wheel-name { margin: -6px 0 0; min-height: 1.2em; font: 400 26px/1.2 Georgia, "Times New Roman", serif; letter-spacing: .22em; text-transform: uppercase; color: #e9e2ff; text-shadow: 0 0 22px #7a5cff77; }
+.cq-wheel-name:not(:empty) { animation: cq-name-in .9s .3s ease-out both; }
+@keyframes cq-name-in { from { opacity: 0; letter-spacing: .45em; } }
+html[data-motion="reduced"] :is(.cq-dl-needle.drag, .cq-dl.done .cq-dl-wave, .cq-wheel-name) { animation: none; }
+html[data-motion="reduced"] .cq-dl.done .cq-dl-flare { animation: none; opacity: .9; }
+/* The wheel arrives in steps: the screen darkens, light gathers, the dial rises and turns into place, a glint runs round its rim, then the button comes in */
+.backdrop.cq-reveal:has(> .cq-wheel-stop) { animation-duration: .4s; }
+.cq-wheel-stop .cq-dl { animation: cq-wheel-in .9s .4s cubic-bezier(.25,.6,.3,1) both; }
+@keyframes cq-wheel-in { from { opacity: 0; transform: translateY(18px) scale(.94) rotate(-24deg); filter: blur(3px); } }
+.cq-wheel-stop .cq-dl-glow { animation: cq-glow-in 1.15s .15s ease-out both, cq-breathe 5s 1.3s ease-in-out infinite; }
+@keyframes cq-glow-in { from { opacity: 0; transform: scale(.6); } }
+.cq-wheel-stop .cq-dl::after { content: ''; position: absolute; inset: -26px; border-radius: 50%; pointer-events: none; opacity: 0;
+  background: conic-gradient(transparent 0deg, #fff6d8cc 8deg, transparent 22deg); mask: radial-gradient(circle, transparent calc(50% - 13px), #000 calc(50% - 12px));
+  animation: cq-glint .8s 1.3s ease-in-out; }
+@keyframes cq-glint { from { opacity: 0; transform: rotate(-60deg); } 20% { opacity: .5; } to { opacity: 0; transform: rotate(300deg); } }
+.cq-wheel-stop > :is(.cq-wheel-first, .cq-reveal-foot) { animation: cq-rise-in .35s 1.4s ease-out both; }
+@keyframes cq-rise-in { from { opacity: 0; transform: translateY(8px); } }
+html[data-motion="reduced"] .cq-wheel-stop :is(.cq-dl, .cq-dl-glow, .cq-wheel-first, .cq-reveal-foot) { animation: none; }
+html[data-motion="reduced"] .cq-wheel-stop .cq-dl::after { display: none; }
+
+/* A booster pack, shown over the slots its cards will fill */
+.cq-pack-stop { width: min(1080px, 100%); display: grid; justify-items: center; gap: 14px; }
+.cq-pack-stop h3 { margin: 0; font: 700 20px/1.2 Georgia, "Times New Roman", serif; letter-spacing: .04em; }
+.cq-pack-host { width: 100%; }
+.cq-dup-line { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.cq-dup-line img { width: 18px; height: 18px; }
+.cq-dup-line b { color: var(--gold); font-size: 15px; }
+.cq-bp-stage { position: relative; display: grid; place-items: center; min-height: 440px; }
+.cq-bp-stage > .cq-rv-grid { width: 100%; align-self: center; }
+.cq-bp-cell { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 30px; pointer-events: none; }
+.cq-pk { position: relative; width: 196px; height: 312px; padding: 0; border: 0; border-radius: 0; background: none; cursor: pointer; pointer-events: auto; animation: cq-pk-float 3.6s ease-in-out infinite; }
+@keyframes cq-pk-float { 50% { transform: translateY(-9px) rotate(-1deg); } }
+/* The same glow a hand card gets when it can be cast from another zone. Here it follows the pack's own outline. */
+.cq-pk-lit { position: absolute; inset: 0; transition: filter .35s ease;
+  filter: drop-shadow(0 0 .8px var(--gold)) drop-shadow(0 0 .8px var(--gold)) drop-shadow(0 0 1.2px var(--gold)); }
+.cq-pk.open .cq-pk-lit { filter: none; }
+.cq-pk-glow { position: absolute; inset: 0; background: var(--gold); pointer-events: none; mix-blend-mode: plus-lighter; }
+.cq-pk-glow.near { transform: scale(1.045, 1.028); filter: url(#zone-warp-a) blur(3.5px); opacity: .6; }
+.cq-pk-glow.far { transform: scale(1.12, 1.075); filter: url(#zone-warp-b) blur(11px); opacity: .3; }
+.cq-pk-speck { position: absolute; bottom: 20%; width: 4px; height: 4px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 7px 1px var(--gold); opacity: 0; animation: cq-pk-rise 2.6s linear infinite; pointer-events: none; }
+@keyframes cq-pk-rise { 0% { opacity: 0; transform: translateY(20px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-150px); } }
+/* The pack is a foil pouch, shaded to look padded, and crimped shut at both ends */
+.cq-pk-whole { position: absolute; inset: 0; }
+.cq-pk-top, .cq-pk-body { position: absolute; left: 0; right: 0; }
+.cq-pk-top { top: 0; height: 9%; transform-origin: 100% 50%; }
+.cq-pk-body { top: 9%; bottom: 0; overflow: hidden; }
+.cq-pk-slice { position: absolute; top: 0; height: 100%; overflow: hidden; will-change: transform; }
+.cq-pk-slice-in { position: absolute; top: 0; height: 100%; }
+.cq-pk-crimp { position: absolute; left: 0; right: 0; height: 100%;
+  background: repeating-linear-gradient(90deg, #ffffff30 0 1px, #00000030 1px 3px), linear-gradient(180deg, #8b98b4, #56617c 55%, #7c89a6); }
+.cq-pk-body .cq-pk-crimp { top: auto; bottom: 0; height: 9.9%; }
+.cq-pk-art { position: absolute; inset: 0 0 9.9%; background: #111 center / cover; display: grid; place-items: center; color: #b79cff; }
+.cq-pk-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, #0b0e1400 30%, #0b0e14d9 78%, #0b0e14 100%); }
+.cq-pk-art svg { width: 58%; margin-bottom: 22%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.cq-pk-name { position: absolute; left: 4px; right: 4px; bottom: 24%; text-align: center; font: 700 20px/1.05 Georgia, "Times New Roman", serif; letter-spacing: .12em; text-transform: uppercase; color: var(--gold-hi); text-shadow: 0 2px 6px #000; }
+.cq-pk-sub { position: absolute; left: 0; right: 0; bottom: 17%; text-align: center; font: 700 9.5px/1 system-ui, sans-serif; letter-spacing: .28em; text-transform: uppercase; color: #cfd6e2; }
+.cq-pk-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, #000000b3 0, #00000000 14%, #ffffff24 40%, #00000000 58%, #00000099 100%); }
+.cq-pk-sheen { position: absolute; inset: 0; background: linear-gradient(105deg, transparent 40%, #ffffff3d 50%, transparent 60%); background-size: 280% 100%; animation: cq-pk-sheen 3.2s linear infinite; mix-blend-mode: screen; pointer-events: none; }
+@keyframes cq-pk-sheen { from { background-position: 140% 0; } to { background-position: -140% 0; } }
+/* One chaos pack is used for every chaos-battle booster. It has a darker foil, and the chaos mark in place of the plane's art. */
+.cq-pk.chaos .cq-pk-art { background: radial-gradient(circle at 50% 38%, #3a2a6e 0, #171033 46%, #07060f 100%); }
+.cq-pk.chaos .cq-pk-crimp { background: repeating-linear-gradient(90deg, #ffffff22 0 1px, #00000040 1px 3px), linear-gradient(180deg, #4a4470, #25223f 55%, #3d3861); }
+/* The tear has a point of light at its front. Light comes from the opening as far as the tear has gone. Flecks of foil fly off. */
+.cq-pk-zip { position: absolute; left: 0; top: 9%; width: 12px; height: 12px; margin: -6px 0 0 -6px; z-index: 6; border-radius: 50%; pointer-events: none; background: #fff; box-shadow: 0 0 16px 7px #ffe2a0; opacity: 0; }
+.cq-pk-mouth { position: absolute; left: 0; right: 0; top: 9%; height: 6px; border-radius: 50%; background: #fff3d2; box-shadow: 0 0 34px 18px #ffdf9ccc; opacity: 0; pointer-events: none; }
+.cq-pk-fleck { position: absolute; width: 6px; height: 3px; margin: -1px 0 0 -3px; background: linear-gradient(90deg, #fff, #f0c05a); opacity: 0; pointer-events: none; z-index: 7; }
+.cq-pk-hint { margin: 0; font: 600 12.5px/1 system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--gold-hi); animation: cq-breathe 2s ease-in-out infinite; }
+
+/* The cards are shown eight to a row, whatever count the pack held. A short last row is centred. */
+.cq-rv-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px 12px; }
+.cq-rv-slot { position: relative; flex: 0 0 calc((100% - 7 * 12px) / 8); aspect-ratio: 63 / 88; perspective: 800px; }
+.cq-rv-card, .cq-rv-y, .cq-rv-in { position: absolute; inset: 0; }
+.cq-rv-card { opacity: 0; will-change: transform; }
+.cq-rv-slot.shown .cq-rv-card { opacity: 1; }
+.cq-rv-y { will-change: transform; }
+.cq-rv-in { transform-style: preserve-3d; transform: rotateY(180deg); }
+.cq-rv-card.up .cq-rv-in { transform: rotateY(0deg); }
+.cq-rv-face { position: absolute; inset: 0; border-radius: 6px; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 5px 14px #000b; overflow: hidden; background: #141a26; }
+.cq-rv-face img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.cq-rv-back, .cq-ae-back { transform: rotateY(180deg); border: 1px solid #574319; background: radial-gradient(circle, #f0c05a55 0 9%, transparent 10%), repeating-linear-gradient(135deg, #2d2513 0 8px, #251e0f 8px 16px); }
+/* A rare or mythic gets the moving light of a card playable from another zone (hand.css), in its rarity's colour, so it does not read as a selection */
+.cq-rv-card.rare { --rise: var(--gold); }
+.cq-rv-card.mythic { --rise: #ff8a3d; }
+.cq-rv-card .rise { display: none; }
+.cq-rv-card.rare .rise { display: block; position: absolute; z-index: -1; pointer-events: none; mix-blend-mode: plus-lighter; opacity: 0; transition: opacity .4s; }
+.cq-rv-slot:nth-child(3n+2) .cq-rv-card.rare .rise { filter: url(#rise-b); }
+.cq-rv-slot:nth-child(3n) .cq-rv-card.rare .rise { filter: url(#rise-c); }
+.cq-rv-card.rare.up .rise { opacity: 1; }
+.cq-rv-card.dup.up img { filter: grayscale(.6) brightness(.4); }
+.cq-rv-plus { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 999px;
+  background: #0b0e14f2; border: 1px solid var(--gold); color: var(--gold); font: 700 13px/1 system-ui, sans-serif; white-space: nowrap; z-index: 2; }
+.cq-rv-plus img { width: 13px; height: 13px; filter: none !important; }
+.cq-rv-card.dup.up .cq-rv-plus { display: flex; }
+/* The shards from a duplicate card, moving to the bar */
+.cq-mote { position: fixed; left: 0; top: 0; width: 22px; height: 22px; margin: -11px; z-index: 80; pointer-events: none; filter: drop-shadow(0 0 6px #7fe0ff); }
+.cq-mote[data-icon="ICO_QUEST_COINSTACK"] { filter: drop-shadow(0 0 6px var(--accent-2)); }
+
+html[data-motion="reduced"] :is(.cq-dl-glow, .cq-pk, .cq-pk-sheen, .cq-pk-speck, .cq-pk-hint) { animation: none; }
+html[data-motion="reduced"] .cq-pk-glow { filter: blur(6px); }
+
+@media (max-width: 900px) {
+  .cq-map { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .cq-side { border-left: 0; border-top: 1px solid var(--line); }
+}
+
+/* Commanders and planeswalkers use the same card style. The selected one is shown in detail next to the list. */
+.cq-party { position: relative; display: grid; grid-template-columns: minmax(0, 2fr) minmax(372px, 1fr); min-height: 0; }
+.cq-party-list { padding: 18px 24px 80px; overflow-y: auto; display: grid; gap: 22px; align-content: start; }
+.cq-party-list h4 { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; gap: 10px; align-items: baseline; }
+.cq-party-list h4 span { letter-spacing: 0; text-transform: none; font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.cq-party-list .find { width: 260px; }
+.cq-cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.cq-cmd { display: grid; grid-template-columns: 96px minmax(0, 1fr); padding: 0; overflow: hidden; border-radius: 11px; background: var(--surface); text-align: left; position: relative; }
+.cq-cmd .a { background: #111 center 20% / cover; min-height: 104px; }
+.cq-cmd .t { padding: 10px 12px; display: grid; gap: 4px; align-content: center; min-width: 0; }
+.cq-cmd .t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cq-cmd .t .l { font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cq-cmd .t .l .cq-warn { font-size: 11.5px; }
+/* Gold marks the one in use. White marks the one shown in the panel */
+.cq-cmd.in-use { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.cq-cmd[aria-pressed="true"] { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.cq-cmd.in-use[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--accent-2), 0 0 0 3px var(--text); }
+.cq-cmd .tag { position: absolute; right: 8px; bottom: 8px; background: #0b0e14e6; text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; }
+.cq-cmd-detail { padding: 20px; display: grid; gap: 12px; align-content: start; overflow-y: auto; }
+.cq-cmd-top { display: flex; gap: 18px; align-items: start; }
+.cq-cmd-about { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.cq-cmd-detail img.cq-card { width: 168px; flex: none; aspect-ratio: 63 / 88; border-radius: 9px; box-shadow: 0 12px 30px #000b; }
+.cq-cmd-detail h3 { margin: 0; font-size: 18px; }
+.cq-cmd-detail .dk-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0; overflow: visible; }
+.cq-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.cq-coll { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.cq-coll-bar { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.cq-coll-bar .find { width: 260px; }
+.cq-coll-bar select { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; font: inherit; }
+.cq-coll-bar .colours { margin: 0; align-self: center; }
+.cq-coll-note { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+.cq-coll-grid { flex: 1; overflow-y: auto; padding: 18px 24px 130px; display: grid; grid-template-columns: repeat(auto-fill, 148px); gap: 16px 14px; justify-content: center; align-content: start; }
+.cq-cc { position: relative; padding: 0; border: 0; background: none; border-radius: 8px; display: flex; flex-direction: column; gap: 5px; text-align: left; color: var(--text); }
+.cq-cc[aria-disabled="true"] { cursor: help; }
+/* The name is shown until the picture loads, and when there is no picture */
+.cq-cc .cq-pic { position: relative; display: block; flex: none; width: 100%; aspect-ratio: 63 / 88; border-radius: 7px; background: var(--surface-2); box-shadow: 0 4px 12px #0009; overflow: hidden; }
+.cq-cc .cq-pic .nm { position: absolute; left: 9px; right: 9px; top: 9px; font-size: 12px; color: var(--muted); }
+.cq-cc .cq-pic img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.cq-cc .val { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 2px; font-variant-numeric: tabular-nums; }
+.cq-cc.sel .cq-pic { box-shadow: 0 0 0 3px var(--accent-2), 0 0 18px var(--accent-glow); }
+.cq-cc.sel::after { content: '\2713'; position: absolute; right: 6px; top: 6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-2); color: #1a1405; font-weight: 800; font-size: 13px; box-shadow: 0 2px 6px #000c; }
+.cq-cc.used .cq-pic img { filter: brightness(.6); }
+/* A list that counts copies shows the card. When the card is picked, the number of copies is shown under it. */
+.cq-cc-slot { position: relative; display: grid; gap: 6px; align-content: start; }
+.cq-stock { position: absolute; right: 6px; top: 6px; padding: 2px 7px; border-radius: 999px; background: #0b0e14e6; border: 1px solid var(--line-bright); font-size: 11px; font-weight: 700; }
+.cq-cc.sel .cq-stock { right: 34px; }
+.cq-cc-note { margin-left: auto; }
+.cq-owned { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.cq-owned i { width: 7px; height: 9px; border-radius: 1.5px; box-shadow: inset 0 0 0 1px var(--line-bright); }
+.cq-owned i.on { background: var(--text); box-shadow: none; }
+.cq-owned span { margin-left: 4px; }
+.cq-step { justify-self: center; display: inline-flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--accent-2); font-size: 12px; }
+.cq-step button { width: 22px; height: 22px; padding: 0; border-radius: 50%; }
+.cq-cc .inuse { position: absolute; left: 6px; right: 6px; bottom: 30px; font-size: 10.5px; padding: 3px 6px; border-radius: 5px; background: #0b0e14e6; border: 1px solid var(--line-bright); text-align: center; }
+.cq-shard { width: 14px; height: 14px; vertical-align: -2px; margin: 0 3px; }
+.cq-sel-bar { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px; border-radius: 12px; background: var(--surface-3); border: 1px solid var(--accent-2); box-shadow: 0 16px 44px #000d; font-size: 13.5px; }
+.cq-sel-bar .primary { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.cq-sel-bar .cq-shard { width: 16px; height: 16px; margin-left: 8px; }
+.cq-exile-total { margin: 0; font-size: 14px; }
+.cq-exile-total .cq-shard { width: 18px; height: 18px; vertical-align: -3px; }
+.cq-cards-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; max-height: 46vh; overflow-y: auto; }
+.cq-cards-list li { display: flex; gap: 10px; padding: 5px 10px; border-radius: 6px; background: var(--surface-2); }
+.cq-cards-list li span { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.cq-save { grid-template-rows: auto auto 1fr auto; }
+.cq-save.current { border-color: color-mix(in srgb, var(--accent-2) 60%, #000); }
+.cq-save-art { position: relative; height: 92px; border-radius: 11px 11px 0 0; background: #111 center 30% / cover; }
+.cq-save-art::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg, transparent 35%, var(--surface) 100%); }
+.cq-medal { position: absolute; right: 14px; top: 18px; z-index: 1; width: 46px; height: 46px; border-radius: 50%; object-fit: cover; object-position: 50% 18%; border: 2px solid var(--accent-2); box-shadow: 0 0 0 3px #0b0e14, 0 6px 14px #000a; background: var(--surface-2); }
+.cq-save .ev-top { padding-top: 6px; }
+.cq-save .ev-line .sp { flex: 1; }
+.cq-save .pct { font-variant-numeric: tabular-nums; color: var(--text); }
+.cq-pbar { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.cq-pbar i { display: block; height: 100%; min-width: 4px; border-radius: 3px; background: var(--accent-2); }
+.cq-save .ev-menu button.plain { color: var(--text); }
+
+/* Starting a conquest. Planes are tiles, and commanders and planeswalkers are rows. The ticket shows a picture. */
+.cq-plane-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: max-content; gap: 8px; max-height: 372px; overflow-y: auto; padding: 2px; }
+.cq-plane { display: grid; gap: 2px; padding: 0 0 9px; overflow: hidden; border-radius: 9px; background: var(--bg); text-align: left; }
+.cq-plane .a { height: 70px; margin-bottom: 6px; background: #111 center 35% / cover; }
+.cq-plane b { padding: 0 10px; font-size: 13.5px; }
+.cq-plane span { padding: 0 10px; font-size: 11.5px; color: var(--muted); }
+.cq-plane:hover, .cq-plane:focus-visible { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.cq-plane:hover b, .cq-plane:focus-visible b { color: var(--accent-2); }
+.cq-new { position: relative; }
+/* Random is a question mark on a faint crosshatch until it rolls. A rolled face's art covers the hatch */
+.cq-plane.random .a, .cq-pick-row.random > i { display: grid; place-items: center; font: normal 700 26px/1 Georgia, "Times New Roman", serif; color: var(--text);
+  text-shadow: 0 1px 6px #000; background-color: #111620;
+  background-image: repeating-linear-gradient(45deg, #ffffff10 0 1px, transparent 1px 7px), repeating-linear-gradient(-45deg, #ffffff10 0 1px, transparent 1px 7px); }
+/* Random rolls through the choices in its own box. Each face fades in over the one before */
+.cq-plane.random .a, .cq-pick-row.random > i { position: relative; overflow: hidden; }
+.cq-roll { position: absolute; inset: 0; background-position: inherit; background-size: cover; animation: cq-roll .12s ease-out both; }
+@keyframes cq-roll { from { opacity: 0; } }
+.cq-plane-desc { margin: 10px 0 0; min-height: 3.1em; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.cq-pick { display: grid; gap: 8px; }
+.cq-pick input { background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; color: var(--text); font: inherit; }
+.cq-pick-list { display: grid; grid-auto-rows: max-content; gap: 4px; max-height: 410px; overflow-y: auto; padding: 2px; }
+.cq-pick-row { display: grid; grid-template-columns: 40px minmax(0, 1.3fr) 92px minmax(0, 1fr); align-items: center; gap: 12px; padding: 4px 12px 4px 4px; border-radius: 8px; background: var(--bg); text-align: left; }
+.cq-pick-row > i { width: 40px; height: 40px; border-radius: 5px; background: #111 center 20% / cover; }
+.cq-pick-row b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cq-pick-row .r { font-size: 12px; color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cq-pick-row:hover, .cq-pick-row:focus-visible { border-color: var(--accent-2); background: var(--accent-soft); }
+.cq-pick-row:hover b { color: var(--accent-2); }
+.cq-ticket-art { margin: 0 18px 10px; height: 120px; border-radius: 9px; border: 1px solid var(--line); background: #111 center 35% / cover; }
+.cq-ticket-cards { margin: 0 18px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cq-ticket-cards .cq-pic { position: relative; aspect-ratio: 63 / 88; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+.cq-ticket-cards .cq-pic .nm { position: absolute; left: 8px; right: 8px; top: 8px; font-size: 11.5px; color: var(--muted); }
+.cq-ticket-cards .cq-pic img { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.cq-purse > button:not(.icon-button) { font-size: 12.5px; padding: 5px 12px; }
+.cq-sep { opacity: .5; margin: 0 8px; }
+
+.cq-aether { position: relative; display: grid; grid-template-columns: 372px minmax(0, 1fr); min-height: 0; }
+.cq-ae-filters { border-right: 1px solid var(--line); background: var(--surface); padding: 20px 20px 80px; display: grid; gap: 20px; align-content: start; overflow-y: auto; }
+.cq-ae-filters h4 { margin: 0 0 7px; display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.cq-ae-filters h4 span { display: inline-flex; align-items: center; gap: 5px; letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--faint); }
+.cq-ae-filters .colours { margin: 0; }
+.cq-opts { display: grid; gap: 7px; }
+.cq-opts.two { grid-template-columns: 1fr 1fr; }
+.cq-opt { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: var(--bg); text-align: left; font-size: 13px; line-height: 1.35; }
+.cq-opt b { flex: 1; font-weight: 500; }
+.cq-opt .r { display: inline-flex; align-items: center; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cq-opt[aria-checked="true"] { border-color: var(--accent-2); background: var(--accent-soft); }
+.cq-opt[aria-checked="true"] b { color: var(--accent-2); font-weight: 700; }
+.cq-ae-stage { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px 24px 150px; overflow-y: auto; background: radial-gradient(70% 60% at 50% 45%, #1a1030 0%, #080b11 100%); }
+.cq-ae-core, .cq-ae-card { display: grid; justify-items: center; gap: 16px; }
+.cq-ae-orb { display: block; width: 230px; height: 230px; filter: drop-shadow(0 0 40px #8040ff55); }
+/* The orb's glow runs past its region of the skin's sprite sheet, which cuts it off in straight lines. A round fade hides them. The glow around it is on the wrapper, because a mask would also cut that */
+.cq-ae-orb img { display: block; width: 100%; height: 100%; mask-image: radial-gradient(closest-side, #000 93%, transparent); }
+.cq-ae-pull { display: inline-flex; align-items: center; padding: 13px 28px; font-size: 17px; font-variant-numeric: tabular-nums; }
+.cq-ae-pull .cq-shard { margin-right: 8px; }
+.cq-ae-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cq-ae-face img { display: block; width: 250px; aspect-ratio: 63 / 88; border-radius: 12px; background: var(--surface-2); box-shadow: 0 16px 44px #000c; }
+.cq-ae-card .what { display: flex; align-items: center; gap: 10px; font-size: 16px; }
+/* The orb takes the card's height, so the Pull button stays where it is when a card replaces the orb */
+.cq-ae-core .cq-ae-orb { margin: 59px 10px 60px; }
+.cq-ae-core .cq-chips, .cq-ae-card .what { min-height: 26px; }
+/* A pulled card grows out of the orb face down, then turns face up as a pack's cards do. A rare or mythic then gets a pack rare's rising light */
+.cq-ae-box { position: relative; isolation: isolate; --radius: 12px; }
+.cq-ae-box.rare { --rise: #f0c05a; }
+.cq-ae-box.mythic { --rise: #ff8a3d; }
+.cq-ae-box .rise { display: none; }
+.cq-ae-box.rare .rise { display: block; position: absolute; z-index: -1; pointer-events: none; mix-blend-mode: plus-lighter; animation: cq-ae-show .4s .8s both; }
+.cq-ae-ghost { position: absolute; opacity: 0; pointer-events: none; }
+.cq-ae-ghost:not(.cq-ae-orb) { inset: 0; width: 100%; height: 100%; border-radius: 12px; animation: cq-ae-leave .22s cubic-bezier(.4,0,.2,1); }
+.cq-ae-ghost.cq-ae-orb { left: 10px; top: 59px; animation: cq-ae-orb-out .32s cubic-bezier(.4,0,.2,1); }
+@keyframes cq-ae-leave { from { opacity: 1; } to { opacity: 0; transform: translateY(12px) scale(.94); } }
+@keyframes cq-ae-orb-out { from { opacity: 1; } to { opacity: 0; transform: scale(.8); } }
+.cq-ae-face { position: relative; display: block; padding: 0; border: 0; background: none; border-radius: 12px; animation: cq-ae-grow .82s .08s cubic-bezier(.4,0,.2,1) both; }
+/* The turn is on its own element, because the fade-in on the button would flatten it and show the face through the back */
+.cq-ae-turn { display: block; transform-style: preserve-3d; animation: inherit; animation-name: cq-ae-turn; }
+.cq-ae-box.from-orb .cq-ae-face { animation-delay: 0s; }
+.cq-ae-face img, .cq-ae-back { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.cq-ae-back { position: absolute; inset: 0; border-radius: 12px; box-shadow: 0 16px 44px #000c; }
+.cq-ae-card .what { animation: cq-ae-show .24s .86s both; }
+@keyframes cq-ae-grow { 0% { opacity: 0; transform: scale(.4); } 45% { opacity: 1; transform: none; } }
+@keyframes cq-ae-turn { 0%, 45% { transform: perspective(1000px) rotateY(180deg); } 100% { transform: perspective(1000px) rotateY(0deg); } }
+@keyframes cq-ae-show { from { opacity: 0; } }
+html[data-motion="reduced"] .cq-ae-card * { animation: none; }
+.cq-ae-card .what .new-card { position: static; }
+.cq-ae-recent { position: absolute; left: 24px; bottom: 66px; display: flex; gap: 10px; }
+.cq-ae-recent img { display: block; width: 52px; aspect-ratio: 63 / 88; border-radius: 4px; background: var(--surface-2); }
+
+.cq-planes { display: grid; grid-template-columns: minmax(0, 1fr) 372px; min-height: 0; }
+.cq-planes-list { padding: 18px 24px 80px; overflow-y: auto; display: grid; gap: 12px; align-content: start; }
+.cq-planes-list h4 { margin: 6px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.cq-planes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); grid-auto-rows: max-content; gap: 12px; }
+.cq-plane-card { position: relative; display: grid; padding: 0; overflow: hidden; border-radius: 11px; background: var(--surface); text-align: left; }
+.cq-plane-card .a { height: 104px; background: #111 center 35% / cover; }
+.cq-plane-card.locked .a { filter: grayscale(1) brightness(.6); }
+.cq-plane-card .t { padding: 10px 12px 12px; display: grid; gap: 6px; }
+.cq-plane-card .t b { font-size: 14.5px; }
+.cq-plane-card .l { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cq-plane-card .l .sp { flex: 1; }
+.cq-plane-card .tag { position: absolute; left: 8px; top: 8px; background: #0b0e14e6; text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; }
+.cq-plane-card .lock { position: absolute; right: 8px; top: 8px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #0b0e14cc; border: 1px solid var(--line-bright); }
+.cq-plane-card .lock svg { width: 14px; height: 14px; fill: none; stroke: var(--text); stroke-width: 1.3; }
+.cq-plane-card[aria-pressed="true"] { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
+.cq-plane-art { position: relative; height: 190px; flex: none; background: #111 center 35% / cover; display: flex; align-items: flex-end; padding: 0 20px 12px; }
+.cq-plane-art::before { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 35%, var(--surface) 100%); }
+.cq-plane-art h3 { position: relative; margin: 0; font: 700 26px/1.1 Georgia, "Times New Roman", serif; text-shadow: 0 2px 8px #000; }
+
+.cq-stats { overflow-y: auto; padding: 24px max(24px, calc((100% - 1180px) / 2)) 90px; display: grid; gap: 14px; align-content: start; }
+.cq-stats-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.cq-stats-head h2 { margin: 4px 0 0; font-size: 22px; }
+.cq-stats-head .seg { flex-wrap: wrap; }
+.cq-stats-head .seg button { padding: 3px 10px; font-size: 12px; }
+.cq-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.cq-figure { padding: 14px 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); display: grid; gap: 6px; }
+.cq-figure p { margin: 0; font-variant-numeric: tabular-nums; }
+.cq-figure p b { font-size: 26px; }
+.cq-figure p span { font-size: 12.5px; color: var(--muted); }
+.cq-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; align-items: start; }
+.cq-tables table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: var(--surface); font-size: 13px; }
+.cq-tables th { padding: 9px 10px; text-align: right; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
+.cq-tables td { padding: 8px 10px; text-align: right; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.cq-tables th:first-child, .cq-tables td:first-child { text-align: left; }
+@media (max-width: 900px) { .cq-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.dialog.cq-prefs { padding: 0; width: min(92vw, 760px); gap: 0; }
+.cq-prefs header, .cq-prefs footer { display: flex; align-items: center; gap: 10px; padding: 14px 20px; }
+.cq-prefs header { justify-content: space-between; border-bottom: 1px solid var(--line); }
+.cq-prefs footer { border-top: 1px solid var(--line); font-size: 12.5px; }
+.cq-prefs footer span { flex: 1; }
+.cq-prefs-body { padding: 16px 20px; columns: 2; column-gap: 28px; }
+.cq-prefs-body section { break-inside: avoid; display: grid; gap: 6px; margin-bottom: 14px; }
+.cq-prefs-body h4 { margin: 0 0 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.cq-pref { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.cq-pref input { width: 72px; padding: 5px 8px; text-align: right; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; font-variant-numeric: tabular-nums; }
+.cq-pref.bad input { border-color: var(--select); }
+/* A group whose values form a table spans both columns of the dialog */
+.dialog.cq-prefs:has(.wide) { width: min(94vw, 900px); }
+.cq-prefs-body section.wide { column-span: all; }
+.cq-pref-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.cq-pref-table th { text-align: left; font-weight: 400; padding: 4px 8px 4px 0; }
+.cq-pref-table thead th { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.cq-pref-table td { text-align: center; padding: 3px 4px; border-top: 1px solid var(--line); }
+.cq-pref-table tbody th { border-top: 1px solid var(--line); }
+.cq-pref-table input { width: 72px; padding: 5px 8px; text-align: right; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; font-variant-numeric: tabular-nums; }
+.cq-pref-table td.bad input { border-color: var(--select); }
+
+/* Planeswalking (planeswalk.ts): the page blurs and darkens, the rift is drawn on the canvas, and the plane's name and the events left are set over it.
+   The delays and lengths are the canvas's story times divided by its pace (0.75) */
+#cq-planeswalk { position: fixed; inset: 0; z-index: 62; cursor: pointer; background: radial-gradient(ellipse at 50% 44%, #07060fe0, #020306f7 72%);
+  backdrop-filter: blur(8px); animation: cq-pw-dim 5.73s .2s linear both; }
+@keyframes cq-pw-dim { from { opacity: 0; } 10%, 74% { opacity: 1; } to { opacity: 0; } }
+#cq-planeswalk.closing { animation: cq-pw-out .3s ease-in forwards; }
+@keyframes cq-pw-out { to { opacity: 0; } }
+#cq-planeswalk canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cq-pw-title { position: absolute; left: 16px; right: 16px; top: 10.2vh; display: grid; justify-items: center; gap: 12px; text-align: center;
+  animation: cq-pw-title 3.07s 1.67s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes cq-pw-title { from { opacity: 0; transform: translateY(8px); } 28% { opacity: 1; transform: none; } 82% { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-14px); } }
+.cq-pw-kicker { font: 600 12px/1 system-ui, sans-serif; letter-spacing: .32em; text-transform: uppercase; color: #b9b3cf; }
+.cq-pw-name { font: 400 clamp(34px, 6.7vh, 60px)/1 Georgia, "Times New Roman", serif; letter-spacing: .22em; text-transform: uppercase; color: #f1eee6;
+  text-shadow: 0 0 30px #9a8cff55, 0 2px 10px #000; animation: cq-pw-space 3.07s 1.67s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes cq-pw-space { from { letter-spacing: .5em; } 30%, to { letter-spacing: .22em; } }
+.cq-pw-sub { position: absolute; left: 16px; right: 16px; top: 73.8vh; margin: 0; text-align: center; font: 400 16px/1.4 Georgia, "Times New Roman", serif;
+  letter-spacing: .12em; color: #d8d4e6; text-shadow: 0 2px 8px #000; animation: cq-pw-sub 2.53s 2.13s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes cq-pw-sub { from { opacity: 0; transform: translateY(8px); } 30% { opacity: 1; transform: none; } 80% { opacity: 1; } to { opacity: 0; } }

@@ -1,0 +1,100 @@
+package forge.web;
+
+import com.google.gson.JsonObject;
+import forge.deck.Deck;
+import forge.gamemodes.match.HostedMatch;
+import forge.gamemodes.net.server.RemoteClientGuiGame;
+import forge.gui.GuiBase;
+import forge.web.match.BrowserModel;
+import forge.web.match.LocalGame;
+import forge.web.match.MatchProbe;
+import forge.web.match.WebGuiGame;
+import org.testng.Assert;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+/** Plays a whole game on the web client's real path: loopback host, netplay client, dispatch executor and JSON forwarding. */
+public class LoopbackGameTest {
+    @BeforeClass
+    public void setUp() {
+        WebTestSupport.initModel();
+    }
+
+    private static void onUi(final Runnable r) {
+        GuiBase.getInterface().invokeInEdtAndWait(r);
+    }
+
+    private static void awaitGameStarted(final LocalGame local, final TestBrowser browser) {
+        SessionsTest.awaitTrue(() -> {
+            final HostedMatch match = local.hostedMatch();
+            return match != null && match.getGame() != null && browser.all("state").size() > 1;
+        }, "game did not start");
+    }
+
+    static void assertSameIgnoringZone(final Map<Integer, JsonObject> incremental, final Map<Integer, JsonObject> fresh) {
+        // The client rewrites CardView.Zone from zone collections, and that rewrite is not in the host's packets
+        incremental.values().forEach(o -> o.remove("Zone"));
+        fresh.values().forEach(o -> o.remove("Zone"));
+        final Set<Integer> onlyIncremental = new HashSet<>(incremental.keySet());
+        onlyIncremental.removeAll(fresh.keySet());
+        final Set<Integer> onlyFresh = new HashSet<>(fresh.keySet());
+        onlyFresh.removeAll(incremental.keySet());
+        Assert.assertTrue(onlyIncremental.isEmpty() && onlyFresh.isEmpty(),
+                "keys only in incremental " + onlyIncremental + ", only in fresh " + onlyFresh);
+        for (final Map.Entry<Integer, JsonObject> e : fresh.entrySet()) {
+            Assert.assertEquals(incremental.get(e.getKey()), e.getValue(), "object " + e.getKey());
+        }
+    }
+
+    @Test(timeOut = 360000)
+    public void passiveGameCompletesAndIncrementalMatchesFull() throws Exception {
+        final Deck bears = TestDecks.of("Bears", "Grizzly Bears", 20, "Forest", 20);
+        // The web seat loses by drawing from an empty library a few turns in
+        final Deck islands = TestDecks.of("Islands", "Island", 8);
+        TestMatch.play(islands, bears, gui -> new TestBrowser(gui, true), (local, gui, browser) -> {
+            awaitGameStarted(local, browser);
+
+            // The host UI thread blocks while it waits for a client reply. The client must answer without that thread
+            final RemoteClientGuiGame remote = WebTestSupport.remoteGui(local.hostedMatch());
+            final CompletableFuture<Boolean> probe = new CompletableFuture<>();
+            GuiBase.getInterface().invokeInEdtLater(() -> probe.complete(remote.showConfirmDialog("probe", "probe", "Yes", "No", true)));
+            Assert.assertTrue(probe.get(20, TimeUnit.SECONDS));
+
+            Assert.assertTrue(browser.gameOver.await(300, TimeUnit.SECONDS), "game did not finish");
+            // The score refers to both players by reference, and credits the one game to its winner
+            final JsonObject scored = browser.awaitMatching("gameOver", m -> !m.getAsJsonArray("score").isEmpty(), "the game ended with no score");
+            Assert.assertEquals(scored.getAsJsonArray("score").size(), 2);
+            Assert.assertEquals(scored.getAsJsonArray("score").asList().stream().mapToInt(e -> e.getAsJsonObject().get("won").getAsInt()).sum(), 1);
+            final int root = browser.last("state").get("root").getAsInt();
+            final int turns = MatchProbe.objects(browser.model).get(root).get("Turn").getAsInt();
+            Assert.assertTrue(turns > 2, "the game ended on turn " + turns);
+            final BrowserModel fresh = CompletableFuture.supplyAsync(() -> MatchProbe.freshSnapshot(gui), gui.dispatchExecutor()).get(10, TimeUnit.SECONDS);
+            assertSameIgnoringZone(MatchProbe.objects(browser.model), MatchProbe.objects(fresh));
+            Assert.assertEquals(MatchProbe.skippedProperties(gui), 0, "properties with no JSON form");
+            // The client builds its log from forwarded game events
+            final long turnEntries = browser.all("log").stream()
+                    .flatMap(m -> m.getAsJsonArray("entries").asList().stream())
+                    .filter(e -> "TURN".equals(e.getAsJsonObject().get("type").getAsString())).count();
+            Assert.assertTrue(turnEntries >= turns - 1, turnEntries + " turn log entries for " + turns + " turns");
+            // Land plays name their card, so the log can show it
+            Assert.assertTrue(browser.all("log").stream().flatMap(m -> m.getAsJsonArray("entries").asList().stream())
+                    .anyMatch(e -> "LAND".equals(e.getAsJsonObject().get("type").getAsString()) && e.getAsJsonObject().has("imageKey")),
+                    "no land entry carried its card");
+            Assert.assertTrue(browser.all("sound").stream().anyMatch(m -> m.get("name").getAsString().endsWith("_land")),
+                    "no land made its sound");
+
+            // A second match reuses the running loopback host
+            final WebGuiGame second = new WebGuiGame();
+            final TestBrowser secondBrowser = new TestBrowser(second, true);
+            second.attach(secondBrowser);
+            onUi(() -> local.startMatch("Web Player", islands, "AI", bears, second));
+            awaitGameStarted(local, secondBrowser);
+        });
+    }
+}

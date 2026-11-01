@@ -1,5 +1,6 @@
 package forge.gamemodes.planarconquest;
 
+import java.io.File;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.function.Predicate;
@@ -105,17 +106,25 @@ public class ConquestUtil {
 
             name = QuestUtil.cleanString(name);
 
-            if (name.isEmpty()) {
-                SOptionPane.showMessageDialog(Localizer.getInstance().getMessage("lblPleaseSpecifyConquestName"));
-                continue;
-            }
-            if (FileUtil.doesFileExist(ForgeConstants.CONQUEST_SAVE_DIR + name + ".dat")) {
-                SOptionPane.showMessageDialog(Localizer.getInstance().getMessage("lblConquestNameExistsPleasePickAnotherName"));
+            String problem = nameProblem(name);
+            if (problem != null) {
+                SOptionPane.showMessageDialog(problem);
                 continue;
             }
             break;
         }
         return name;
+    }
+
+    /** Why a cleaned name cannot be a new conquest's, or null if it can. */
+    public static String nameProblem(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return Localizer.getInstance().getMessage("lblPleaseSpecifyConquestName");
+        }
+        if (new File(ForgeConstants.CONQUEST_SAVE_DIR, name.trim().replace(' ', '_')).exists()) {
+            return Localizer.getInstance().getMessage("lblConquestNameExistsPleasePickAnotherName");
+        }
+        return null;
     }
 
     public static CardPool getAvailablePool() {

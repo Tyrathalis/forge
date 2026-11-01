@@ -15,7 +15,6 @@ import forge.assets.ImageCache;
 import forge.card.CardFaceSymbols;
 import forge.card.CardRenderer;
 import forge.card.ColorSet;
-import forge.deck.DeckFormat;
 import forge.deck.FDeckChooser;
 import forge.deck.FDeckViewer;
 import forge.gamemodes.planarconquest.ConquestCommander;
@@ -92,7 +91,7 @@ public class ConquestCommandersScreen extends FScreen {
             return;
         }
 
-        String problem = DeckFormat.PlanarConquest.getDeckConformanceProblem(commander.getDeck());
+        String problem = commander.getDeckProblem();
         if (problem != null) {
             //prevent selecting a commander with an invalid deck
             FOptionPane.showMessageDialog(Forge.getLocalizer().getMessage("lblCantSelectDeckBecause", commander.getName(), problem), Forge.getLocalizer().getMessage("lblInvalidDeck"), FOptionPane.INFORMATION_ICON, result -> canCloseCallback.accept(false));

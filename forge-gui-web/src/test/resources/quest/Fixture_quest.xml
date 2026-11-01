@@ -1,0 +1,88 @@
+<forge.quest.data.QuestData>
+  <versionNumber>13</versionNumber>
+  <name>Fixture quest</name>
+  <mode>Fantasy</mode>
+  <worldId>Main world</worldId>
+  <assets>
+    <cardPool>
+      <card c="Naya Hushblade" s="ARB" i="1" n="1"/>
+      <card c="Train of Thought" s="DDJ" i="1" n="1"/>
+      <card c="Wirewood Channeler" s="PLST" i="1" n="1"/>
+      <card c="Luxa River Shrine" s="AKH" i="1" n="1"/>
+      <card c="Halo Scarab" s="SNC" i="1" n="1"/>
+      <card c="Llanowar Sentinel" s="10E" i="1" n="1"/>
+      <card c="Hymn to Tourach" s="ATH" i="1" n="1"/>
+      <card c="Slip Through Space" s="PLST" i="1" n="1"/>
+      <card c="Outmaneuver" s="USG" i="1" n="1"/>
+      <card c="Broadcast Takeover" s="TMT" i="2" n="1"/>
+      <card c="Starlight" s="7ED" i="1" n="1"/>
+      <card c="Battle Hymn" s="AVR" i="1" n="1"/>
+      <card c="Plaguecrafter" s="GRN" i="1" n="1"/>
+      <card c="Oketra&apos;s Monument" s="AKR" i="1" n="1"/>
+      <card c="Colos Yearling" s="UDS" i="1" n="1"/>
+      <card c="Pressure Point" s="KLD" i="1" n="1"/>
+      <card c="Gossip&apos;s Talent" s="BLB" i="1" n="1"/>
+      <card c="Bloodforged Battle-Axe" s="PIP" i="2" n="1"/>
+      <card c="Judge&apos;s Familiar" s="EA3" i="1" n="1"/>
+      <card c="Needletooth Pack" s="FDN" i="1" n="1"/>
+      <card c="Sleep" s="PLST" i="2" n="1"/>
+      <card c="Giant Inheritance" s="WOC" i="2" n="1"/>
+      <card c="Grim Discovery" s="ZEN" i="1" n="1"/>
+      <card c="Turn to Mist" s="CLU" i="1" n="1"/>
+      <card c="Forest" s="FRA" i="1" n="40"/>
+    </cardPool>
+    <credits>250</credits>
+    <myDecks>
+      <entry>
+        <string>Forest deck</string>
+        <forge.deck.Deck>
+          <name>Forest deck</name>
+          <Main>
+            <card c="Forest" s="FRA" i="1" n="40"/>
+          </Main>
+        </forge.deck.Deck>
+      </entry>
+    </myDecks>
+    <newCardList/>
+    <shopList/>
+    <inventoryItems class="enum-map" enum-type="forge.gamemodes.quest.data.item.QuestItemType"/>
+    <combatPets>
+      <entry>
+        <string>Plant</string>
+        <forge.quest.data.QuestItemCondition>
+          <level>1</level>
+        </forge.quest.data.QuestItemCondition>
+      </entry>
+      <entry>
+        <string>Wolf</string>
+        <forge.quest.data.QuestItemCondition>
+          <level>1</level>
+        </forge.quest.data.QuestItemCondition>
+      </entry>
+    </combatPets>
+    <draftDecks/>
+  </assets>
+  <achievements>
+    <challengesPlayed>0</challengesPlayed>
+    <completedChallenges/>
+    <currentChallenges/>
+    <drafts/>
+    <currentDraft>-1</currentDraft>
+    <draftsToGenerate>1</draftsToGenerate>
+    <draftTokens>0</draftTokens>
+    <win>0</win>
+    <winstreakBest>0</winstreakBest>
+    <winstreakCurrent>0</winstreakCurrent>
+    <lost>0</lost>
+    <firstPlaceDraftFinishes>0</firstPlaceDraftFinishes>
+    <secondPlaceDraftFinishes>0</secondPlaceDraftFinishes>
+    <thirdPlaceDraftFinishes>0</thirdPlaceDraftFinishes>
+    <fourthPlaceDraftFinishes>0</fourthPlaceDraftFinishes>
+    <difficulty>0</difficulty>
+  </achievements>
+  <petSlots/>
+  <matchLength>3</matchLength>
+  <Ratings/>
+  <currentDeck>Forest deck</currentDeck>
+  <deckConstructionRules>Default</deckConstructionRules>
+</forge.quest.data.QuestData>
