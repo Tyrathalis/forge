@@ -138,7 +138,8 @@ public final class WebMain implements IHasForgeLog {
         }
         try {
             ui.browseToUrl(url);
-        } catch (final IOException | URISyntaxException e) {
+        } catch (final IOException | URISyntaxException | RuntimeException e) {
+            // A browser that will not open must not take the server down with it
             netLog.warn(e, "Open {} in a browser", url);
         }
     }

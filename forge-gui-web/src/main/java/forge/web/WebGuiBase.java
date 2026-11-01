@@ -278,9 +278,13 @@ public final class WebGuiBase implements IGuiBase, IHasForgeLog {
     @Override
     public void browseToUrl(final String url) throws IOException, URISyntaxException {
         final Desktop desktop = Desktop.isDesktopSupported() ? Desktop.getDesktop() : null;
-        if (desktop != null) {
+        if (desktop != null && desktop.isSupported(Desktop.Action.BROWSE)) {
             desktop.browse(new URI(url));
+            return;
         }
+        // Many Linux desktops (KDE, Wayland sessions, minimal window managers) give AWT no BROWSE action
+        final String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
+        new ProcessBuilder(os.contains("mac") ? "open" : "xdg-open", url).start();
     }
 
     @Override public HostedMatch hostMatch() {
