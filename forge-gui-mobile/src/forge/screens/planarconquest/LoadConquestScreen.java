@@ -1,11 +1,8 @@
 package forge.screens.planarconquest;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.Align;
@@ -18,8 +15,8 @@ import forge.assets.FSkinFont;
 import forge.assets.FSkinImage;
 import forge.gamemodes.planarconquest.ConquestController;
 import forge.gamemodes.planarconquest.ConquestData;
-import forge.gamemodes.planarconquest.ConquestPreferences;
 import forge.gamemodes.planarconquest.ConquestPreferences.CQPref;
+import forge.gamemodes.planarconquest.ConquestUtil;
 import forge.gamemodes.quest.QuestUtil;
 import forge.gui.FThreads;
 import forge.gui.util.SOptionPane;
@@ -33,7 +30,6 @@ import forge.screens.settings.SettingsScreen;
 import forge.toolbox.FButton;
 import forge.toolbox.FList;
 import forge.toolbox.FTextArea;
-import forge.util.FileUtil;
 import forge.util.ThreadUtil;
 import forge.util.Utils;
 
@@ -71,28 +67,24 @@ public class LoadConquestScreen extends LaunchScreen {
         revalidate();
 
         FThreads.invokeInBackgroundThread(() -> {
-            final File dirConquests = new File(ForgeConstants.CONQUEST_SAVE_DIR);
             final ConquestController qc = FModel.getConquest();
 
-            Map<String, ConquestData> arrConquests = new HashMap<>();
-            if (dirConquests.listFiles() != null) {
-                for (File f : dirConquests.listFiles()) {
-                    if (f.isDirectory()) {
-                        ConquestData data = new ConquestData(f);
-                        arrConquests.put(data.getName(), data);
-                    }
-                }
-            }
-
             // Populate list with available conquest data.
-            lstConquests.setConquests(new ArrayList<>(arrConquests.values()));
+            final List<ConquestData> conquests = ConquestController.listSaves();
+            lstConquests.setConquests(conquests);
 
             // If there are quests available, force select.
-            if (arrConquests.size() > 0) {
+            if (!conquests.isEmpty()) {
                 final String questname = FModel.getConquestPreferences().getPref(CQPref.CURRENT_CONQUEST);
 
                 // Attempt to select previous conquest.
-                ConquestData currentConquest = arrConquests.get(questname);
+                ConquestData currentConquest = null;
+                for (ConquestData data : conquests) {
+                    if (data.getName().equals(questname)) {
+                        currentConquest = data;
+                        break;
+                    }
+                }
                 if (currentConquest != null) {
                     lstConquests.setSelectedConquest(currentConquest);
                 }
@@ -158,10 +150,7 @@ public class LoadConquestScreen extends LaunchScreen {
         ConquestData conquest = lstConquests.getSelectedConquest();
         if (conquest == null) { return; }
 
-        FModel.getConquestPreferences().setPref(CQPref.CURRENT_CONQUEST, conquest.getName());
-        FModel.getConquestPreferences().save();
-
-        FModel.getConquest().setModel(conquest);
+        FModel.getConquest().load(conquest);
         ConquestMenu.launchPlanarConquest(LaunchReason.LoadConquest);
     }
 
@@ -178,33 +167,15 @@ public class LoadConquestScreen extends LaunchScreen {
                 questName = QuestUtil.cleanString(questName);
                 if (questName.equals(oldConquestName)) { return; } //quit if chose same name
 
-                if (questName.isEmpty()) {
-                    SOptionPane.showMessageDialog(Forge.getLocalizer().getMessage("lblPleaseSpecifyConquestName"));
-                    continue;
-                }
-
-                boolean exists = false;
-                for (ConquestData questData : lstConquests) {
-                    if (questData.getName().equalsIgnoreCase(questName)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (exists) {
-                    SOptionPane.showMessageDialog(Forge.getLocalizer().getMessage("lblConquestNameExistsPleasePickAnotherName"));
+                String problem = ConquestUtil.nameProblem(questName);
+                if (problem != null) {
+                    SOptionPane.showMessageDialog(problem);
                     continue;
                 }
                 break;
             }
 
-            //ensure prefs updated if current conquest is renamed
-            ConquestPreferences prefs = FModel.getConquestPreferences();
-            if (conquest.getName().equals(prefs.getPref(CQPref.CURRENT_CONQUEST))) {
-                prefs.setPref(CQPref.CURRENT_CONQUEST, questName);
-                prefs.save();
-            }
-
-            conquest.rename(questName);
+            ConquestController.rename(conquest, questName);
         });
     }
 
@@ -219,7 +190,7 @@ public class LoadConquestScreen extends LaunchScreen {
             }
 
             FThreads.invokeInEdtLater(() -> {
-                FileUtil.deleteDirectory(conquest.getDirectory());
+                ConquestController.delete(conquest);
 
                 lstConquests.removeConquest(conquest);
                 updateEnabledButtons();

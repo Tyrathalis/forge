@@ -4054,7 +4054,11 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
     @Override
     public void setTriggerDecision(final String key, final AutoYieldStore.TriggerDecision decision, final boolean isAbilityScope) {
         yieldController.setTriggerDecision(key, decision, isAbilityScope);
+        answerOpenTrigger(key, decision);
+    }
 
+    /** Answers the optional trigger being asked about now, if the decision was made for it. */
+    private void answerOpenTrigger(final String key, final AutoYieldStore.TriggerDecision decision) {
         if (isMacroActive()) return;
         if (!(inputQueue.getInput() instanceof InputConfirm)) return;
         final SpellAbilityStackInstance top = getGame().getStack().peek();
@@ -4102,6 +4106,12 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
                     || currentInput instanceof InputLockUI) {
                 getGui().updateAutoPassPrompt();
             }
+        }
+        // A remote player's choice takes effect on the open prompt too, as the setters do for a local player
+        if (update instanceof YieldUpdate.TriggerDecision u) {
+            answerOpenTrigger(u.storageKey(), u.decision());
+        } else if (update instanceof YieldUpdate.CardAutoYield) {
+            tryAutoPassNow();
         }
         if (update instanceof YieldUpdate.SeedFromClient
                 || (update instanceof YieldUpdate.SetYieldPref u

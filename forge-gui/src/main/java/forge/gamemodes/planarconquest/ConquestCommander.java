@@ -2,6 +2,7 @@ package forge.gamemodes.planarconquest;
 
 import forge.card.CardRules;
 import forge.deck.Deck;
+import forge.deck.DeckFormat;
 import forge.deck.DeckSection;
 import forge.deck.generation.DeckGenPool;
 import forge.item.InventoryItem;
@@ -105,6 +106,10 @@ public class ConquestCommander implements InventoryItem, IXmlWritable {
             deck.getOrCreate(DeckSection.Commander).add(card);
             FModel.getConquest().getDecks().add(deck);
         }
+    }
+
+    public String getDeckProblem() {
+        return DeckFormat.PlanarConquest.getDeckConformanceProblem(getDeck());
     }
 
     public ConquestRecord getRecord() {

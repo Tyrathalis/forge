@@ -1,0 +1,2 @@
+The playmats in this folder were generated with ChatGPT for Forge.
+They are distributed under the same licence as Forge, the GNU General Public License version 3.

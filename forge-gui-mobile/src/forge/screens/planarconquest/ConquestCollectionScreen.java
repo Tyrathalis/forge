@@ -55,10 +55,7 @@ public class ConquestCollectionScreen extends TabPageScreen<ConquestCollectionSc
 
             FThreads.invokeInBackgroundThread(() -> {
                 if (getSelectedPage() == tabPages.get(0)) {
-                    int value = 0;
-                    for (PaperCard card : cards) {
-                        value += ConquestUtil.getShardValue(card, CQPref.AETHER_BASE_EXILE_VALUE);
-                    }
+                    int value = FModel.getConquest().getModel().getExileValue(cards);
                     if (FModel.getConquest().getModel().exileCards(cards, value)) {
                         FThreads.invokeInEdtLater(() -> {
                             updateShards();
@@ -69,10 +66,7 @@ public class ConquestCollectionScreen extends TabPageScreen<ConquestCollectionSc
                     }
                 }
                 else {
-                    int cost = 0;
-                    for (PaperCard card : cards) {
-                        cost += ConquestUtil.getShardValue(card, CQPref.AETHER_BASE_RETRIEVE_COST);
-                    }
+                    int cost = FModel.getConquest().getModel().getRetrieveCost(cards);
                     if (FModel.getConquest().getModel().retrieveCardsFromExile(cards, cost)) {
                         FThreads.invokeInEdtLater(() -> {
                             updateShards();

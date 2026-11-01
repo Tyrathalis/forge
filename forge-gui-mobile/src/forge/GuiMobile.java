@@ -72,6 +72,11 @@ public class GuiMobile implements IGuiBase {
     }
 
     @Override
+    public String getAppName() {
+        return isRunningOnDesktop() ? "forge-adventure" : "Forge";
+    }
+
+    @Override
     public String getUserAgent() {
         return "Forge/" + getCurrentVersion() + " (gui-mobile)";
     }

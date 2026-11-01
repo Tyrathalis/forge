@@ -27,6 +27,7 @@ import io.netty.channel.ChannelHandlerContext;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.concurrent.FutureTask;
 
 final class GameClientHandler extends GameProtocolHandler<IGuiGame> implements IHasForgeLog {
@@ -60,10 +61,13 @@ final class GameClientHandler extends GameProtocolHandler<IGuiGame> implements I
     @Override
     protected Object[] decodeArgs(final ProtocolMethod protocolMethod, final byte[] encodedArgs) {
         try {
-            // Deltas are applied on the GUI thread in arrival order, so a prompt handled on another thread waits for the ones before it
-            final FutureTask<Void> deltasApplied = new FutureTask<>(() -> {}, null);
-            FThreads.invokeInEdtNowOrLater(deltasApplied);
-            deltasApplied.get();
+            // Deltas are applied on the GUI thread in arrival order, so a prompt handled on another thread waits for the ones before it.
+            // With a dispatch executor, deltas and prompts run in order on that executor, and the GUI thread may be blocked on this reply
+            if (client.getDispatchExecutor() == null) {
+                final FutureTask<Void> deltasApplied = new FutureTask<>(() -> {}, null);
+                FThreads.invokeInEdtNowOrLater(deltasApplied);
+                deltasApplied.get();
+            }
             final Object[] args = TrackableSerializer.decodeArgs(encodedArgs, tracker);
             protocolMethod.checkArgs(args);
             updateTrackers(args);
@@ -86,6 +90,17 @@ final class GameClientHandler extends GameProtocolHandler<IGuiGame> implements I
             return false;
         }
         return super.shouldDispatchToGuiThread(protocolMethod);
+    }
+
+    @Override
+    protected void dispatch(final ProtocolMethod protocolMethod, final Runnable toRun) {
+        final Executor executor = client.getDispatchExecutor();
+        if (executor == null) {
+            super.dispatch(protocolMethod, toRun);
+            return;
+        }
+        // The server blocks the GUI thread while it waits for this client's reply, so a client in the same process must not run there
+        executor.execute(toRun);
     }
 
     @SuppressWarnings("unchecked")

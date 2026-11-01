@@ -179,7 +179,8 @@ public final class ConquestData {
         getCurrentPlaneData().setLocation(currentLocation0);
     }
 
-    private ConquestPlaneData getPlaneData(ConquestPlane plane) {
+    /** What has been done on a plane, or null while it is locked. */
+    public ConquestPlaneData getPlaneData(ConquestPlane plane) {
         return planeDataMap.get(plane.getName());
     }
     public ConquestPlaneData getCurrentPlaneData() {
@@ -213,6 +214,25 @@ public final class ConquestData {
         if (planeData == null) { return; }
 
         setCurrentLocation(planeData.getLocation());
+    }
+
+    public int getPlaneUnlockCost() {
+        ConquestPreferences prefs = FModel.getConquestPreferences();
+        return prefs.getPrefInt(CQPref.PLANESWALK_FIRST_UNLOCK) + prefs.getPrefInt(CQPref.PLANESWALK_UNLOCK_INCREASE) * (getUnlockedPlaneCount() - 1);
+    }
+
+    /** Walks to a place and saves. Returns the path from where the player stood, or null if it cannot be reached. */
+    public List<ConquestLocation> moveTo(ConquestLocation dest) {
+        List<ConquestLocation> path = getPath(dest);
+        if (path == null || dest.equals(currentLocation)) { return path; }
+
+        String secretArea = currentLocation.getEvent().getTemporaryUnlock();
+        if (secretArea != null) {
+            ConquestUtil.setPlaneTemporarilyAccessible(secretArea, false);
+        }
+        setCurrentLocation(dest);
+        saveData();
+        return path;
     }
 
     public ConquestCommander getSelectedCommander() {
@@ -262,33 +282,37 @@ public final class ConquestData {
         return exiledCards;
     }
 
-    public boolean exileCards(Collection<PaperCard> cards, int value) {
-        int count = cards.size();
-        if (count == 0) { return false; }
+    public int getExileValue(Collection<PaperCard> cards) {
+        int value = 0;
+        for (PaperCard card : cards) {
+            value += ConquestUtil.getShardValue(card, CQPref.AETHER_BASE_EXILE_VALUE);
+        }
+        return value;
+    }
 
-        String title = count == 1 ? Localizer.getInstance().getMessage("lblExileCard") : Localizer.getInstance().getMessage("lblExileNCard", String.valueOf(count));
-        String cardStr = (count == 1 ? Localizer.getInstance().getMessage("lblCard") : Localizer.getInstance().getMessage("lblCards"));
+    public int getRetrieveCost(Collection<PaperCard> cards) {
+        int cost = 0;
+        for (PaperCard card : cards) {
+            cost += ConquestUtil.getShardValue(card, CQPref.AETHER_BASE_RETRIEVE_COST);
+        }
+        return cost;
+    }
 
-        List<ConquestCommander> commandersBeingExiled = null;
-
-        StringBuilder message = new StringBuilder(Localizer.getInstance().getMessage("lblExileFollowCardsToReceiveNAE", cardStr, "{AE}", String.valueOf(value)));
+    /** Why these cards cannot be exiled, or null if they can. */
+    public String getExileProblem(Collection<PaperCard> cards) {
+        // A conquest with no commander has nobody to select, and cannot be opened
+        if (!commanders.isEmpty() && commanders.stream().allMatch(commander -> cards.contains(commander.getCard()))) {
+            return Localizer.getInstance().getMessage("lblLastCommanderCannotBeExiled");
+        }
         for (PaperCard card : cards) {
             if (planeswalker == card) {
-                SOptionPane.showMessageDialog(Localizer.getInstance().getMessage("lblCurrentPlaneswalkerCannotBeExiled"), title, SOptionPane.INFORMATION_ICON);
-                return false;
+                return Localizer.getInstance().getMessage("lblCurrentPlaneswalkerCannotBeExiled");
             }
 
             StringBuilder commandersUsingCard = new StringBuilder();
             for (ConquestCommander commander : commanders) {
-                if (commander.getCard() == card) {
-                    if (!commander.getDeck().getMain().isEmpty()) {
-                        SOptionPane.showMessageDialog(Localizer.getInstance().getMessage("lblCannotCommanderWithDefinedDeck"), title, SOptionPane.INFORMATION_ICON);
-                        return false;
-                    }
-                    if (commandersBeingExiled == null) {
-                        commandersBeingExiled = new ArrayList<>();
-                    }
-                    commandersBeingExiled.add(commander); //cache commander to make it easier to remove later
+                if (commander.getCard() == card && !commander.getDeck().getMain().isEmpty()) {
+                    return Localizer.getInstance().getMessage("lblCannotCommanderWithDefinedDeck");
                 }
                 if (commander.getDeck().getMain().contains(card)) {
                     commandersUsingCard.append("\n").append(CardTranslation.getTranslatedName(commander.getDisplayName()));
@@ -296,24 +320,76 @@ public final class ConquestData {
             }
             // Android API StringBuilder isEmpty() is unavailable. https://developer.android.com/reference/java/lang/StringBuilder
             if (commandersUsingCard.length() != 0) {
-                SOptionPane.showMessageDialog(Localizer.getInstance().getMessage("lblCommandersCardCannotBeExiledByCard", CardTranslation.getTranslatedName(card.getDisplayName()), commandersUsingCard), title, SOptionPane.INFORMATION_ICON);
-                return false;
+                return Localizer.getInstance().getMessage("lblCommandersCardCannotBeExiledByCard", CardTranslation.getTranslatedName(card.getDisplayName()), commandersUsingCard);
             }
+        }
+        return null;
+    }
 
+    public void exile(Collection<PaperCard> cards) {
+        exile(cards, getExileValue(cards));
+    }
+
+    private boolean exile(Collection<PaperCard> cards, int value) {
+        if (!exiledCards.addAll(cards)) { return false; }
+
+        // The selection is a place in the list, which removing an earlier commander would shift
+        ConquestCommander selected = getSelectedCommander();
+        commanders.removeIf(commander -> cards.contains(commander.getCard()));
+        selectedCommanderIndex = Math.max(0, commanders.indexOf(selected));
+        rewardAEtherShards(value);
+        saveData();
+        return true;
+    }
+
+    public boolean exileCards(Collection<PaperCard> cards, int value) {
+        int count = cards.size();
+        if (count == 0) { return false; }
+
+        String title = count == 1 ? Localizer.getInstance().getMessage("lblExileCard") : Localizer.getInstance().getMessage("lblExileNCard", String.valueOf(count));
+        String cardStr = (count == 1 ? Localizer.getInstance().getMessage("lblCard") : Localizer.getInstance().getMessage("lblCards"));
+
+        String problem = getExileProblem(cards);
+        if (problem != null) {
+            SOptionPane.showMessageDialog(problem, title, SOptionPane.INFORMATION_ICON);
+            return false;
+        }
+
+        StringBuilder message = new StringBuilder(Localizer.getInstance().getMessage("lblExileFollowCardsToReceiveNAE", cardStr, "{AE}", String.valueOf(value)));
+        for (PaperCard card : cards) {
             message.append("\n").append(CardTranslation.getTranslatedName(card.getDisplayName()));
         }
 
         if (SOptionPane.showConfirmDialog(message.toString(), title, Localizer.getInstance().getMessage("lblOK"), Localizer.getInstance().getMessage("lblCancel"))) {
-            if (exiledCards.addAll(cards)) {
-                if (commandersBeingExiled != null) {
-                    commanders.removeAll(commandersBeingExiled);
-                }
-                rewardAEtherShards(value);
-                saveData();
-                return true;
-            }
+            return exile(cards, value);
         }
         return false;
+    }
+
+    /** Why these cards cannot be brought back from exile, or null if they can. */
+    public String getRetrieveProblem(Collection<PaperCard> cards) {
+        if (aetherShards < getRetrieveCost(cards)) {
+            String cardStr = (cards.size() == 1 ? Localizer.getInstance().getMessage("lblCard") : Localizer.getInstance().getMessage("lblCards"));
+            return Localizer.getInstance().getMessage("lblNotEnoughShardsToRetrieveCards", cardStr);
+        }
+        return null;
+    }
+
+    public void retrieve(Collection<PaperCard> cards) {
+        retrieve(cards, getRetrieveCost(cards));
+    }
+
+    private boolean retrieve(Collection<PaperCard> cards, int cost) {
+        if (!exiledCards.removeAll(cards)) { return false; }
+
+        for (PaperCard card : cards) {
+            if (card.getRules().canBeCommander()) { //add back commander for card if needed
+                commanders.add(new ConquestCommander(card));
+            }
+        }
+        spendAEtherShards(cost);
+        saveData();
+        return true;
     }
 
     public boolean retrieveCardsFromExile(Collection<PaperCard> cards, int cost) {
@@ -332,16 +408,7 @@ public final class ConquestData {
             message.append("\n").append(card.getName());
         }
         if (SOptionPane.showConfirmDialog(message.toString(), title, Localizer.getInstance().getMessage("lblOK"), Localizer.getInstance().getMessage("lblCancel"))) {
-            if (exiledCards.removeAll(cards)) {
-                for (PaperCard card : cards) {
-                    if (card.getRules().canBeCommander()) { //add back commander for card if needed
-                        commanders.add(new ConquestCommander(card));
-                    }
-                }
-                spendAEtherShards(cost);
-                saveData();
-                return true;
-            }
+            return retrieve(cards, cost);
         }
         return false;
     }
@@ -418,7 +485,10 @@ public final class ConquestData {
         return chaosBattleRecord;
     }
 
-    public void updateStatLabels(IVConquestStats view, ConquestPlane plane) {
+    public record Stats(int shards, int emblems, int wins, int losses, int conquered, int events, int unlockedCards, int cards, int commanders, int allCommanders, int planeswalkers, int allPlaneswalkers) {}
+
+    /** The figures of the statistics page for one plane, or for every reachable plane when plane is null. */
+    public Stats getStats(ConquestPlane plane) {
         int wins = 0;
         int losses = 0;
         int conqueredCount = 0;
@@ -493,17 +563,22 @@ public final class ConquestData {
             commanderCount = commanders.size();
         }
 
-        view.getLblAEtherShards().setText(Localizer.getInstance().getMessage("lblAetherShards") + ": " + aetherShards);
-        view.getLblPlaneswalkEmblems().setText(Localizer.getInstance().getMessage("lblPlaneswalkEmblems") + ": " + planeswalkEmblems);
-        view.getLblTotalWins().setText(Localizer.getInstance().getMessage("lblTotalWins") + ": " + wins);
-        view.getLblTotalLosses().setText(Localizer.getInstance().getMessage("lblTotalLosses") + ": " + losses);
-        view.getLblConqueredEvents().setText(Localizer.getInstance().getMessage("lblConqueredEvents") + ": " + formatRatio(conqueredCount, totalEventCount));
-        view.getLblUnlockedCards().setText(Localizer.getInstance().getMessage("lblUnlockedCards") + ": " + formatRatio(unlockedCardCount, totalCardCount));
-        view.getLblCommanders().setText(Localizer.getInstance().getMessage("lblCommanders") + ": " + formatRatio(commanderCount, totalCommanderCount));
-        view.getLblPlaneswalkers().setText(Localizer.getInstance().getMessage("lblPlaneswalkers") + ": " + formatRatio(planeswalkerCount, totalPlaneswalkerCount));
+        return new Stats(aetherShards, planeswalkEmblems, wins, losses, conqueredCount, totalEventCount, unlockedCardCount, totalCardCount, commanderCount, totalCommanderCount, planeswalkerCount, totalPlaneswalkerCount);
     }
 
-    private String formatRatio(int numerator, int denominator) {
+    public void updateStatLabels(IVConquestStats view, ConquestPlane plane) {
+        Stats stats = getStats(plane);
+        view.getLblAEtherShards().setText(Localizer.getInstance().getMessage("lblAetherShards") + ": " + stats.shards());
+        view.getLblPlaneswalkEmblems().setText(Localizer.getInstance().getMessage("lblPlaneswalkEmblems") + ": " + stats.emblems());
+        view.getLblTotalWins().setText(Localizer.getInstance().getMessage("lblTotalWins") + ": " + stats.wins());
+        view.getLblTotalLosses().setText(Localizer.getInstance().getMessage("lblTotalLosses") + ": " + stats.losses());
+        view.getLblConqueredEvents().setText(Localizer.getInstance().getMessage("lblConqueredEvents") + ": " + formatRatio(stats.conquered(), stats.events()));
+        view.getLblUnlockedCards().setText(Localizer.getInstance().getMessage("lblUnlockedCards") + ": " + formatRatio(stats.unlockedCards(), stats.cards()));
+        view.getLblCommanders().setText(Localizer.getInstance().getMessage("lblCommanders") + ": " + formatRatio(stats.commanders(), stats.allCommanders()));
+        view.getLblPlaneswalkers().setText(Localizer.getInstance().getMessage("lblPlaneswalkers") + ": " + formatRatio(stats.planeswalkers(), stats.allPlaneswalkers()));
+    }
+
+    public static String formatRatio(int numerator, int denominator) {
         if (denominator == 0) {
             return "0 / 0 (0%)";
         }
@@ -516,6 +591,10 @@ public final class ConquestData {
         directory.renameTo(directory0);
         directory = directory0;
         xmlFilename = directory.getPath() + ForgeConstants.PATH_SEPARATOR + XML_FILE;
+    }
+
+    public boolean isNewCard(PaperCard card) {
+        return newCards.contains(card);
     }
 
     public void resetNewCards() {

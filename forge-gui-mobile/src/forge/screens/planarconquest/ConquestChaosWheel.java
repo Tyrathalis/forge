@@ -1,7 +1,5 @@
 package forge.screens.planarconquest;
 
-import com.badlogic.gdx.math.Vector2;
-
 import forge.Forge;
 import forge.Graphics;
 import forge.animation.ForgeAnimation;
@@ -11,20 +9,18 @@ import forge.gamemodes.planarconquest.ConquestEvent.ChaosWheelOutcome;
 import forge.toolbox.FOptionPane;
 import forge.toolbox.FOverlay;
 import forge.util.Aggregates;
-import forge.util.PhysicsObject;
-
-import java.util.function.Consumer;
 
 public class ConquestChaosWheel extends FOverlay {
-    public static void spin(Consumer<ChaosWheelOutcome> callback0) {
-        ConquestChaosWheel wheel = new ConquestChaosWheel(callback0);
+    public static void spin(ChaosWheelOutcome outcome0, Runnable callback0) {
+        ConquestChaosWheel wheel = new ConquestChaosWheel(outcome0, callback0);
         wheel.show();
     }
 
-    private final WheelSpinAnimation animation = new WheelSpinAnimation();
-    private final Consumer<ChaosWheelOutcome> callback;
+    private final WheelSpinAnimation animation;
+    private final Runnable callback;
 
-    private ConquestChaosWheel(Consumer<ChaosWheelOutcome> callback0) {
+    private ConquestChaosWheel(ChaosWheelOutcome outcome0, Runnable callback0) {
+        animation = new WheelSpinAnimation(outcome0);
         callback = callback0;
     }
 
@@ -60,45 +56,37 @@ public class ConquestChaosWheel extends FOverlay {
     }
 
     private class WheelSpinAnimation extends ForgeAnimation {
-        private final PhysicsObject rotationManager;
-        private final float WAIT_DURATION = 1f;
-        private float timeSpentWaiting = 0f;
-        private boolean doneSpinning = false;
+        private static final float WAIT_DURATION = 1f;
 
-        private WheelSpinAnimation() {
-            float initialPosition = Aggregates.randomInt(1, 8) * 45f - 22.5f; //-22.5f because wheel image slightly rotated initially
-            float initialVelocity = Aggregates.randomInt(360, 720);
-            float acceleration = Aggregates.randomInt(50, 100) * -1f;
-            rotationManager = new PhysicsObject(new Vector2(initialPosition, 0), new Vector2(initialVelocity, 0), new Vector2(acceleration, 0), false);
+        private final float velocity = Aggregates.randomInt(360, 720);
+        private final float deceleration = Aggregates.randomInt(50, 100);
+        private final float spinDuration = velocity / deceleration;
+        private final float start;
+        private float time;
+
+        private WheelSpinAnimation(ChaosWheelOutcome outcome) {
+            // The wheel's rotation is the negative of this position, so the place to stop is the negative of the outcome's
+            float distance = velocity * velocity / (2 * deceleration);
+            start = -ChaosWheelOutcome.restingRotation(outcome) - distance;
         }
 
         private float getWheelRotation() {
-            return -rotationManager.getPosition().x; //use negative so wheel rotates clockwise
+            float t = Math.min(time, spinDuration);
+            float position = start + velocity * t - deceleration * t * t / 2;
+            return -(position % 360f); //use negative so wheel rotates clockwise
         }
 
         @Override
         protected boolean advance(float dt) {
-            if (!doneSpinning) {
-                rotationManager.advance(dt);
-                Vector2 pos = rotationManager.getPosition();
-                while (pos.x > 360f) { //loop back around
-                    pos.x -= 360f;
-                }
-                if (!rotationManager.isMoving()) {
-                    doneSpinning = true;
-                }
-                return true;
-            } else {
-                // Wait a bit after the wheel stops spinning before ending
-                timeSpentWaiting += dt;
-                return timeSpentWaiting < WAIT_DURATION;
-            }
+            time += dt;
+            // Wait a bit after the wheel stops spinning before ending
+            return time < spinDuration + WAIT_DURATION;
         }
 
         @Override
         protected void onEnd(boolean endingAll) {
             hide();
-            callback.accept(ChaosWheelOutcome.getWheelOutcome(getWheelRotation()));
+            callback.run();
         }
     }
 

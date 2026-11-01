@@ -26,6 +26,7 @@ public class ConquestChaosBattle extends ConquestBattle {
     private final QuestWorld world;
     private final QuestEventDuel duel;
     private ConquestAwardPool awardPool;
+    private boolean matchOver;
 
     public ConquestChaosBattle() {
         super(null, 0);
@@ -105,7 +106,9 @@ public class ConquestChaosBattle extends ConquestBattle {
 
     @Override
     public void setOpponentAvatar(LobbyPlayer aiPlayer, IGuiGame gui) {
-        gui.setPlayerAvatar(aiPlayer, duel);
+        if (gui != null) {
+            gui.setPlayerAvatar(aiPlayer, duel);
+        }
     }
 
     @Override
@@ -119,35 +122,54 @@ public class ConquestChaosBattle extends ConquestBattle {
     }
 
     @Override
-    public void showGameOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer, final IWinLoseView<? extends IButton> view) {
-        if (game.isMatchOver()) {
-            view.getBtnContinue().setVisible(false);
-            if (game.isMatchWonBy(humanPlayer)) {
-                view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblGreat") + "!");
-                model.getChaosBattleRecord().addWin();
-                setConquered(true);
-            }
-            else {
-                view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblOK"));
-                model.getChaosBattleRecord().addLoss();
-            }
-            model.saveData();
+    public Outcome recordOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer) {
+        if (!game.isMatchOver()) {
+            return Outcome.UNFINISHED;
+        }
+        matchOver = true;
+        final boolean won = game.isMatchWonBy(humanPlayer);
+        if (won) {
+            model.getChaosBattleRecord().addWin();
+            setConquered(true);
         }
         else {
+            model.getChaosBattleRecord().addLoss();
+        }
+        model.saveData();
+        return won ? Outcome.WON : Outcome.LOST;
+    }
+
+    @Override
+    public void showGameOutcome(final ConquestData model, final GameView game, final LobbyPlayer humanPlayer, final IWinLoseView<? extends IButton> view) {
+        switch (recordOutcome(model, game, humanPlayer)) {
+        case WON:
+            view.getBtnContinue().setVisible(false);
+            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblGreat") + "!");
+            break;
+        case LOST:
+            view.getBtnContinue().setVisible(false);
+            view.getBtnQuit().setText(Localizer.getInstance().getMessage("lblOK"));
+            break;
+        default:
             view.getBtnContinue().setVisible(true);
             view.getBtnContinue().setText(Localizer.getInstance().getMessage("btnContinue"));
             view.getBtnQuit().setText(Localizer.getInstance().getMessage("btnQuit"));
+            break;
         }
     }
 
     @Override
-    public void onFinished(final ConquestData model, IWinLoseView<? extends IButton> view) {
-        if (view.getBtnContinue().isVisible()) {
+    public void finish(final ConquestData model) {
+        if (!matchOver) {
             //ensure loss saved if you quit the battle before the match is over
             model.getChaosBattleRecord().addLoss();
             model.saveData();
         }
-        super.onFinished(model, view);
+        super.finish(model);
+    }
+
+    public String getWorldName() {
+        return world == null ? null : world.getName();
     }
 
     public ConquestAwardPool getAwardPool() {

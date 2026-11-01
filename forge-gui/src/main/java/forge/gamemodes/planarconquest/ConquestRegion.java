@@ -48,23 +48,21 @@ public class ConquestRegion {
         art = null;
     }
 
+    public record ArtCard(PaperCard card, boolean backFace) {}
+
+    public ArtCard getArtCard() {
+        PaperCard pc = cardPool.getCard(artCardName);
+        if (pc != null) {
+            return new ArtCard(pc, false);
+        }
+        pc = FModel.getMagicDb().getCommonCards().getUniqueByName(artCardName);
+        return new ArtCard(pc, !pc.getName().equals(artCardName) && Card.fromPaperCard(pc, null).hasAlternateState());
+    }
+
     public ISkinImage getArt() {
         clearArt(); // Force clear this so it will be redrawn since loadingcache invalidates the cache every screen change
-        if (art == null) {
-            PaperCard pc = cardPool.getCard(artCardName);
-
-            if (pc == null) {
-                pc = FModel.getMagicDb().getCommonCards().getUniqueByName(artCardName);
-                if (!pc.getName().equals(artCardName) && Card.fromPaperCard(pc, null).hasAlternateState()) {
-                    art = GuiBase.getInterface().getCardArt(pc, true);
-                } else {
-                    art = GuiBase.getInterface().getCardArt(pc);
-                }
-            } else {
-                art = GuiBase.getInterface().getCardArt(pc);
-            }
-        }
-
+        ArtCard artCard = getArtCard();
+        art = artCard.backFace() ? GuiBase.getInterface().getCardArt(artCard.card(), true) : GuiBase.getInterface().getCardArt(artCard.card());
         return art;
     }
 

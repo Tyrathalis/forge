@@ -1,0 +1,12 @@
+{
+  "name": "forge-gui-web-e2e",
+  "private": true,
+  "description": "Plays the web client in a real browser against a real server. Run on request; see ../README.md.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

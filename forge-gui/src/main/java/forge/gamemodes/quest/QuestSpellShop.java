@@ -1,13 +1,10 @@
 package forge.gamemodes.quest;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.function.Function;
-
-import org.apache.commons.lang3.tuple.Pair;
 
 import forge.deck.CardPool;
 import forge.deck.Deck;
@@ -179,6 +176,14 @@ public class QuestSpellShop {
             return;
         }
 
+        ItemPool<InventoryItem> itemsToAdd = buyItems(itemsToBuy);
+
+        shopManager.removeItems(itemsToBuy);
+        inventoryManager.addItems(itemsToAdd);
+    }
+
+    /** Charges for each item and adds it, opening products and adding decks, and answers what reached the pool. The shop's stock is left to the caller. */
+    public static ItemPool<InventoryItem> buyItems(final ItemPool<InventoryItem> itemsToBuy) {
         ItemPool<InventoryItem> itemsToAdd = new ItemPool<>(InventoryItem.class);
 
         for (Entry<InventoryItem, Integer> itemEntry : itemsToBuy) {
@@ -262,9 +267,7 @@ public class QuestSpellShop {
                         "Thanks for purchasing!", SOptionPane.INFORMATION_ICON);
             }
         }
-
-        shopManager.removeItems(itemsToBuy);
-        inventoryManager.addItems(itemsToAdd);
+        return itemsToAdd;
     }
 
     public static long getTotalSellValue(Iterable<Entry<InventoryItem, Integer>> items) {
@@ -310,6 +313,14 @@ public class QuestSpellShop {
             }
         }
 
+        sellItems(itemsToSell);
+
+        inventoryManager.removeItems(itemsToSell);
+        shopManager.addItems(itemsToSell);
+    }
+
+    /** Takes each card from the pool and its decks and pays its sale price. The shop's stock is left to the caller. */
+    public static void sellItems(final ItemPool<InventoryItem> itemsToSell) {
         for (Entry<InventoryItem, Integer> itemEntry : itemsToSell) {
 
             final PaperCard card = (PaperCard) itemEntry.getKey();
@@ -319,14 +330,21 @@ public class QuestSpellShop {
             sellCard(card, itemEntry.getValue(), pricePerCard);
 
         }
-
-        inventoryManager.removeItems(itemsToSell);
-        shopManager.addItems(itemsToSell);
     }
 
     public static void sellExtras(IItemManager<InventoryItem> shopManager, IItemManager<InventoryItem> inventoryManager) {
-        List<Entry<InventoryItem, Integer>> cardsToRemove = new LinkedList<>();
-        for (Entry<InventoryItem, Integer> item : inventoryManager.getPool()) {
+        ItemPool<InventoryItem> cardsToRemove = extras(inventoryManager.getPool());
+
+        inventoryManager.removeItems(cardsToRemove);
+        shopManager.addItems(cardsToRemove);
+
+        sellItems(cardsToRemove);
+    }
+
+    /** The copies of each owned card above what a deck may hold, as Sell Extras counts them. */
+    public static ItemPool<InventoryItem> extras(final ItemPool<InventoryItem> owned) {
+        ItemPool<InventoryItem> cardsToRemove = new ItemPool<>(InventoryItem.class);
+        for (Entry<InventoryItem, Integer> item : owned) {
             PaperCard card = (PaperCard)item.getKey();
             //Number of a particular card to keep
             int numToKeep = 4;
@@ -352,26 +370,10 @@ public class QuestSpellShop {
             }
 
             if (numToKeep < item.getValue()) {
-                cardsToRemove.add(Pair.of(item.getKey(), item.getValue() - numToKeep));
+                cardsToRemove.add(item.getKey(), item.getValue() - numToKeep);
             }
         }
-
-        inventoryManager.removeItems(cardsToRemove);
-        shopManager.addItems(cardsToRemove);
-
-        for (Entry<InventoryItem, Integer> item : cardsToRemove) {
-
-            if (!(item.getKey() instanceof PaperCard)) {
-                continue;
-            }
-
-            PaperCard card = (PaperCard)item.getKey();
-            final int pricePerCard = Math.max(Math.min((int) (multiplier * getCardValue(card)),
-                    FModel.getQuest().getCards().getSellPriceLimit()), 1);
-
-            sellCard(card, item.getValue(), pricePerCard);
-
-        }
+        return cardsToRemove;
     }
 
     private static void sellCard(final PaperCard card, final int quantity, final int pricePerCard) {
