@@ -67,6 +67,11 @@ export function createPacer(model: Model, apply: (msg: ServerMessage) => void): 
       apply(msg);
     } else if (!HELD_MESSAGES.has(msg.t)) {
       apply(msg);
+    } else if (msg.t === 'prompt' && !announcing && asksPlayer(msg, passingFor(model.controls))) {
+      // A question for the player ends a pause on another player's play, as it does when it arrives with nothing held. A board
+      // update can come between the play and the question (a flush of who the game waits on), and must not hold the question back
+      held.push(msg);
+      showHeld(false);
     } else if (msg.t === 'sound' && msg.name === TURN_SOUND && announcing && !held.slice(1).some(m => m.t === 'state')) {
       // The turn's sound plays when its banner is shown. A later turn's sound waits behind that turn's own state
       apply(msg);
@@ -98,6 +103,11 @@ export function createPacer(model: Model, apply: (msg: ServerMessage) => void): 
    * The press itself is not sent, because the prompt it was aimed at may be gone, so the player's next press answers the newest prompt.
    */
   function skip(): void {
+    showHeld(true);
+  }
+
+  /** Applies the held messages at once, with no new pause among them. Their sounds are dropped when the player skipped their moments. */
+  function showHeld(dropSounds: boolean): void {
     const waiting = held ?? [];
     held = null;
     setBoardBehind(false);
@@ -105,8 +115,7 @@ export function createPacer(model: Model, apply: (msg: ServerMessage) => void): 
     showUntil = 0;
     skipping = true;
     try {
-      // The held sounds are for moments the player skipped
-      waiting.filter(m => m.t !== 'sound').forEach(receive);
+      waiting.filter(m => !dropSounds || m.t !== 'sound').forEach(receive);
     } finally {
       skipping = false;
     }
