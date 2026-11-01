@@ -69,9 +69,13 @@ window.addEventListener('unhandledrejection', e => report(String((e.reason as Er
 
 // While messages are held, the prompt on screen is from an earlier board. An answer sent now would go to a prompt the player has not seen
 const HELD_INPUT = new Set(['selectCard', 'selectPlayer', 'selectStackItem', 'useMana', 'ok', 'cancel', 'endTurn', 'undo']);
+// It does end the pause, though, so the player's next press goes to the newest prompt instead of being dropped as well
 const sendNow: Send = msg => {
   if (!pacer.holding() || !HELD_INPUT.has(msg.t)) send(msg);
-  else console.warn(`Not sent while the page catches up: ${msg.t}`);
+  else {
+    console.warn(`Not sent while the page catches up: ${msg.t}`);
+    pacer.skip();
+  }
 };
 const wire = createActions(sendNow);
 const actions = {

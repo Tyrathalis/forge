@@ -1266,10 +1266,12 @@ html[data-motion="reduced"] #coin-toss, html[data-motion="reduced"] #coin-toss *
 .hit-flash { --hit: .85; position: fixed; inset: 0; z-index: 80; overflow: hidden; pointer-events: none; animation: hit-linger 1.2s ease-out forwards;
   background: radial-gradient(ellipse at center, transparent 58%, rgba(176,20,30,calc(.4 * var(--hit))) 67%, rgba(112,6,16,calc(.72 * var(--hit))) 100%); }
 .hit-flash.hard { --hit: 1.25; }
-/* The red edge has a second, inner layer. A noise mask breaks up its inner side so it is not a clean ellipse. */
+/* The red edge has a second, inner layer. A noise mask breaks up its inner side so it is not a clean ellipse. The mask is a
+   bitmap (fractal noise rendered once, ../hit-noise.png): as an SVG feTurbulence filter, Firefox on Linux re-rasterised it
+   on the CPU every frame of the scale animation, freezing the page for about a second on each hit. */
 .hit-flash::before { content: ''; position: absolute; inset: 0; animation: hit-seep 1.2s ease-out forwards;
   background: radial-gradient(ellipse at center, transparent 38%, rgba(176,20,30,calc(.15 * var(--hit))) 46.5%, rgba(176,20,30,calc(.52 * var(--hit))) 56%, rgba(112,6,16,calc(.65 * var(--hit))) 74%);
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.021' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  4.03 0 0 0 -1.68'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 52vw 52vw; }
+  mask: url(../hit-noise.png) 0 0 / 52vw 52vw; }
 @keyframes hit-linger { from { opacity: 0; } 8% { opacity: 1; } 40% { opacity: .75; } to { opacity: 0; } }
 @keyframes hit-seep { from { scale: 1.07; } 12% { scale: 1; } to { scale: 1.115; } }
 html[data-motion="reduced"] .hit-flash::before { animation: none; }
