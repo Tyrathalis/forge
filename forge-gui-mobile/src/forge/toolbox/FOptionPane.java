@@ -118,7 +118,7 @@ public class FOptionPane extends FDialog {
                     final float x = (getWidth() - w) / 2;
                     final float y = 0;
 
-                    CardRenderer.drawCard(g, card, x, y, w, h, CardStackPosition.Top, true);
+                    CardRenderer.drawCard(g, card, x, y, w, h, CardStackPosition.Top);
                 }
             };
             cardDisplay.setHeight(Forge.getScreenHeight() / 2);
@@ -264,6 +264,12 @@ public class FOptionPane extends FDialog {
         hide();
         if (callback != null) {
             callback.accept(option);
+        }
+    }
+
+    public void setMessage(final String message) {
+        if (prompt != null) {
+            prompt.setText(message);
         }
     }
 

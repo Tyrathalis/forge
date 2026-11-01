@@ -109,6 +109,10 @@ public class InputQueue extends Observable implements IHasForgeLog {
         //}
         inputStack.push(input);
         markAwaitingInput(input.getOwner(), true, true);
+        // onGameOver releases only the inputs already waiting when it runs
+        if (gameView.isGameOver()) {
+            input.relaseLatchWhenGameIsOver();
+        }
         syncPoint();
         updateObservers();
     }

@@ -472,6 +472,12 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
         updateLayout(false); //need to update layout to adjust wrapping of items
     }
 
+    private boolean isGroupLarger() {
+        if (groupBy == null || groupBy.getGroups() == null)
+            return !groups.get().isEmpty();
+        return groups.get().size() > groupBy.getGroups().length;
+    }
+
     @Override
     protected void onRefresh() {
         Group otherItems = groupBy == null ? groups.get().get(0) : null;
@@ -496,7 +502,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                 } else {
                     if (otherItems == null) {
                         //reuse existing Other group if possible
-                        if (groups.get().size() > groupBy.getGroups().length) {
+                        if (isGroupLarger()) {
                             otherItems = groups.get().get(groups.get().size() - 1);
                         } else {
                             otherItems = new Group(Forge.getLocalizer().getMessage("lblOther"));
@@ -518,7 +524,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
             }
         }
 
-        if (otherItems == null && groups.get().size() > groupBy.getGroups().length) {
+        if (otherItems == null && isGroupLarger()) {
             int index = groups.get().size() - 1;
             if (index >= 0 && index < groups.get().size()) {
                 groups.get().remove(index); //remove Other group if empty
@@ -1302,7 +1308,7 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                     //composed placeholder when no image is on disk) and skip decorations
                     Texture img = ImageCache.getInstance().getImage(pc.getImageKey(false), true);
                     if (img != null && img != ImageCache.getInstance().getDefaultImage()) {
-                        g.drawCardImage(img, null, x, y, w, h, true, false, false);
+                        g.drawCardImage(img, null, x, y, w, h, true, false, 0);
                     } else {
                         CardRenderer.drawCard(g, pc, x, y, w, h, pos);
                         g.fillRect(UNOWNED_TINT, x, y, w, h);
@@ -1344,9 +1350,8 @@ public class ImageView<T extends InventoryItem> extends ItemView<T> {
                         else
                             drawCardLabel(g, Forge.getLocalizer().getMessage("lblNoSell"), Color.RED, x, y, w, h);
                     }
-                    else {
-                        if (cardPrice != null)
-                            drawCardLabel(g, "{CS} " + cardPrice, Color.GOLD, x, y, w, h);
+                    else if (cardPrice != null) {
+                        drawCardLabel(g, "{CS} " + cardPrice, Color.GOLD, x, y, w, h);
                     }
                 }
                 // spire colors

@@ -9,14 +9,18 @@ import com.github.tommyettinger.textra.TextraLabel;
 import forge.Forge;
 import forge.Graphics;
 import forge.adventure.data.RewardData;
+import forge.adventure.util.AdventureBackgroundDownloader;
 import forge.adventure.util.Config;
 import forge.adventure.util.Controls;
+import forge.assets.FSkinTexture;
 import forge.assets.ImageCache;
 import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgeConstants;
 import forge.localinstance.properties.ForgePreferences;
 import forge.model.FModel;
 import forge.screens.match.MatchController;
+import forge.screens.match.CardFlightOverlay;
+import forge.screens.match.views.VPlayerPanel;
 import forge.sound.SoundSystem;
 import forge.util.Localizer;
 
@@ -205,6 +209,8 @@ public class SettingsScene extends UIScene {
                     FModel.getPreferences().save();
                 }
             });
+            addCheckBox(localizer.getMessage("lblKeepMouseInFullscreen"),
+                    ForgePreferences.FPref.UI_KEEP_MOUSE_IN_FULLSCREEN, Forge::updateMouseConfine);
         }
         addSettingField(localizer.getMessage("lblDay") + " | " + localizer.getMessage("lblNight") + " " + localizer.getMessage("lblBackgroundImage"), Config.instance().getSettingData().dayNightBG, new ChangeListener() {
             @Override
@@ -214,6 +220,59 @@ public class SettingsScene extends UIScene {
                 Config.instance().saveSettings();
                 if (value) {
                     updateBG(true);
+                }
+            }
+        });
+        String off = localizer.getMessage("lblOff");
+        String planeDefault = localizer.getMessage("lblPlaneDefault");
+        String customSource = localizer.getMessage("lblCustomSource");
+        boolean useCustomSource = Config.instance().isUsingCustomBattleBackgroundSource();
+        String configuredSource = Config.instance().getCustomBattleBackgroundSource();
+        SelectBox<String> backgroundSource = Controls.newComboBox();
+        backgroundSource.setItems(off, planeDefault, customSource);
+        backgroundSource.setSelected(!Config.instance().isExtraBattleBackgroundsEnabled()
+                ? off : useCustomSource ? customSource : planeDefault);
+        TextField backgroundSourceUrl = Controls.newTextField(configuredSource == null ? "" : configuredSource);
+        addLabel(localizer.getMessage("lblBattleBackgrounds", Config.instance().getPlane()));
+        settingGroup.add(backgroundSource).align(Align.right).pad(2);
+        Cell<TextraLabel> backgroundUrlLabelCell = addLabel(localizer.getMessage("lblBattleBackgroundIndexUrl"));
+        TextraLabel backgroundUrlLabel = backgroundUrlLabelCell.getActor();
+        Cell<TextField> backgroundUrlCell = settingGroup.add(backgroundSourceUrl).align(Align.right).pad(2);
+        Runnable updateBackgroundUrlVisibility = () -> {
+            boolean custom = customSource.equals(backgroundSource.getSelected());
+            backgroundUrlLabel.setVisible(custom);
+            backgroundSourceUrl.setVisible(custom);
+            backgroundUrlLabelCell.height(custom ? Value.prefHeight : Value.zero)
+                    .padTop(custom ? 2 : 0).padBottom(custom ? 2 : 0)
+                    .spaceTop(custom ? 5 : 0).spaceBottom(custom ? 5 : 0);
+            backgroundUrlCell.height(custom ? Value.prefHeight : Value.zero)
+                    .padTop(custom ? 2 : 0).padBottom(custom ? 2 : 0)
+                    .spaceTop(custom ? 5 : 0).spaceBottom(custom ? 5 : 0);
+            settingGroup.invalidateHierarchy();
+        };
+        updateBackgroundUrlVisibility.run();
+        backgroundSource.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                boolean custom = customSource.equals(((SelectBox<?>) actor).getSelected());
+                boolean enabled = !off.equals(backgroundSource.getSelected());
+                updateBackgroundUrlVisibility.run();
+                Config.instance().setExtraBattleBackgroundsEnabled(enabled);
+                if (enabled) {
+                    Config.instance().setUseCustomBattleBackgroundSource(custom);
+                }
+                Config.instance().saveSettings();
+                AdventureBackgroundDownloader.cancel();
+                FSkinTexture.invalidateAdventureTextures();
+            }
+        });
+        backgroundSourceUrl.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                if (customSource.equals(backgroundSource.getSelected())) {
+                    Config.instance().setBattleBackgroundSource(((TextField) actor).getText());
+                    Config.instance().saveSettings();
+                    AdventureBackgroundDownloader.cancel();
                 }
             }
         });
@@ -342,29 +401,13 @@ public class SettingsScene extends UIScene {
 
         if (!GuiBase.isAndroid()) {
             addCheckBox(localizer.getMessage("lblBattlefieldTextureFiltering"), ForgePreferences.FPref.UI_LIBGDX_TEXTURE_FILTERING);
-            //revived as a three-value selector - the old checkbox predates the pref widening to Off/Vertical/Horizontal.
-            //adventure boot forces mode Vertical while the pref still holds a legacy boolean, so mirror that here
-            String zoneTabPref = FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS);
-            if (!"Off".equals(zoneTabPref) && !"Vertical".equals(zoneTabPref) && !"Horizontal".equals(zoneTabPref)) {
-                zoneTabPref = "Vertical";
-            }
-            SelectBox<String> altZoneTabs = Controls.newComboBox(new String[]{"Off", "Vertical", "Horizontal"},
-                    zoneTabPref, o -> {
-                String mode = (String) o;
-                if (mode != null && !mode.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS))) {
-                    FModel.getPreferences().setPref(ForgePreferences.FPref.UI_ALT_PLAYERZONETABS, mode);
-                    FModel.getPreferences().save();
+            //revived (it was commented out); the same reload the classic settings page does
+            addCheckBox(localizer.getMessage("lblAltZoneTabs"), ForgePreferences.FPref.UI_ALT_PLAYERZONETABS, () -> {
+                VPlayerPanel.reloadAltZoneLayout();
+                if (MatchController.instance != null) {
+                    MatchController.instance.resetPlayerPanels();
                 }
-                if (mode != null) {
-                    Forge.setAltZoneTabMode(mode);
-                    if (MatchController.instance != null) {
-                        MatchController.instance.resetPlayerPanels();
-                    }
-                }
-                return null;
             });
-            addLabel(localizer.getMessage("lblAltZoneTabs"));
-            settingGroup.add(altZoneTabs).align(Align.right).pad(2);
         } else {
             addCheckBox(localizer.getMessage("lblLandscapeMode") + " (" +
                 localizer.getMessage("lblRestartRequired") + ")",
@@ -378,7 +421,42 @@ public class SettingsScene extends UIScene {
                     });
         }
 
+        VPlayerPanel.reloadCompactLayout(); //also converts the old on/off value of this setting
+        SelectBox<String> compactLayout = Controls.newComboBox(new String[]{"Off", "Left", "Right", "Alternate"},
+                FModel.getPreferences().getPref(ForgePreferences.FPref.UI_COMPACT_LANDSCAPE_LAYOUT), o -> {
+            String mode = (String) o;
+            if (mode != null && !mode.equals(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_COMPACT_LANDSCAPE_LAYOUT))) {
+                FModel.getPreferences().setPref(ForgePreferences.FPref.UI_COMPACT_LANDSCAPE_LAYOUT, mode);
+                FModel.getPreferences().save();
+                VPlayerPanel.reloadCompactLayout();
+            }
+            return null;
+        });
+        addLabel(localizer.getMessage("lblCompactLayout"));
+        settingGroup.add(compactLayout).align(Align.right).pad(2);
+        addCheckBox(localizer.getMessageorUseDefault("lblCompactHideMenu", "Hide Top Menu (Compact Layout)"), ForgePreferences.FPref.UI_COMPACT_HIDE_MENU, VPlayerPanel::reloadMenuHidden);
+        addCheckBox(localizer.getMessageorUseDefault("lblCompactZoneTabs", "Compact Zone Tabs (Landscape Mode)"), ForgePreferences.FPref.UI_COMPACT_ZONE_TABS, VPlayerPanel::reloadZoneOverlay);
+        addCheckBox(localizer.getMessageorUseDefault("lblFrostedStyle", "Frosted Style (Match Screen)"), ForgePreferences.FPref.UI_FROSTED_STYLE, VPlayerPanel::reloadFrosted);
         addCheckBox(localizer.getMessage("lblAnimatedCardTapUntap"), ForgePreferences.FPref.UI_ANIMATED_CARD_TAPUNTAP);
+        String currentAnim;
+        switch (CardFlightOverlay.style()) { // maps legacy "true"/"false" values too
+            case OFF: currentAnim = "Off"; break;
+            case SLIDE: currentAnim = "Slide"; break;
+            case POPUP: currentAnim = "Popup"; break;
+            default: currentAnim = "Rotate"; break;
+        }
+        SelectBox<String> cardPlayAnim = Controls.newComboBox(new String[]{"Rotate", "Slide", "Popup", "Off"}, currentAnim, o -> {
+            String mode = (String) o;
+            if (mode == null)
+                mode = "Rotate";
+            if (!mode.equalsIgnoreCase(FModel.getPreferences().getPref(ForgePreferences.FPref.UI_CARD_PLAY_ANIMATION_STYLE))) {
+                FModel.getPreferences().setPref(ForgePreferences.FPref.UI_CARD_PLAY_ANIMATION_STYLE, mode);
+                FModel.getPreferences().save();
+            }
+            return null;
+        });
+        addLabel(localizer.getMessageorUseDefault("lblCardPlayOption", "Card Play Animation Style"));
+        settingGroup.add(cardPlayAnim).align(Align.right).pad(2);
         if (!GuiBase.isAndroid()) {
             final String[] item = {FModel.getPreferences().getPref(ForgePreferences.FPref.UI_ENABLE_BORDER_MASKING)};
             SelectBox<String> borderMask = Controls.newComboBox(new String[]{"Off", "Crop", "Full", "Art"}, item[0], o -> {
@@ -421,6 +499,9 @@ public class SettingsScene extends UIScene {
 
 
     public boolean back() {
+        GuiBase.setAdventureCacheDirectory(Config.instance().getCachePrefix());
+        FSkinTexture.invalidateAdventureTextures();
+        AdventureBackgroundDownloader.start();
         Forge.switchToLast();
         return true;
     }
@@ -478,12 +559,13 @@ public class SettingsScene extends UIScene {
         settingGroup.add(slide).align(Align.right);
     }
 
-    private void addSettingField(String name, boolean value, ChangeListener change) {
+    private CheckBox addSettingField(String name, boolean value, ChangeListener change) {
         CheckBox box = Controls.newCheckBox("");
         box.setChecked(value);
         box.addListener(change);
         addLabel(name);
         settingGroup.add(box).align(Align.right);
+        return box;
     }
 
     private void addSettingField(String name, int value, ChangeListener change) {
@@ -494,12 +576,12 @@ public class SettingsScene extends UIScene {
         settingGroup.add(text).align(Align.right);
     }
 
-    void addLabel(String name) {
+    Cell<TextraLabel> addLabel(String name) {
         TextraLabel label = Controls.newTextraLabel(name);
         label.setWrap(true);
         settingGroup.row().space(5);
         int w = Forge.isLandscapeMode() ? 160 : 80;
-        settingGroup.add(label).align(Align.left).pad(2, 2, 2, 5).width(w).expand();
+        return settingGroup.add(label).align(Align.left).pad(2, 2, 2, 5).width(w).expand();
     }
 
     private void restartForge() {

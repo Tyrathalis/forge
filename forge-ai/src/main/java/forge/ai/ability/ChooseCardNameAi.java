@@ -5,10 +5,7 @@ import com.google.common.collect.Lists;
 import forge.StaticData;
 import forge.ai.*;
 import forge.card.*;
-import forge.game.card.Card;
-import forge.game.card.CardCollection;
-import forge.game.card.CardCopyService;
-import forge.game.card.CardLists;
+import forge.game.card.*;
 import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.TargetRestrictions;
@@ -75,7 +72,8 @@ public class ChooseCardNameAi extends SpellAbilityAi {
             return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
         }
 
-        if (mandatory) {
+        // like canPlay, a naming AILogic means the AI knows what to name (e.g. as a permanent with a naming ETB replacement enters)
+        if (mandatory || !aiLogic.isEmpty()) {
             return new AiAbilityDecision(100, AiPlayDecision.WillPlay);
         }
         return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
@@ -120,6 +118,7 @@ public class ChooseCardNameAi extends SpellAbilityAi {
                 cards.add(copy);
             } else if (!isOther) {
                 // other can't be cast that way, not need to prevent that
+                CardUtil.turnToRightFace(face.getName(), card);
                 cards.add(card);
             }
         }

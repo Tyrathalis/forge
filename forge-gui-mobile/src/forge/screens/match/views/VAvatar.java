@@ -1,5 +1,6 @@
 package forge.screens.match.views;
 
+import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
@@ -13,9 +14,12 @@ import forge.assets.FImage;
 import forge.assets.FSkinColor;
 import forge.assets.FSkinFont;
 import forge.game.card.CounterEnumType;
+import forge.game.GameView;
 import forge.game.player.PlayerView;
 import forge.screens.match.MatchController;
 import forge.toolbox.FDisplayObject;
+import forge.toolbox.FSelectionBox;
+import forge.util.AITimeoutTracker;
 import forge.util.ThreadUtil;
 import forge.util.Utils;
 
@@ -28,14 +32,35 @@ public class VAvatar extends FDisplayObject {
     private final PlayerView player;
     private final FImage image;
     private final AvatarAnimation avatarAnimation;
+    private int lifeDifference;
     private static final FSkinFont LIFE_FONT = FSkinFont.get(18);
-    private static final FSkinFont LIFE_FONT_ALT = FSkinFont.get(22);
     //turn = gold outer ring, awaiting-input = green inset ring; distinct hue AND
     //position so the two states stay readable when one player has both
     private static final Color TURN_COLOR = Color.GOLD;
     private static final Color AWAITING_COLOR = new Color(0.15f, 1f, 0.3f, 1f);
     private final AwaitingPulseAnimation awaitingPulse = new AwaitingPulseAnimation();
     private boolean wasAwaitingInput;
+    private static final Color BAR_BG    = new Color(0f, 0f, 0f, 0.65f);
+    private static final Color BAR_GREEN = Color.LIME;
+    private static final Color BAR_AMBER = Color.ORANGE;
+    private static final Color BAR_RED   = Color.RED;
+
+    static {
+        // wakes the renderer when the bar is due (needed if continuous rendering is off)
+        AITimeoutTracker.setRepaintHook(() -> Gdx.graphics.requestRendering());
+    }
+
+    private void drawAITimeoutBar(Graphics g, float w, float h) {
+        final GameView gv = MatchController.instance.getGameView();
+        if (gv == null) return;
+        final float f = AITimeoutTracker.getRemainingFraction(AITimeoutTracker.key(gv.getId(), player.getId()));
+        if (f < 0f) return;                                   // hidden: <2s, finished, or timed out
+        final float barH = Math.max(Utils.scale(3), h / 10f);
+        final float y = h - barH;
+        g.fillRect(BAR_BG, 0, y, w, barH);
+        g.fillRect(f > 0.5f ? BAR_GREEN : f > 0.25f ? BAR_AMBER : BAR_RED, 0, y, w * f, barH);
+        Gdx.graphics.requestRendering();                      // keep animating while visible
+    }
 
     public VAvatar(PlayerView player0) {
         player = player0;
@@ -50,6 +75,10 @@ public class VAvatar extends FDisplayObject {
         setSize(size, size);
         avatarAnimation = new AvatarAnimation();
     }
+
+    public void addLifeDifference(int delta) {
+        lifeDifference += delta;
+    }
     private class AvatarAnimation extends ForgeAnimation {
         private static final float DURATION = 1.2f;
         private float progress = 0;
@@ -63,7 +92,7 @@ public class VAvatar extends FDisplayObject {
                 percentage = 1;
             }
             float mod = w/2f;
-            int amount = player.getAvatarLifeDifference();
+            int amount = lifeDifference;
             float oldAlpha = g.getfloatAlphaComposite();
             float fade = 1-(percentage*1);
             if (amount > 0) {
@@ -71,7 +100,7 @@ public class VAvatar extends FDisplayObject {
                 drawPlayerIndicator(g, w, h, percentage);
                 g.setAlphaComposite(fade);
                 g.drawRect(w / 12f, Color.WHITE, 0, 0, w, h);
-                g.drawOutlinedText("+"+amount, Forge.altZoneTabs ? LIFE_FONT_ALT : LIFE_FONT, Color.WHITE, Color.SKY, 0, (getHeight()/2)*fade, getWidth(), getHeight(), false, Align.center, true);
+                g.drawOutlinedText("+"+amount, LIFE_FONT,Color.WHITE, Color.SKY, 0, (getHeight()/2)*fade, getWidth(), getHeight(), false, Align.center, true);
                 g.setAlphaComposite(oldAlpha);
             } else if (amount < 0) {
                 if (splatter == null) {
@@ -86,7 +115,7 @@ public class VAvatar extends FDisplayObject {
                 }
                 drawPlayerIndicator(g, w, h, percentage);
                 g.setAlphaComposite(fade);
-                g.drawOutlinedText(String.valueOf(amount), Forge.altZoneTabs ? LIFE_FONT_ALT : LIFE_FONT, Color.RED, Color.ORANGE, 0, (getHeight()/2)*fade, getWidth(), getHeight(), false, Align.center, true);
+                g.drawOutlinedText(String.valueOf(amount), LIFE_FONT,Color.RED, Color.ORANGE, 0, (getHeight()/2)*fade, getWidth(), getHeight(), false, Align.center, true);
                 g.setAlphaComposite(oldAlpha);
             }
         }
@@ -100,7 +129,7 @@ public class VAvatar extends FDisplayObject {
         @Override
         protected void onEnd(boolean endingAll) {
             progress = 0;
-            player.setAvatarLifeDifference(0);
+            lifeDifference = 0;
         }
     }
 
@@ -131,7 +160,7 @@ public class VAvatar extends FDisplayObject {
         float h = isHovered() ? getWidth()/16f+getHeight() : getHeight();
 
         if (avatarAnimation != null && MatchController.instance.getGameView() != null && !MatchController.instance.getGameView().isMatchOver()) {
-            if (player.getAvatarLifeDifference() != 0) {
+            if (lifeDifference != 0) {
                 avatarAnimation.start();
                 avatarAnimation.drawAvatar(g, image, 0, 0, w, h);
             } else {
@@ -142,7 +171,8 @@ public class VAvatar extends FDisplayObject {
             g.drawAvatarImage(image, 0, 0, w, h, player.getHasLost(), 0);
         }
 
-        if (Forge.altPlayerLayout && !Forge.altZoneTabs && Forge.isLandscapeMode())
+        drawAITimeoutBar(g, w, h);
+        if (Forge.altPlayerLayout && Forge.isLandscapeMode())
             return;
 
         //display XP in lower right corner of avatar
@@ -158,7 +188,7 @@ public class VAvatar extends FDisplayObject {
         //turn indicator — gold outer ring on the turn player
         if (player == MatchController.instance.getGameView().getPlayerTurn()) {
             float alpha = alphaModifier < 1 ? alphaModifier : 0.9f;
-            g.drawRect(w / 14f, FSkinColor.getStandardColor(TURN_COLOR).alphaColor(alpha), 0, 0, w, h);
+            g.drawRect(ringWidth(w) * 8f / 7f, FSkinColor.getStandardColor(TURN_COLOR).alphaColor(alpha), 0, 0, w, h);
         }
         //action indicator — green inset ring while the game is blocked on this
         //player's input (any input, not just priority holds — set for human players
@@ -170,19 +200,21 @@ public class VAvatar extends FDisplayObject {
         }
         wasAwaitingInput = awaiting;
         if (awaiting && alphaModifier == 1) {
-            float inset = w / 7f;
-            g.drawRect(w / 12f, FSkinColor.getStandardColor(AWAITING_COLOR).alphaColor(awaitingPulse.getRingAlpha()),
+            float inset = ringWidth(w) * 16f / 7f;
+            g.drawRect(ringWidth(w) * 4f / 3f, FSkinColor.getStandardColor(AWAITING_COLOR).alphaColor(awaitingPulse.getRingAlpha()),
                     inset, inset, w - 2 * inset, h - 2 * inset);
         }
-        //highlighted
+        //highlighted (chosen) or valid to choose
         if (MatchController.instance.isHighlighted(player)) {
-            g.drawRect(w / 16f, Color.MAGENTA, 0, 0, w, h);
+            FSelectionBox.drawChosen(g, w / 16f, 0, 0, w, h);
+        } else if (MatchController.instance.isSelectable(player)) {
+            FSelectionBox.draw(g, Math.max(Utils.scale(2), w / 20f), 0, 0, w, h);
         }
         //selector
         if (Forge.hasGamepad()) {
             if (MatchController.getView().selectedPlayerPanel() != null) {
                 if (MatchController.getView().selectedPlayerPanel().getPlayer() == player) {
-                    g.drawRect(w / 16f, Color.ORANGE, 0, 0, w, h);
+                    FSelectionBox.draw(g, Color.ORANGE, w / 16f, 0, 0, w, h);
                 }
             }
         }
@@ -219,6 +251,11 @@ public class VAvatar extends FDisplayObject {
         protected void onEnd(boolean endingAll) {
             progress = -1;
         }
+    }
+
+    //compact layout: a thin ring, so it does not swallow a small avatar
+    private static float ringWidth(float w) {
+        return VPlayerPanel.isCompactLayout() ? Math.max(Utils.scale(1.5f), w / 32f) : w / 16f;
     }
 
     @Override

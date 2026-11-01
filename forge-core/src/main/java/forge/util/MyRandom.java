@@ -19,6 +19,7 @@ package forge.util;
 
 import java.security.SecureRandom;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * <p>
@@ -31,6 +32,24 @@ import java.util.Random;
  */
 public class MyRandom {
     /**
+     * Every Random method (nextInt, nextBoolean, shuffle, ...) funnels through next(bits).
+     * The draw counter lives on the stream, so a game's undo detection only sees its own draws.
+     */
+    private static final class CountingRandom extends Random {
+        private final Random delegate;
+        private final AtomicLong calls = new AtomicLong();
+        CountingRandom(Random delegate) { super(0); this.delegate = delegate; }
+        @Override protected int next(int bits) {
+            calls.incrementAndGet();
+            return delegate.nextInt() >>> (32 - bits);
+        }
+        @Override public void setSeed(long seed) {
+            if (delegate != null) delegate.setSeed(seed);   // null during super(0)
+        }
+        long callCount() { return calls.get(); }
+    }
+
+    /**
      * Per-thread random source. Thread-local so concurrent games in one JVM
      * (headless simulation workers, parallel AI harnesses) that seed their
      * stream via {@link #setRandom(Random)} cannot contaminate each other's
@@ -38,29 +57,23 @@ public class MyRandom {
      * evaluation helpers) continue the parent's stream instead of silently
      * falling back to an unseeded one. Single-threaded behavior is unchanged.
      */
-    private static final ThreadLocal<Random> random = new InheritableThreadLocal<Random>() {
+    private static final ThreadLocal<CountingRandom> random = new InheritableThreadLocal<CountingRandom>() {
         @Override
-        protected Random initialValue() {
-            return new SecureRandom();
+        protected CountingRandom initialValue() {
+            return new CountingRandom(new SecureRandom());
         }
     };
 
-    /**
-     * <p>
-     * percentTrue.<br>
-     * If percent is like 30, then 30% of the time it will be true.
-     * </p>
-     *
-     * @param percent an int.
-     * @return a boolean.
-     */
+    /** Number of random draws made so far on the current thread's stream. Used by undo to detect that randomness was consumed. */
+    public static long callCount() { return random.get().callCount(); }
+
     public static boolean percentTrue(final int percent) {
         return percent > MyRandom.getRandom().nextInt(100);
     }
 
     /**
      * Gets the random.
-     *
+     * 
      * @return the random for the current thread
      */
     public static Random getRandom() {
@@ -73,7 +86,7 @@ public class MyRandom {
      * @param random the random
      */
     public static void setRandom(Random random) {
-        MyRandom.random.set(random);
+        MyRandom.random.set(random instanceof CountingRandom ? (CountingRandom) random : new CountingRandom(random));
     }
 
     public static int[] splitIntoRandomGroups(final int value, final int numGroups) {

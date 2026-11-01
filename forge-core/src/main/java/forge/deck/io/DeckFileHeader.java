@@ -46,6 +46,7 @@ public class DeckFileHeader {
     public static final String TAGS_SEPARATOR = ",";
     public static final String DRAFT_NOTES = "DraftNotes";
     public static final String KEY_CARDS = "KeyCards";
+    public static final String ALT_COMMANDERS = "AltCommanders";
     public static final String SLEEVE_ART = "SleeveArt";
     public static final String SLEEVE_OFFSET = "SleeveOffset";
 
@@ -67,6 +68,7 @@ public class DeckFileHeader {
     private final Set<String> tags;
     private final HashMap<String, String> draftNotes;
     private final List<String> keyCards;
+    private final List<String> altCommanders;
 
     private final boolean intendedForAi;
     private final String aiHints;
@@ -111,6 +113,14 @@ public class DeckFileHeader {
             for (String k: rawKeyCards.split(";"))
                 if (StringUtils.isNotBlank(k))
                     keyCards.add(k.trim());
+        }
+
+        this.altCommanders = new ArrayList<>();
+        String rawAltCommanders = kvPairs.get(DeckFileHeader.ALT_COMMANDERS);
+        if (StringUtils.isNotBlank(rawAltCommanders)) {
+            for (String c : rawAltCommanders.split(";"))
+                if (StringUtils.isNotBlank(c))
+                    altCommanders.add(c.trim());
         }
     }
 
@@ -168,6 +178,10 @@ public class DeckFileHeader {
 
     public final List<String> getKeyCards() {
         return keyCards;
+    }
+
+    public final List<String> getAltCommanders() {
+        return altCommanders;
     }
 
     public final String getSleeveArtKey() {
