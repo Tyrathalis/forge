@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the web GUI module (forge-gui-web) and the modules under it.
+# Build the playable app jar with the web GUI inside it: forge-gui-web and forge-gui-mobile-dev (-Pweb), and the
+# modules under them. The jar is the one scripts/release-playable.sh publishes.
 #
 # The -Pweb profile's frontend-maven-plugin downloads its own Node and runs npm ci, tsc, esbuild and vitest, so this
 # is the one build step that fetches and runs npm packages. It exists as a script so that a permission rule can allow
@@ -22,4 +23,4 @@ case "${1:-}" in
 esac
 
 exec systemd-run --user --scope -q -p MemoryMax=12G -p ManagedOOMPreference=avoid \
-    nice -n 19 "$HOME/.local/opt/maven/bin/mvn" -q -Pweb -pl forge-gui-web -am install "${tests[@]}"
+    nice -n 19 "$HOME/.local/opt/maven/bin/mvn" -q -Pweb -pl forge-gui-web,forge-gui-mobile-dev -am install "${tests[@]}"

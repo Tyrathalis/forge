@@ -17,6 +17,7 @@ import forge.deck.FDeckChooser;
 import forge.game.GameType;
 import forge.gamemodes.replay.ReplayLauncher;
 import forge.gui.FThreads;
+import forge.gui.GuiBase;
 import forge.screens.FScreen;
 import forge.screens.achievements.AchievementsScreen;
 import forge.screens.online.OnlineMenu.OnlineScreen;
@@ -30,6 +31,7 @@ import forge.toolbox.FOptionPane;
 import forge.toolbox.FScrollPane;
 import forge.toolbox.Frost;
 import forge.util.Utils;
+import forge.util.WebUiLauncher;
 
 public class HomeScreen extends FScreen {
     private static final float PADDING = Utils.scale(5);
@@ -113,6 +115,15 @@ public class HomeScreen extends FScreen {
             SettingsScreen.show(true);
         });
         addButton("Replays", e -> ReplayLauncher.chooseAndPlay());
+        if (WebUiLauncher.isAvailable()) {
+            //playable fork: a -Pweb jar carries the web GUI; it runs as its own process and opens in the browser
+            addButton(Forge.getLocalizer().getMessageorUseDefault("lblWebUi", "Web UI"), e -> FThreads.invokeInBackgroundThread(() -> {
+                final String refused = WebUiLauncher.launch(GuiBase.getInterface().getAssetsDir());
+                FThreads.invokeInEdtLater(() -> FOptionPane.showMessageDialog(refused != null ? refused
+                        : Forge.getLocalizer().getMessageorUseDefault("lblWebUiStarting",
+                        "The Web UI is starting. It opens in your browser, and its window shows the links to share with friends. Closing that window stops it.")));
+            }));
+        }
         addButton(Forge.getLocalizer().getMessage("lblHelp"), e -> FThreads.invokeInEdtLater(() -> {
             try {
                 if (Forge.getDeviceAdapter().isConnectedToInternet()) {

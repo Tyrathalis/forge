@@ -251,4 +251,19 @@
             <version>6.9.0</version>
         </dependency>
     </dependencies>
+    <profiles>
+        <!-- Playable fork: -Pweb puts the web GUI (forge-gui-web) in this jar, so one download and one updater carry both.
+             The app starts it as a second JVM from this same jar (forge.util.WebUiLauncher). Without the profile the
+             jar is unchanged and the app hides its Web UI entry. -->
+        <profile>
+            <id>web</id>
+            <dependencies>
+                <dependency>
+                    <groupId>forge</groupId>
+                    <artifactId>forge-gui-web</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

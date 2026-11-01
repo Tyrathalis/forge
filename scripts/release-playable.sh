@@ -5,8 +5,11 @@
 # users actually run.
 #
 # Usage (from the repo root, on the playable-qol/playable branch):
-#   mvn -pl forge-gui-mobile-dev -am package -DskipTests
+#   mvn -Pweb -pl forge-gui-mobile-dev -am package -DskipTests
 #   scripts/release-playable.sh
+#
+# -Pweb puts the web GUI (forge-gui-web) in the jar; the app's Web UI entry starts it (forge.util.WebUiLauncher).
+# The profile downloads Node and runs npm at build time. A jar built without it is refused below.
 #
 # Publishing is a deliberate human step (needs gh auth on Tyrathalis/forge).
 # ALWAYS pin -R: this clone's gh default repo is Card-Forge/forge (for PR
@@ -24,8 +27,12 @@ cd "$(dirname "$0")/.."
 JAR=forge-gui-mobile-dev/target/forge-gui-mobile-dev-*-jar-with-dependencies.jar
 # Newest by mtime: an alphabetical glob picks a STALE jar when target/ holds
 # builds from two version eras (2.0.14 sorts before 2.0.15 — bit us 2026-08-21).
-JAR=$(ls -t $JAR 2>/dev/null | head -1) || { echo "Build the jar first (mvn -pl forge-gui-mobile-dev -am package)"; exit 1; }
-[ -f "$JAR" ] || { echo "Build the jar first (mvn -pl forge-gui-mobile-dev -am package)"; exit 1; }
+JAR=$(ls -t $JAR 2>/dev/null | head -1) || { echo "Build the jar first (mvn -Pweb -pl forge-gui-mobile-dev -am package)"; exit 1; }
+[ -f "$JAR" ] || { echo "Build the jar first (mvn -Pweb -pl forge-gui-mobile-dev -am package)"; exit 1; }
+# The released jar carries the web GUI; a build without -Pweb would silently drop it for every player who updates
+for entry in forge/web/WebMain.class web/index.html; do
+    unzip -l "$JAR" "$entry" >/dev/null 2>&1 || { echo "ERROR: $JAR lacks $entry - rebuild with -Pweb." >&2; exit 1; }
+done
 
 COMMIT=$(git rev-parse HEAD)
 if ! git diff --quiet HEAD -- forge-gui/res; then
