@@ -175,6 +175,8 @@ public final class FlatMonteCarloPicker {
         public long budgetNanos = TimeUnit.MILLISECONDS.toNanos(450);
         /** Soft limit on the time of all decisions in one turn. */
         public long turnBudgetNanos = TimeUnit.MILLISECONDS.toNanos(2000);
+        /** The counts alone bound the search and the clock is never consulted, so a decision is reproducible from its seed. */
+        public boolean countBudget = false;
         /** Score added to the heuristic's first choice, i.e. how clearly rollouts must prefer another line. */
         public int heuristicBonus = 80;
         /** Whether "pass and keep mana up for instants" is compared with the plays. */
@@ -253,6 +255,7 @@ public final class FlatMonteCarloPicker {
             cfg.comboPlayoutPlays = intProp(ai, AiProps.FLAT_MC_COMBO_PLAYOUT_PLAYS, 0, 30);
             cfg.budgetNanos = TimeUnit.MILLISECONDS.toNanos(intProp(ai, AiProps.FLAT_MC_DECISION_BUDGET_MS, 0, 10000));
             cfg.turnBudgetNanos = TimeUnit.MILLISECONDS.toNanos(intProp(ai, AiProps.FLAT_MC_TURN_BUDGET_MS, 0, 60000));
+            cfg.countBudget = ai.getBoolProperty(AiProps.FLAT_MC_COUNT_BUDGET);
             cfg.heuristicBonus = intProp(ai, AiProps.FLAT_MC_HEURISTIC_BONUS, 0, 100000);
             cfg.considerHolding = ai.getBoolProperty(AiProps.FLAT_MC_CONSIDER_HOLDING);
             cfg.holdManaWeightPercent = intProp(ai, AiProps.FLAT_MC_HOLD_MANA_WEIGHT, 0, 1000);
@@ -548,13 +551,15 @@ public final class FlatMonteCarloPicker {
             return Result.keepHeuristic(heuristicChoice, "low-memory");
         }
 
-        final long budget = Math.min(cfg.budgetNanos, AITimeoutTracker.remainingNanos() / 2);
+        // With the count budget no deadline is ever reached: every round is played, whatever the time it takes.
+        final boolean timed = !cfg.countBudget;
+        final long budget = timed ? Math.min(cfg.budgetNanos, AITimeoutTracker.remainingNanos() / 2) : Long.MAX_VALUE;
         if (budget <= 0) {
             return Result.keepHeuristic(heuristicChoice, "no-time");
         }
-        final long softDeadline = start + budget;
-        final long hardDeadline = start + HARD_DEADLINE_FACTOR * budget;
-        rolloutDeadlineNanos = start + ROLLOUT_DEADLINE_FACTOR * budget;
+        final long softDeadline = timed ? start + budget : Long.MAX_VALUE;
+        final long hardDeadline = timed ? start + HARD_DEADLINE_FACTOR * budget : Long.MAX_VALUE;
+        rolloutDeadlineNanos = timed ? start + ROLLOUT_DEADLINE_FACTOR * budget : Long.MAX_VALUE;
         final long baseSeed = MyRandom.getRandom().nextLong();
 
         final int playoutPlays = playoutLength(player, cfg);
@@ -619,7 +624,7 @@ public final class FlatMonteCarloPicker {
                 final Long value = !aimed ? null : rollout(player, cand, seed, rcfg, playoutPlays, mode);
                 maxRolloutNanos = Math.max(maxRolloutNanos, System.nanoTime() - t0);
                 rollouts++;
-                if (rollouts == 1 && value != null && cfg.scaleToDevice) {
+                if (rollouts == 1 && value != null && cfg.scaleToDevice && timed) {
                     limitN = Math.min(limitN, affordableLines(softDeadline - System.nanoTime(), maxRolloutNanos,
                             cfg.rolloutsPerCandidate, n));
                 }
@@ -1751,7 +1756,7 @@ public final class FlatMonteCarloPicker {
             final GameSimulator sim = GameSimulator.forRollout(player.getGame(), player, mode == Mode.RESPOND || mode == Mode.BLOCKED);
             final Game simGame = sim.getSimulatedGameState();
             final Player simAi = sim.getSimulatedAiPlayer();
-            simGame.AI_TIMEOUT = Math.min(simGame.AI_TIMEOUT, ROLLOUT_AI_TIMEOUT_SECONDS);
+            simGame.AI_TIMEOUT = cfg.countBudget ? Integer.MAX_VALUE : Math.min(simGame.AI_TIMEOUT, ROLLOUT_AI_TIMEOUT_SECONDS);
             HiddenInfoShuffler.shuffle(simGame, sim.getGameCopier(), player, new Random(seed ^ HIDDEN_INFO_SALT));
 
             final Long value;

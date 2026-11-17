@@ -156,6 +156,12 @@ public enum AiProps {
     FLAT_MC_COMBO_PLAYOUT_PLAYS("14"),
     FLAT_MC_DECISION_BUDGET_MS("450"),
     FLAT_MC_TURN_BUDGET_MS("2000"),
+    /**
+     * Bound the search by its counts alone (candidates, rollouts per candidate, extra rounds, playout plays) and never
+     * by the clock: no time budgets, no AI timeout, no scaling to the speed of the device. The same seed then gives the
+     * same game however busy the machine is, at the price of decisions that take as long as they take.
+     */
+    FLAT_MC_COUNT_BUDGET("false"),
     FLAT_MC_HEURISTIC_BONUS("80"),
     FLAT_MC_CONSIDER_HOLDING("true"),
     FLAT_MC_HOLD_MANA_WEIGHT("100"),

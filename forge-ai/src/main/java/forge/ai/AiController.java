@@ -1566,7 +1566,7 @@ public class AiController {
     // declares blockers for given defender in a given combat
     public void declareBlockersFor(Player defender, Combat combat) {
         final long id = AITimeoutTracker.key(game.getId(), player.getId());
-        final long timeoutNanos = TimeUnit.SECONDS.toNanos(game.getAITimeout());
+        final long timeoutNanos = aiTimeoutNanos();
         AITimeoutTracker.begin(id, timeoutNanos);
         Object limit = null;
         try {
@@ -1724,7 +1724,7 @@ public class AiController {
         // 12/2/10(sol) the decision making here has moved to getAttackers()
         final AiAttackController aiAtk = new AiAttackController(attacker);
         final long id = AITimeoutTracker.key(game.getId(), player.getId());
-        final long timeoutNanos = TimeUnit.SECONDS.toNanos(game.getAITimeout());
+        final long timeoutNanos = aiTimeoutNanos();
         AITimeoutTracker.begin(id, timeoutNanos);
         Object limit = null;
         try {
@@ -1801,7 +1801,7 @@ public class AiController {
      */
     public List<SpellAbility> chooseSpellAbilityToPlay() {
         final long id = AITimeoutTracker.key(game.getId(), player.getId());
-        final long timeoutNanos = TimeUnit.SECONDS.toNanos(game.getAITimeout());
+        final long timeoutNanos = aiTimeoutNanos();
         AITimeoutTracker.begin(id, timeoutNanos);
         final Object limit = AITimeoutTracker.arm(AITimeoutTracker.deadlineNanos(id, timeoutNanos), false);
         try {
@@ -2293,6 +2293,7 @@ public class AiController {
             if (deckPlan(player).combos.has(ComboPlan.Kind.TUTOR_STORM)) {
                 if (stormSolver == null) {
                     stormSolver = new StormSolver();
+                    stormSolver.untimed = flatMcCountBudget();
                 }
                 final SpellAbility solved = stormSolver.next(player, deckPlan(player).combos);
                 if (solved != null) {
@@ -2513,6 +2514,17 @@ public class AiController {
         }
     }
 
+    /** Monte Carlo is switched on for this player and bounded by counts, not by the clock (FLAT_MC_COUNT_BUDGET). */
+    private boolean flatMcCountBudget() {
+        return (flatMcOverride != null ? flatMcOverride : game.getAIFlatMonteCarlo())
+                && getBoolProperty(AiProps.FLAT_MC_ENABLED) && getBoolProperty(AiProps.FLAT_MC_COUNT_BUDGET);
+    }
+
+    /** How long one thinking session may take. With the count budget nothing may be cut short by the clock. */
+    private long aiTimeoutNanos() {
+        return TimeUnit.SECONDS.toNanos(flatMcCountBudget() ? Integer.MAX_VALUE : game.getAITimeout());
+    }
+
     private boolean usesFlatMonteCarlo(final boolean mustRespond) {
         if (!(flatMcOverride != null ? flatMcOverride : game.getAIFlatMonteCarlo()) || flatMcOff() || mustRespond || simMode != null
                 || !getBoolProperty(AiProps.FLAT_MC_ENABLED)) {
@@ -2536,6 +2548,9 @@ public class AiController {
             cfg.maximized();
         } else if (game.getAIFlatMonteCarloLite()) {
             cfg.mobileLite();
+        }
+        if (cfg.countBudget) {
+            return cfg; // no time budgets, and nothing is ever too slow
         }
         if (flatMcSlowTrips > 0) {
             // Back after a pause for slowness: a smaller search, and no look at the opponent's turn, which costs most.
@@ -3063,7 +3078,7 @@ public class AiController {
         final boolean massReanimation = combos.isMassReanimationDeck(player);
         final boolean darkDepths = combos.has(ComboPlan.Kind.DARK_DEPTHS);
         final long aiId = AITimeoutTracker.key(game.getId(), player.getId());
-        final long timeoutNanos = TimeUnit.SECONDS.toNanos(game.getAITimeout());
+        final long timeoutNanos = aiTimeoutNanos();
         AITimeoutTracker.begin(aiId, timeoutNanos);
         final long deadlineNanos = AITimeoutTracker.deadlineNanos(aiId, timeoutNanos);
         FutureTask<List<SpellAbility>> future = new FutureTask<>(() -> {

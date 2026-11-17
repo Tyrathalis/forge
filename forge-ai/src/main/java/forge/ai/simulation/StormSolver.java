@@ -112,6 +112,8 @@ public final class StormSolver {
     /** A setup play has to make the hand this much better, or the AI does what it always did. */
     private static final int SETUP_MIN_GAIN = 30;
 
+    /** Search up to the node limit whatever the time it takes (see AiProps.FLAT_MC_COUNT_BUDGET). */
+    public boolean untimed;
     /** Set after an OutOfMemoryError: the AI plays without the solver for the rest of the game. */
     private boolean disabled;
     private Line line;
@@ -221,7 +223,7 @@ public final class StormSolver {
         solves++;
         totalSolves++;
         try {
-            line = solve(ai, combos, DEFAULT_MAX_NODES, budgetNanos());
+            line = solve(ai, combos, DEFAULT_MAX_NODES, untimed ? Long.MAX_VALUE : budgetNanos());
         } catch (final OutOfMemoryError e) {
             line = null; // the search is local and garbage now; Flat Monte Carlo plays on
             disabled = true;
