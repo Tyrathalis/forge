@@ -46,12 +46,12 @@ public class DirectedPaymentAuditTest extends SimulationTest {
         return c.getManaAbilities().iterator().next();
     }
 
-    /** Negative control: the heuristic cannot construct the chained payment
-     *  (Signet is excluded from its candidate set — getAIPlayableMana skips
-     *  mana abilities with mana costs), even though the board is
-     *  arithmetically sufficient. */
+    /** Until the 2026-11-18 upstream merge this was the negative control: the
+     *  heuristic could not construct the chained payment (getAIPlayableMana
+     *  skipped mana abilities with mana costs). Upstream #12149 taught the
+     *  AI to pay for Signets and filter lands, so the heuristic sees it now. */
     @Test
-    public void testHeuristicCannotConstructChainedPayment() {
+    public void testHeuristicConstructsChainedPayment() {
         Game game = initAndCreateGame();
         Player p = game.getPlayers().get(1);
 
@@ -66,8 +66,8 @@ public class DirectedPaymentAuditTest extends SimulationTest {
         castSa.setActivatingPlayer(p);
 
         // {1}{U}{B} with I, I, Signet: payable via I -> {U} -> activate
-        // Signet -> {U}{B} float -> I. The heuristic says no.
-        AssertJUnit.assertFalse("heuristic should NOT see the chained payment",
+        // Signet -> {U}{B} float -> I. The heuristic says yes since #12149.
+        AssertJUnit.assertTrue("heuristic sees the chained payment",
                 ComputerUtilMana.canPayManaCost(castSa, p, 0, false));
     }
 

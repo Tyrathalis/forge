@@ -95,6 +95,10 @@ public class PaymentWiringTest extends SimulationTest {
         Player p = game.getPlayers().get(1);
         addCard("Island", p);
         addCard("Island", p);
+        // a third land makes the window a real choice: since the 2026-11-18 upstream merge
+        // (#12149) the auto-payer constructs the Signet chain, so I + I + Signet alone is one
+        // class the auto-payer pays and the bridge is never asked
+        addCard("Swamp", p);
         Card signet = addCard("Dimir Signet", p);
         Card thief = addCardToZone("Thief of Sanity", p, ZoneType.Hand); // {1}{U}{B}
         game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
@@ -105,7 +109,7 @@ public class PaymentWiringTest extends SimulationTest {
         castSa.setActivatingPlayer(p);
         PaymentEnumerator.Result r = PaymentEnumerator.enumerate(p, castSa,
                 castSa.getPayCosts().getTotalMana());
-        AssertJUnit.assertTrue("forced-chain window is consequential",
+        AssertJUnit.assertTrue("the chained window is consequential",
                 PaymentEnumerator.consequential(r, PaymentEnumerator.autoPayable(
                         p, castSa, castSa.getPayCosts().getTotalMana(), false)));
         int chainedIdx = -1;
@@ -133,11 +137,12 @@ public class PaymentWiringTest extends SimulationTest {
         AssertJUnit.assertEquals("no float residue", 0, p.getManaPool().totalMana());
     }
 
-    /** The auto answer on the same board reproduces today's behavior exactly:
-     *  the auto-payer cannot construct the chain, the window fails — the
-     *  documented blind spot, now visible through the wire. */
+    /** The forced-chain board (I + I + Signet) after the 2026-11-18 upstream
+     *  merge: the auto-payer constructs the chain (#12149), so the window is
+     *  one class it pays and the bridge is never asked. Before the merge the
+     *  bridge was asked once and the auto answer failed (the blind spot). */
     @Test
-    public void testAutoAnswerKeepsBlindSpot() {
+    public void testAutoPaysTheForcedChainBoard() {
         Game game = initAndCreateGame();
         Player p = game.getPlayers().get(1);
         addCard("Island", p);
@@ -151,7 +156,7 @@ public class PaymentWiringTest extends SimulationTest {
         bridge.answer = 0; // auto
         boolean paid = pay(controller(p, bridge), thief, p);
 
-        AssertJUnit.assertEquals(1, bridge.asks);
-        AssertJUnit.assertFalse("auto cannot construct the chain", paid);
+        AssertJUnit.assertEquals("bridge never asked", 0, bridge.asks);
+        AssertJUnit.assertTrue("auto constructs the chain", paid);
     }
 }

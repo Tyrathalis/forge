@@ -129,9 +129,11 @@ public class PaymentEnumeratorTest extends SimulationTest {
         SpellAbility castSa = thief.getFirstSpellAbility();
         castSa.setActivatingPlayer(p);
         boolean auto = PaymentEnumerator.autoPayable(p, castSa, castSa.getPayCosts().getTotalMana(), false);
-        AssertJUnit.assertFalse("the auto-payer cannot construct the chain", auto);
-        AssertJUnit.assertTrue("forced window is consequential",
-                PaymentEnumerator.consequential(r, auto));
+        // Since the 2026-11-18 upstream merge (#12149) the auto-payer constructs the chain, so
+        // this board no longer opens a forced window: it is consequential only on a real choice.
+        AssertJUnit.assertTrue("the auto-payer constructs the chain", auto);
+        AssertJUnit.assertEquals("no forced channel on this board",
+                r.options.size() >= 2, PaymentEnumerator.consequential(r, auto));
 
         // Directed execution: float the plan, then cast from the float.
         PaymentEnumerator.ExecOutcome out = PaymentEnumerator.executeDirected(p, chained.plan);

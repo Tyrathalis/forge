@@ -187,15 +187,17 @@ public class OptionMaskCommandZoneTest extends SimulationTest {
                 AssertJUnit.assertFalse(b.offered);
                 AssertJUnit.assertFalse(f.aiCanPay);
                 AssertJUnit.assertFalse(b.aiCanPay);
-                // the heuristic's blind spot (upstream forge-ai): the alternate host drops the tax
+                // the heuristic's blind spot is closed upstream (#12283, in the 2026-11-18 merge): the
+                // alternate host still carries no zone, but canPayCost on it now counts the commander tax
                 AssertJUnit.assertNull("the alternate host carries no zone", alt.getZone());
-                AssertJUnit.assertTrue("canPayCost on the alternate host ignores the commander tax", aiCanPayOnAlt);
-                // the attempted cast strands the card and the mana (the corpus state after each miss)
+                AssertJUnit.assertFalse("canPayCost on the alternate host counts the commander tax", aiCanPayOnAlt);
+                // a forced cast is refused cleanly: before the merge it stranded the card in the stack
+                // zone with every land tapped and six mana floating (the corpus state after each miss)
                 AssertJUnit.assertFalse(castOk);
-                AssertJUnit.assertEquals(ZoneType.Stack, kingNow.getZone().getZoneType());
+                AssertJUnit.assertEquals(ZoneType.Command, kingNow.getZone().getZoneType());
                 AssertJUnit.assertTrue(game.getStack().isEmpty());
-                AssertJUnit.assertEquals(0, untappedLands(p));
-                AssertJUnit.assertEquals(6, p.getManaPool().totalMana());
+                AssertJUnit.assertEquals(6, untappedLands(p));
+                AssertJUnit.assertEquals(0, p.getManaPool().totalMana());
             }
         }
     }
