@@ -69,7 +69,7 @@ public final class CombatRealizer {
         // CR 508.1d: attack-cost payment decisions are made at declaration;
         // pre-drop what can't be paid (mirrors the AI path) so the engine's
         // propaganda pass doesn't churn pay-then-cancel.
-        ai.removeUnpayableAttackers(combat);
+        ai.removeUnpayableAttackers(p, combat);
 
         if (!CombatUtil.validateAttackers(combat)) {
             // tier 1: union-merge the best legal attack's missing entries

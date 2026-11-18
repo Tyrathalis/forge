@@ -18,14 +18,9 @@ import forge.util.MyRandom;
 import java.util.List;
 
 public class FightAi extends SpellAbilityAi {
-    @Override
-    protected boolean checkAiLogic(final Player ai, final SpellAbility sa, final String aiLogic) {
-        return super.checkAiLogic(ai, sa, aiLogic);
-    }
 
     @Override
     protected AiAbilityDecision checkApiLogic(final Player ai, final SpellAbility sa) {
-        sa.resetTargets();
         final Card source = sa.getHostCard();
 
         // everything is defined or targeted above, can't do anything there unless a specific logic is set
@@ -38,14 +33,15 @@ public class FightAi extends SpellAbilityAi {
         aiCreatures = CardLists.getTargetableCards(aiCreatures, sa);
         aiCreatures = ComputerUtil.getSafeTargets(ai, sa, aiCreatures);
         List<Card> humCreatures = ai.getOpponents().getCreaturesInPlay();
-        humCreatures = CardLists.getTargetableCards(humCreatures, sa);
+        humCreatures = filterDoomed(ai, CardLists.getTargetableCards(humCreatures, sa));
         // Filter MustTarget requirements
         StaticAbilityMustTarget.filterMustTargetCards(ai, humCreatures, sa);
 
-        //prevent IndexOutOfBoundsException on MOJHOSTO variant
         if (humCreatures.isEmpty()) {
             return new AiAbilityDecision(0, AiPlayDecision.MissingNeededCards);
         }
+
+        sa.resetTargets();
 
         // assumes the triggered card belongs to the ai
         if (sa.hasParam("Defined")) {
@@ -181,6 +177,7 @@ public class FightAi extends SpellAbilityAi {
      * @return true if fight effect should be played, false otherwise
      */
     public static AiAbilityDecision canFight(final Player ai, final SpellAbility sa, int power, int toughness) {
+        sa.resetTargets();
     	final Card source = sa.getHostCard();
         final String sourceName = ComputerUtilAbility.getAbilitySourceName(sa);
         AbilitySub tgtFight = sa.getSubAbility();
@@ -209,6 +206,7 @@ public class FightAi extends SpellAbilityAi {
             aiCreatures = ComputerUtil.getSafeTargets(ai, sa, aiCreatures);
             humCreatures = CardLists.getTargetableCards(humCreatures, tgtFight);
         }
+        humCreatures = filterDoomed(ai, humCreatures);
         if (humCreatures.isEmpty() || aiCreatures.isEmpty()) {
             return new AiAbilityDecision(0, AiPlayDecision.MissingNeededCards);
         }
@@ -267,6 +265,12 @@ public class FightAi extends SpellAbilityAi {
             }
         }
         return new AiAbilityDecision(0, AiPlayDecision.TargetingFailed);
+    }
+
+    private static CardCollection filterDoomed(final Player ai, final CardCollection list) {
+        CardCollection result = ComputerUtil.filterCreaturesThatWillDieThisTurn(ai, list);
+        result.removeAll(ComputerUtilAbility.getCardsTargetedWithApi(ai, result, null, ApiType.Fight));
+        return result;
     }
 
     /**

@@ -156,8 +156,12 @@ public class MakeCardEffect extends SpellAbilityEffect {
                             String editionCode = sa.getHostCard() != null ? sa.getHostCard().getSetCode() : CardEdition.UNKNOWN_CODE;
                             pc = StaticData.instance().getCommonCards().getCard(name, editionCode);
                         }
+                        if (pc == null) {
+                            System.err.println("MakeCard: no card named " + name + " - " + source);
+                            break;
+                        }
                         Card card = Card.fromPaperCard(pc, player);
-
+                        CardUtil.turnToRightFace(name, card);
                         if (sa.hasParam("TokenCard")) {
                             card.setTokenCard(true);
                         }
