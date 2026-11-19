@@ -120,6 +120,20 @@ public class AiProfileUtil {
         return profileMap;
     }
 
+    /**
+     * Registers a profile under {@code name} that is {@code base} with some properties replaced. The derived
+     * profile lives in memory only: it is not listed by {@link #getAvailableProfiles()} and no file is written.
+     * For harnesses that compare settings without shipping a profile file per setting.
+     */
+    public static void deriveProfile(final String base, final String name, final Map<AiProps, String> overrides) {
+        final Map<AiProps, String> derived = new HashMap<>();
+        if (loadedProfiles.get(base) != null) {
+            derived.putAll(loadedProfiles.get(base));
+        }
+        derived.putAll(overrides);
+        loadedProfiles.put(name, derived);
+    }
+
     public static String getProperty(final Player p, final AiProps propName) {
         String prop = AiProfileUtil.getAIProp(p.getLobbyPlayer(), propName);
 

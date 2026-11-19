@@ -361,6 +361,22 @@ public final class FlatMonteCarloPicker {
         public final GameObject target;
         /** For {@link Mode#ATTACK}: the attack set rollouts chose (empty = no attack), else null. */
         public Map<Card, GameEntity> attackers;
+        /** What kind of decision this was; null when no comparison was set up. Statistics only. */
+        public Mode mode;
+        /** Lines the comparison started with, before the device cut ({@link #candidatesEvaluated} is what was sampled). */
+        public int offered;
+        /** Most samples any one line got, i.e. the rounds that were played. */
+        public int rounds;
+
+        /** Fills in the statistics fields; nothing reads them to decide anything. */
+        Result measured(final Mode mode, final int offered, final int[] count) {
+            this.mode = mode;
+            this.offered = offered;
+            for (final int c : count) {
+                this.rounds = Math.max(this.rounds, c);
+            }
+            return this;
+        }
 
         Result(final SpellAbility choice, final boolean hold, final boolean decidedByRollouts,
                final int candidatesEvaluated, final int rollouts, final long elapsedNanos, final String reason) {
@@ -638,7 +654,7 @@ public final class FlatMonteCarloPicker {
                     if (value == WIN_VALUE && !cand.isHold()) {
                         // This line wins the game outright: nothing needs comparing, and waiting only wastes time.
                         return new Result(cand.sa, false, true, Math.max(evaluated, c + 1), rollouts,
-                                System.nanoTime() - start, "wins", prunedCount, cand.target);
+                                System.nanoTime() - start, "wins", prunedCount, cand.target).measured(mode, n, count);
                     }
                 }
                 if (r == 0) {
@@ -657,11 +673,11 @@ public final class FlatMonteCarloPicker {
                     + (maxRolloutNanos / 1_000_000) + "ms budget=" + (budget / 1_000_000) + "ms");
         }
         if (evaluated < 2) {
-            return new Result(heuristicChoice, heuristicChoice == null, false, evaluated, rollouts, elapsed, tooSlow ? "too-slow" : "no-time", prunedCount);
+            return new Result(heuristicChoice, heuristicChoice == null, false, evaluated, rollouts, elapsed, tooSlow ? "too-slow" : "no-time", prunedCount).measured(mode, n, count);
         }
         if (invalid[0] || count[0] == 0) {
             // We cannot even simulate what the heuristics want to do, so there is nothing to compare against.
-            return new Result(heuristicChoice, heuristicChoice == null, false, evaluated, rollouts, elapsed, "heuristic-unsimulatable", prunedCount);
+            return new Result(heuristicChoice, heuristicChoice == null, false, evaluated, rollouts, elapsed, "heuristic-unsimulatable", prunedCount).measured(mode, n, count);
         }
 
         if (TRACE) {
@@ -750,7 +766,7 @@ public final class FlatMonteCarloPicker {
         }
         final Result decided = new Result(chosen.sa, chosen.isHold(), true, evaluated, rollouts, elapsed, reason, prunedCount, chosen.target);
         decided.attackers = chosen.attackers;
-        return decided;
+        return decided.measured(mode, n, count);
     }
 
     /**

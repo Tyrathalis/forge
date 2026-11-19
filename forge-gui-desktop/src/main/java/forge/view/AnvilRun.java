@@ -97,6 +97,8 @@ public final class AnvilRun {
         return winner;
     }
 
+    /** The game a Monte Carlo decision row belongs to (-mcdecisions); one game at a time per worker. */
+    private static volatile int MC_GAME_INDEX = -1;
     private static final int DRAW_CLOCK_S = 300;
     /** ADR-0102 deterministic caps (see the rules setup below). */
     static final int DEFAULT_TURN_CAP = 52;
@@ -148,7 +150,8 @@ public final class AnvilRun {
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
                     + "[-profiles <csv>] [-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchvoidrescue] [-searchalloc <tau> [-searchfloor <p>]]] "
-                    + "[-payrescue] [-replay <jobs.jsonl>]");
+                    + "[-payrescue] [-replay <jobs.jsonl>] "
+                    + "[-mc on|max [-mcseats <csv>] [-mcprops <K=V,...>] [-mcdecisions [<jsonl>]] [-mcclock <s>]]");
             return;
         }
 
@@ -164,6 +167,75 @@ public final class AnvilRun {
             for (String s : params.get("bridgeseats").get(0).split(",")) {
                 bridgeSeats.add(Integer.parseInt(s.trim()));
             }
+        }
+        // Upstream's Flat Monte Carlo for chosen heuristic seats (M13 Build 0). Absent = off for every seat, the
+        // game as it was. -mc on|max switches it on per seat through the controller's own override, so the game flag
+        // stays false and every other seat is the plain heuristic. -mcseats defaults to the seats outside
+        // -bridgeseats. -mcprops replaces profile properties for those seats only (the count budget and its counts)
+        // on a derived in-memory profile; the game record keeps the drawn profile's name and carries the properties.
+        final String mcMode = params.containsKey("mc")
+                ? (params.get("mc").isEmpty() ? "on" : params.get("mc").get(0)) : null;
+        final Set<Integer> mcSeats = new HashSet<>();
+        final Map<forge.ai.AiProps, String> mcProps = new java.util.EnumMap<>(forge.ai.AiProps.class);
+        String mcPropsText = "";
+        PrintWriter mcDecisions = null;
+        final int mcClock = params.containsKey("mcclock") ? Integer.parseInt(params.get("mcclock").get(0)) : 1800;
+        if (mcMode != null) {
+            if (!mcMode.equals("on") && !mcMode.equals("max")) {
+                System.err.println("FATAL: -mc takes on or max, not '" + mcMode + "'");
+                System.exit(2);
+            }
+            if (params.containsKey("mcseats")) {
+                for (String s : params.get("mcseats").get(0).split(",")) {
+                    mcSeats.add(Integer.parseInt(s.trim()));
+                }
+            } else if (bridgeSeats != null) {
+                for (int j = 0; j < 2; j++) {
+                    if (!bridgeSeats.contains(j)) {
+                        mcSeats.add(j);
+                    }
+                }
+            }
+            if (mcSeats.isEmpty()) {
+                System.err.println("FATAL: -mc with no heuristic seat to give it to (name them with -mcseats)");
+                System.exit(2);
+            }
+            if (params.containsKey("mcprops")) {
+                mcPropsText = params.get("mcprops").get(0);
+                for (String kv : mcPropsText.split(",")) {
+                    String[] p = kv.split("=", 2);
+                    try {
+                        mcProps.put(forge.ai.AiProps.valueOf(p[0].trim()), p[1].trim());
+                    } catch (RuntimeException e) {
+                        System.err.println("FATAL: -mcprops entry '" + kv + "' is not an AI property with a value");
+                        System.exit(2);
+                    }
+                }
+            }
+            if (params.containsKey("mcdecisions")) {
+                // One row per Monte Carlo decision: what the comparison was offered, what it sampled, how long it took.
+                final PrintWriter out;
+                try {
+                    // no path given: beside -results, so each worker of a fleet writes its own
+                    out = new PrintWriter(new FileWriter(!params.get("mcdecisions").isEmpty()
+                            ? params.get("mcdecisions").get(0)
+                            : new File(new File(params.get("results").get(0)).getAbsoluteFile().getParentFile(),
+                                    "mc-decisions.jsonl").getPath(), true));
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+                mcDecisions = out;
+                forge.ai.simulation.FlatMonteCarloStats.listener = r -> {
+                    synchronized (out) {
+                        out.println("{\"i\":" + MC_GAME_INDEX + ",\"mode\":\"" + r.mode + "\",\"offered\":" + r.offered
+                                + ",\"evaluated\":" + r.candidatesEvaluated + ",\"rounds\":" + r.rounds
+                                + ",\"rollouts\":" + r.rollouts + ",\"pruned\":" + r.pruned
+                                + ",\"us\":" + (r.elapsedNanos / 1000) + ",\"rolled\":" + r.decidedByRollouts
+                                + ",\"reason\":\"" + r.reason + "\"}");
+                    }
+                };
+            }
+            forge.ai.simulation.FlatMonteCarloStats.reset();
         }
         // D6 run-2: re-ask-on-veto (d6-vtrace-loop §6b). Per-JVM, all seats.
         boolean reask = params.containsKey("reask");
@@ -783,6 +855,13 @@ public final class AnvilRun {
             System.exit(2);
         }
 
+        if (mcMode != null) {
+            for (String base : profiles) {
+                AiProfileUtil.deriveProfile(base, base + "+mc", mcProps);
+            }
+            System.out.printf("Flat Monte Carlo: mode=%s seats=%s props=%s%n", mcMode, new java.util.TreeSet<>(mcSeats), mcProps);
+        }
+
         System.out.printf("Anvil worker: games [%d,%d), %s, seedbase=%s, bridge=%s, tags=%s, "
                         + "reask=%s, pairs=%d gpp=%s, profiles=%s%n",
                 rangeStart, rangeStart + nGames, type,
@@ -942,7 +1021,7 @@ public final class AnvilRun {
                     AnvilLobbyPlayer lp = new AnvilLobbyPlayer(
                             (seatBridged ? "Anvil(" : "Heur(") + (j + 1) + ")-" + d.getName(),
                             bridge, seatBridged ? tags : java.util.Collections.emptySet());
-                    lp.setAiProfile(seatProfiles[j]);
+                    lp.setAiProfile(mcMode != null && mcSeats.contains(j) ? seatProfiles[j] + "+mc" : seatProfiles[j]);
                     rp.setPlayer(lp);
                     pp.add(rp);
                 }
@@ -950,6 +1029,19 @@ public final class AnvilRun {
                 Match mc = new Match(rules, pp, "Anvil");
                 Game game = mc.createGame();
                 AnvilGames.noGui(game); // -Danvil.nogui=on: upstream #11780 DummyCardView (ADR-0110)
+                if (mcMode != null) {
+                    MC_GAME_INDEX = idx;
+                    for (int j : mcSeats) {
+                        forge.game.player.PlayerController pc = game.getRegisteredPlayers().get(j).getController();
+                        if (!(pc instanceof forge.ai.PlayerControllerAi)) {
+                            System.err.println("FATAL: -mc seat " + j + " has no AI controller");
+                            System.exit(2);
+                        }
+                        forge.ai.AiController brains = ((forge.ai.PlayerControllerAi) pc).getAi();
+                        brains.setFlatMonteCarloOverride(Boolean.TRUE);
+                        brains.setFlatMonteCarloMaxOverride(mcMode.equals("max"));
+                    }
+                }
                 Census.startGame(idx, seed);
                 Obs.startGame(idx, seed, game, type.toString());
                 long gameT0 = System.currentTimeMillis();
@@ -1000,6 +1092,11 @@ public final class AnvilRun {
                     // the copies run inside the mainline's wall: a rollout-leaf
                     // allowance per copy (ROLLOUT_END_TIMEOUT_S bounds each)
                     extraS += (rjob.maxArm() + 1) * Math.max(1, rjob.k) * 45;
+                }
+                if (mcMode != null) {
+                    // As under search: the turn and window caps bound the game, and the wall clock is a crash guard.
+                    // A Monte Carlo seat on the count budget must not be cut by a clock, or the game stops reproducing.
+                    extraS += mcClock;
                 }
                 final boolean[] drawClockHit = {false};
                 ScheduledFuture<?> drawClock = watchdogs.schedule(() -> {
@@ -1073,7 +1170,10 @@ public final class AnvilRun {
                             + ",\"cap\":" + (capReason == null ? "null" : "\"" + capReason + "\"")
                             + ",\"windows\":" + game.getAnvilPriorityGrants()
                             + ",\"decks\":[\"" + jstr(pair[0]) + "\",\"" + jstr(pair[1]) + "\"]"
-                            + ",\"profiles\":[\"" + jstr(seatProfiles[0]) + "\",\"" + jstr(seatProfiles[1]) + "\"]}");
+                            + ",\"profiles\":[\"" + jstr(seatProfiles[0]) + "\",\"" + jstr(seatProfiles[1]) + "\"]"
+                            + (mcMode == null ? "" : ",\"mc\":{\"mode\":\"" + mcMode + "\",\"seats\":"
+                                    + new java.util.TreeSet<>(mcSeats) + ",\"props\":\"" + jstr(mcPropsText) + "\"}")
+                            + "}");
                     results.flush();
                 }
                 System.out.printf("game %d seed=%d -> %s (%d turns)%n", idx, seed, status, turns);
@@ -1091,6 +1191,12 @@ public final class AnvilRun {
             Obs.close();
             bridge.close();
             watchdogs.shutdownNow();
+            if (mcMode != null) {
+                System.out.println(forge.ai.simulation.FlatMonteCarloStats.summary());
+                if (mcDecisions != null) {
+                    mcDecisions.close();
+                }
+            }
         }
 
         long wallS = (System.currentTimeMillis() - t0) / 1000;

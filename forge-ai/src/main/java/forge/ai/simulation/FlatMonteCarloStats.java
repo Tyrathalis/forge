@@ -69,10 +69,17 @@ public final class FlatMonteCarloStats {
         }
     }
 
+    /** Told about every recorded decision, for a harness that wants them one by one; null (the default) costs nothing. */
+    public static volatile java.util.function.Consumer<FlatMonteCarloPicker.Result> listener;
+
     /** Called by the AI once per Monte Carlo decision. */
     public static void record(final FlatMonteCarloPicker.Result result) {
         if (result == null) {
             return;
+        }
+        final java.util.function.Consumer<FlatMonteCarloPicker.Result> heard = listener;
+        if (heard != null) {
+            heard.accept(result);
         }
         synchronized (LOCK) {
             decisions++;
