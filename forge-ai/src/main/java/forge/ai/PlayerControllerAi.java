@@ -1512,6 +1512,7 @@ public class PlayerControllerAi extends PlayerController {
 
                     if (sa.isMayChooseNewTargets() && !sa.getAllTargetChoices().isEmpty()) {
                         chooseNewTargetsForCopy(sa);
+                        preparedCopy(sa);
                         // FIXME: the new implementation (below) requires implementing setupNewTargets in the AI controller, among other possible changes, otherwise breaks AI
                         // sa.setupNewTargets(player);
                     }
@@ -1593,6 +1594,13 @@ public class PlayerControllerAi extends PlayerController {
      * targets (Anvil's target surface). No-op here.
      */
     protected void preparedTrigger(SpellAbility sa) {
+    }
+
+    /**
+     * A spell copy whose new targets the AI has just picked (chooseNewTargetsForCopy),
+     * about to go on the stack: the same hook for a copy. No-op here.
+     */
+    protected void preparedCopy(SpellAbility copy) {
     }
 
     @Override

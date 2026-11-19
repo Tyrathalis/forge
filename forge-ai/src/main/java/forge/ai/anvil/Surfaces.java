@@ -1116,12 +1116,18 @@ public final class Surfaces {
      *  directed / bridged answer re-targets it, else the picks stand. The
      *  window is traced either way. */
     public static boolean retargetPrepared(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa) {
+        return retargetPrepared(g, p, opts, min, max, sa, "playTriggerTargets");
+    }
+
+    /** The same for any prepared ability; m = the census method the window is recorded under. */
+    public static boolean retargetPrepared(Game g, Player p, List<GameEntity> opts, int min, int max, SpellAbility sa,
+            String m) {
         try {
             SpellAbility u = unwrap(sa);
             int[] natural = indicesOf(opts, u.getTargets());
             if (!Census.loopTripped(g) && !opts.isEmpty()) {
                 SurfaceDirective[] d = new SurfaceDirective[1];
-                int[] a = targetAnswer(g, p, opts, min, max, "playTriggerTargets", labelOf(sa), d);
+                int[] a = targetAnswer(g, p, opts, min, max, m, labelOf(sa), d);
                 if (a != null) {
                     TargetChoices old = u.getTargets();
                     if (applyTargets(u, opts, a)) {

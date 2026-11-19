@@ -245,6 +245,38 @@ public class CensusPlayerController extends PlayerControllerAi {
         }
     }
 
+    /**
+     * A spell copy's new targets. Upstream's AI picks them inside chooseNewTargetsForCopy without
+     * the chooseTargetsFor callback (it calls it only when another player targets), so the target
+     * surface is offered here, under that callback's name: the AI's picks are the natural line and
+     * a directed / bridged answer re-targets the copy.
+     */
+    @Override
+    protected void preparedCopy(SpellAbility copy) {
+        try {
+            for (SpellAbility cur = Surfaces.unwrap(copy); cur != null; cur = cur.getSubAbility()) {
+                if (cur.hasParam("TargetingPlayer")) {
+                    return; // setupTargets ran chooseTargetsFor for every node
+                }
+            }
+            for (SpellAbility cur = Surfaces.unwrap(copy); cur != null; cur = cur.getSubAbility()) {
+                if (!cur.usesTargeting()) {
+                    continue;
+                }
+                List<GameEntity> __o = Surfaces.targetOptionsCleared(cur);
+                if (__o.size() < 2) {
+                    continue;
+                }
+                int __min = Surfaces.targetMin(cur), __max = Surfaces.targetMax(cur);
+                Census.rec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(cur), "copy", true);
+                long __s = Surfaces.dec(getGame(), getPlayer(), "chooseTargetsFor", Surfaces.TARGET, __o, "currentAbility", Census.str(cur), "min", __min, "max", __max, "candidates", __o.size(), "sak", cur);
+                Surfaces.retargetPrepared(getGame(), getPlayer(), __o, __min, __max, cur, "chooseTargetsFor");
+                Obs.ret(getGame(), __s, cur.getTargets());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     @Override
     public boolean chooseTargetsFor(SpellAbility currentAbility) {
         Census.rec(getGame(), getPlayer(), "chooseTargetsFor", "currentAbility", Census.str(currentAbility));
