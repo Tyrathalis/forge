@@ -305,6 +305,9 @@ public final class ForkFidelityCheck {
         result.mainTraceHash = traceHash(monitor.mainTrace, result.forkTurn);
         result.forkTraceHash = traceHash(monitor.forkTrace, result.forkTurn);
         classify(result, monitor);
+        if ("divergence".equals(result.status) || "outcome_mismatch".equals(result.status)) {
+            result.notes = (result.notes + " " + logDiff(game, monitor)).trim();
+        }
         if (chain || twin) {
             result.chainTraceHash = traceHash(monitor.chainTrace, result.forkTurn);
             classifyChain(result, monitor);
@@ -343,6 +346,38 @@ public final class ForkFidelityCheck {
     }
 
     /** Compares mainline vs fork traces from the fork turn onward and sets result.status. */
+    /**
+     * The first game-log entry after the fork point where the mainline and the copy differ, with
+     * the entries before it: the turn digests name where a divergence shows, this names the play.
+     * Read after both games have ended, so it changes neither.
+     */
+    private static String logDiff(Game main, Monitor m) {
+        try {
+            List<forge.game.GameLogEntry> a = main.getGameLog().getAllEntries();
+            List<forge.game.GameLogEntry> b = m.forkGame.getGameLog().getAllEntries();
+            int i = m.mainLogMark, j = m.forkLogMark, k = 0;
+            while (i + k < a.size() && j + k < b.size()
+                    && a.get(i + k).toString().equals(b.get(j + k).toString())) {
+                k++;
+            }
+            StringBuilder sb = new StringBuilder("logdiff@" + k + " same:");
+            for (int c = Math.max(0, k - 4); c < k; c++) {
+                sb.append(" [").append(a.get(i + c)).append(']');
+            }
+            sb.append(" MAIN:");
+            for (int c = k; c < k + 3 && i + c < a.size(); c++) {
+                sb.append(" [").append(a.get(i + c)).append(']');
+            }
+            sb.append(" FORK:");
+            for (int c = k; c < k + 3 && j + c < b.size(); c++) {
+                sb.append(" [").append(b.get(j + c)).append(']');
+            }
+            return sb.toString().replace('\n', ' ');
+        } catch (RuntimeException e) {
+            return "logdiff failed: " + e;
+        }
+    }
+
     private static void classify(GameResult r, Monitor m) {
         if (r.status != null) {
             return; // copy_crash / resume_crash already set at fork time
@@ -397,6 +432,9 @@ public final class ForkFidelityCheck {
         final Map<Integer, List<String>> chainTrace = new TreeMap<>();
         ScheduledExecutorService watchdogs;
         boolean forked = false;
+        /** The copy and the two logs' sizes at the fork point: classify() diffs the logs after it. */
+        Game forkGame;
+        int mainLogMark, forkLogMark;
         boolean perturb = false;
         boolean freshRng = false;
         boolean chain = false;
@@ -497,6 +535,9 @@ public final class ForkFidelityCheck {
                 p0.setLife(p0.getLife() - 1, null);
             }
 
+            forkGame = copy;
+            mainLogMark = game.getGameLog().size();
+            forkLogMark = copy.getGameLog().size();
             ForkRecorder rec = new ForkRecorder(copy, forkTrace);
             copy.subscribeToEvents(rec);
             copy.getPhaseHandler().devResumeAtPriority();
