@@ -147,7 +147,7 @@ public final class AnvilRun {
                     + "[-turncap <n>] [-windowcap <n>] [-pool <id>] [-forkcommit <hash>] "
                     + "[-search [-searchrate <p>] [-searchrolls <k>] [-searchopts <cap>] [-searchmana] "
                     + "[-searchsurf <B> [-searchsurfcap <C>]] [-searchact <bar> [-searchtemp <T>]] "
-                    + "[-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchvoidrescue] [-searchalloc <tau> [-searchfloor <p>]]] "
+                    + "[-profiles <csv>] [-searchseats <csv>] [-searchactkinds <csv|all>] [-searchleaf next|eot|h<N>|end] [-searchrollsalt <long>] [-searchpay <B> [-searchpayleaf eot|next|h<N>|end] [-searchpaybridge]] [-searchdeep <B> [-searchdeepleaf eot|h<N>|end] [-searchdeeprolls <k>] [-searchdeeplo <m>] [-searchdeepfloor <p>] [-searchdeepbar <bar>]] [-searchclock <s>] [-searchvoidrescue] [-searchalloc <tau> [-searchfloor <p>]]] "
                     + "[-payrescue] [-replay <jobs.jsonl>]");
             return;
         }
@@ -758,6 +758,23 @@ public final class AnvilRun {
         // AI personalities (ADR-0004: corpus is personality-randomized). Sorted
         // so the seed->profile map is stable across filesystems.
         List<String> profiles = new ArrayList<>(AiProfileUtil.getAvailableProfiles());
+        // 2026-11-18: the draw is a named set, not the directory's listing.
+        // Upstream added Hard.ai and Hardest.ai (Default with the Monte Carlo
+        // layer tuned up, inert with the game flag off), and a draw over the
+        // listing changed the opponent mix with the engine. -profiles <csv>
+        // overrides; a named profile that is missing is fatal.
+        List<String> drawSet = Arrays.asList((params.containsKey("profiles")
+                ? params.get("profiles").get(0) : "Cautious,Default,Experimental,Reckless").split(","));
+        for (String want : drawSet) {
+            if (!profiles.contains(want.trim())) {
+                System.err.println("FATAL: AI profile '" + want.trim() + "' not found (have " + profiles + ")");
+                System.exit(2);
+            }
+        }
+        profiles.clear();
+        for (String want : drawSet) {
+            profiles.add(want.trim());
+        }
         Collections.sort(profiles);
         if (profiles.isEmpty()) {
             // Profiles are corpus provenance — an empty list would silently run

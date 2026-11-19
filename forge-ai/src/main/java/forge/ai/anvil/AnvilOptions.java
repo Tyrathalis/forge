@@ -326,6 +326,17 @@ public final class AnvilOptions {
                 restricted++;
                 continue;
             }
+            // 2026-11-18: the engine's failed-cast memory on the option mask.
+            // handlePlayingSpellAbility refuses, for the rest of the turn, a
+            // cast that failed once (AiController.hasFailedToCast); the AI's
+            // own chooser skips it. An option offered past that memory can
+            // never be played: the seat re-picked it until PhaseHandler's
+            // loop guard ended the window at 999 asks.
+            if (player.getController() instanceof forge.ai.PlayerControllerAi
+                    && ((forge.ai.PlayerControllerAi) player.getController()).getAi().hasFailedToCast(sa)) {
+                restricted++;
+                continue;
+            }
             scanned++;
             if (!PAYCHECK || payable(game, player, sa)) {
                 options.add(sa);

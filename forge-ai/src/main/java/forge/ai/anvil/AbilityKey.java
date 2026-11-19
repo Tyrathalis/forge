@@ -175,6 +175,11 @@ public final class AbilityKey {
             s = s.substring(0, i).trim();
         }
         s = s.replaceAll("(\\s*\\bby\\s+[^()\\[\\]\\n]{1,80}\\(\\d+\\))+$", "").trim();
+        // 2026-11-18: the same " by <source> (<id>)" shape when a cost note
+        // follows it ("... by Aang, Swift Savior (100) (by paying {2} instead
+        // of paying its mana cost)"): the merged engine names the granting
+        // card inside the description, so the key changed with the card's id.
+        s = s.replaceAll("\\s*\\bby\\s+[^()\\[\\]\\n]{1,80}\\(\\d+\\)(?=\\s*\\()", "").trim();
         return s;
     }
 

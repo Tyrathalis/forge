@@ -87,6 +87,11 @@ public class AbilityKeyTest extends SimulationTest {
         String by = "Choose one \u2014\n\u2022 Surveil 2.  by Laelia, the Blade Reforged (53) by Laelia, the Blade Reforged (53)";
         AssertJUnit.assertEquals("Choose one \u2014\n\u2022 Surveil 2.", AbilityKey.stripRuntime(by));
         AssertJUnit.assertEquals("", AbilityKey.stripRuntime("by Cori Mountain Monastery (116)"));
+        // 2026-11-18: the granting card named before a cost note
+        AssertJUnit.assertEquals("Wall of Omens - Creature 0 / 4 (by paying {2} instead of paying its mana cost)",
+                AbilityKey.stripRuntime("Wall of Omens - Creature 0 / 4 by Aang, Swift Savior (201) (by paying {2} instead of paying its mana cost)"));
+        AssertJUnit.assertEquals("Crew 5 (Tap any number of creatures you control with total power 5 or more: This Vehicle becomes an artifact creature until end of turn.)",
+                AbilityKey.stripRuntime("Crew 5 (Tap any number of creatures you control with total power 5 or more: This Vehicle becomes an artifact creature until end of turn.)"));
         // static brackets stay: no "Key: value" inside
         AssertJUnit.assertEquals("Prototype {1}{W}{W} [3/3]", AbilityKey.stripRuntime("Prototype {1}{W}{W} [3/3]"));
         AssertJUnit.assertEquals("{T}: Add {U}.", AbilityKey.stripRuntime("{T}: Add {U}."));

@@ -58,4 +58,24 @@ public class OptionMaskRestrictionsTest extends SimulationTest {
         AnvilOptions.invalidate(game, p);
         AssertJUnit.assertTrue(names(AnvilOptions.priorityOptions(game, p)).contains("Spider-Man 2099"));
     }
+
+    /** 2026-11-18: a cast the engine's failed-cast memory refuses for the
+     *  turn is not offered (the 999-ask loop of the merged engine). */
+    @Test
+    public void failedCastIsNotOfferedAgainThisTurn() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        addCard("Forest", p);
+        Card elf = addCardToZone("Llanowar Elves", p, ZoneType.Hand);
+        game.getPhaseHandler().devModeSet(PhaseType.MAIN1, p);
+        AnvilOptions.invalidate(game, p);
+        AssertJUnit.assertTrue(names(AnvilOptions.priorityOptions(game, p)).contains("Llanowar Elves"));
+
+        SpellAbility sa = elf.getFirstSpellAbility();
+        sa.setActivatingPlayer(p);
+        forge.ai.AiController ai = ((forge.ai.PlayerControllerAi) p.getController()).getAi();
+        ai.noteFailedCast(forge.ai.AiController.castKey(sa));
+        AnvilOptions.invalidate(game, p);
+        AssertJUnit.assertFalse(names(AnvilOptions.priorityOptions(game, p)).contains("Llanowar Elves"));
+    }
 }
