@@ -10,6 +10,8 @@ import forge.card.CardType;
 import forge.card.CardStateName;
 import forge.game.*;
 import forge.game.ability.effects.DetachedCardEffect;
+import forge.game.replacement.ReplacementEffect;
+import forge.game.trigger.Trigger;
 import forge.game.card.*;
 import forge.game.card.token.TokenInfo;
 import forge.game.combat.Combat;
@@ -366,6 +368,31 @@ public class GameCopier {
             }
         }
 
+        // What exiled a card, and the cards a permanent has exiled (hideaway's "play the exiled card",
+        // "ExiledWith" defines): the link runs both ways
+        for (Card card : origGame.getCardsIn(ZoneType.Exile)) {
+            final Card otherCard = cardMap.get(card);
+            final Card with = card.getExiledWith();
+            if (otherCard == null || with == null) {
+                continue;
+            }
+            final Card otherWith = cardMap.get(origGame.getCardState(with));
+            if (otherWith == null) {
+                continue;
+            }
+            otherCard.setExiledWith(otherWith);
+            otherWith.addExiledCard(otherCard);
+            if (card.getExiledBy() != null) {
+                otherCard.setExiledBy(playerMap.get(card.getExiledBy()));
+            }
+            if (card.getExiledSA() != null) {
+                final SpellAbility otherSa = findSAInCard(card.getExiledSA(), otherWith);
+                if (otherSa != null) {
+                    otherCard.setExiledSA(otherSa);
+                }
+            }
+        }
+
         // Planechase: the planes sit in the command zone, but which of them are face up is a field of the game
         if (origGame.getActivePlanes() != null) {
             final List<Card> planes = new ArrayList<>();
@@ -461,6 +488,14 @@ public class GameCopier {
         newCard.setType(new CardType(c.getType()));
         for (StaticAbility stAb : c.getStaticAbilities()) {
             newCard.addStaticAbility(stAb.copy(newCard, true));
+        }
+        // an effect card's replacement effects and triggers are what it is for: the commander effect's
+        // "put it into the command zone instead" (CR 903.9b), an emblem's trigger
+        for (ReplacementEffect re : c.getReplacementEffects()) {
+            newCard.addReplacementEffect(re.copy(newCard, true));
+        }
+        for (Trigger t : c.getTriggers()) {
+            newCard.addTrigger(t.copy(newCard, true));
         }
         for (SpellAbility sa : c.getSpellAbilities()) {
             SpellAbility saCopy = sa.copy(newCard, true);
@@ -594,6 +629,12 @@ public class GameCopier {
             newGame.getStackZone().add(newCard);
         } else {
             zoneOwner.getZone(zone).add(newCard);
+        }
+        // Zone.add stamps the current turn: without this every card in a copy "entered this turn"
+        // (Oran-Rief, the Vastwood; any ThisTurnEntered check)
+        newCard.setTurnInZone(c.getTurnInZone());
+        if (c.getTurnInController() != null) {
+            newCard.setTurnInController(playerMap.get(c.getTurnInController()));
         }
     }
 
