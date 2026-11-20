@@ -11,7 +11,7 @@ import org.testng.annotations.Test;
 
 /**
  * Anvil, the certifier merge (09-23, ADR-0117): the -replay jobs contract —
- * CensusRun -certify's flat job line plus seat / profiles / phase — parsed
+ * The M9 certifier's flat job line plus seat / profiles / phase — parsed
  * by {@link AnvilRun.ReplayJob}. Pure parsing; the fork point and the copies
  * are smoked on real games (the merge's parity smoke), not here.
  */

@@ -721,8 +721,8 @@ public final class AnvilRun {
         // The certifier merge (09-23; m12-plan "the certifier merge", ADR-0108
         // routed): -replay <jobs.jsonl> = replay a stored window and adjudicate
         // its payment answers on SEARCH COPIES — the one fork-and-adjudicate
-        // primitive, the M9 CensusRun -certify's second entry point. One job
-        // per line (CensusRun.CertJob's flat contract + seat / profiles): job,
+        // primitive, the second entry point of the M9 certifier (deleted with PayDirective, M13 Build 1). One job
+        // per line (the M9 certify job's flat contract + seat / profiles): job,
         // seed, deck1, deck2, p (the seat's name, "(N)" = seat N-1) or seat, t,
         // sa (an option-label substring), ord, arms, k, horizon (turns past t
         // the copies play; < 0 = to the outcome), mode ("observe" = arm 0 roll
@@ -733,7 +733,7 @@ public final class AnvilRun {
         // every (arm, roll) forks a search copy with that option forced and a
         // PAY SurfaceDirective answering `arm` at the forced option's own
         // payment window (0 = auto, the paired baseline), played to the
-        // horizon leaf, one ev:"certify" row per copy (CensusRun.certRow's
+        // horizon leaf, one ev:"certify" row per copy (the M9 certify row's
         // schema + kind / calls / i / seat / profiles); a job whose window
         // never comes gets one never_fired row per arm. Roll 0 = the TRUE
         // continuation (the mainline's RNG, no determinization), rolls >= 1
@@ -1896,7 +1896,7 @@ public final class AnvilRun {
             String wireHeader = null;
         }
 
-        /** The certify-style end snapshot of a copy (CensusRun.certRow's
+        /** The certify-style end snapshot of a copy (the M9 certify row's
          *  axes, seat order = registered order): [t_end, ended, life0, life1,
          *  creatures0, creatures1, power0, power1, hand0, hand1, lands0, lands1]. */
         private static String certSnap(Game copy, boolean ended) {
@@ -2567,7 +2567,7 @@ public final class AnvilRun {
     }
 
     /** The certifier merge (09-23): one -replay job — the M9 certify jobs
-     *  contract (CensusRun.CertJob) plus seat / profiles. Immutable. */
+     *  contract (the M9 certify job's) plus seat / profiles. Immutable. */
     static final class ReplayJob {
         final int job;
         final long seed;
@@ -2768,7 +2768,7 @@ public final class AnvilRun {
             int maxArm = job.maxArm();
             for (int arm = 0; arm <= maxArm; arm++) {
                 for (int roll = 0; roll < Math.max(1, job.k); roll++) {
-                    // CensusRun.certifyGame's roll seed: shared across arms so
+                    // the M9 certifier's roll seed: shared across arms so
                     // completions pair; roll 0 = the true continuation
                     long rollSeed = splitmix64(job.seed ^ (job.job * 0x9E3779B97F4A7C15L)
                             ^ (roll * 0xBF58476D1CE4E5B9L));
@@ -2793,7 +2793,7 @@ public final class AnvilRun {
             bridge.gameStart("g" + job.job, seed, Obs.lastHeaderForBridge(game));
         }
 
-        /** One certify row (CensusRun.certRow's contract, additive fields);
+        /** One certify row (the M9 certify row's contract, additive fields);
          *  returns the fired bit. */
         private boolean writeRow(int arm, int roll, int turn, String label, SearchMonitor.CopyResult cr) {
             boolean fired = cr.surfMiss == null && cr.surfN >= 0;

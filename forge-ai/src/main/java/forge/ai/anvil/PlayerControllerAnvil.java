@@ -1368,7 +1368,7 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         }
         if (d != null && d.fired && d.miss == null) {
             // the certifier merge (09-23): the certify row reads the answer's
-            // execution off the directive (CensusRun.certRow's exec / goals)
+            // execution off the directive (the M9 certify row's exec / goals)
             d.exec = exec;
             d.turn = getGame().getPhaseHandler().getTurn();
             if (pick > 0) {

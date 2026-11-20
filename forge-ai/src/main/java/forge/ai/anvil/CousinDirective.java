@@ -17,7 +17,7 @@ import forge.game.player.Player;
  * The engine applies cousins inside CostAdjustment.adjust(ManaCostBeingPaid,…)
  * via controller callbacks — there is no express-choice mechanism — so a
  * directed plan is ARMED here by the payment window owner (the bridged
- * path, the schedule directive, or the certify PayDirective) immediately
+ * path or the schedule directive) immediately
  * before the auto-completion runs, and the generated census controller's
  * FORCE_OVERRIDES hooks consume it from inside the nested
  * chooseCardsForConvokeOrImprovise / chooseCardsToDelve callbacks. Unarmed

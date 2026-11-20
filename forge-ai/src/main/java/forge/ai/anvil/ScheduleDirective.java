@@ -19,7 +19,7 @@ import forge.game.spellability.SpellAbility;
  * Anvil M10 ceiling instrument (m10-ceiling-spec.md "Engine build owed"):
  * the within-turn -forceschedule directive. Armed per fork copy by the
  * AnvilRun sched-rollout mode, keyed on Game identity in a WeakHashMap
- * (the PayDirective/SeqDirective idiom — an abandoned hard-capped thread
+ * (the SeqDirective idiom — an abandoned hard-capped thread
  * must never consume a directive armed for a later copy).
  *
  * The directive owns the target seat's TARGET TURN: an ordered list of
