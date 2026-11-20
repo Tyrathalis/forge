@@ -84,8 +84,12 @@ public final class Obs {
     /** Evening 4 (ADR-0105): the rescue flag (-payrescue) on every header. */
     public static volatile boolean payRescue = false;
     private static final int ZSTD_LEVEL = 3;
-    /** Per-game raw-byte ceiling; 2x the 50K-pilot's largest legit frame. */
+    /** Per-game raw-byte ceiling, never exceeded: the store reader's bound
+     *  on one decoded frame (anvil.store.trajectories.MAX_FRAME_BYTES). */
     private static final long RAW_CAP = Long.getLong("anvil.obs.rawcap", 1L << 30);
+    private static final byte[] CAP_END =
+            "{\"k\":\"end\",\"status\":\"obs_cap\",\"winner\":-1,\"turns\":-1,\"ms\":0}\n"
+                    .getBytes(StandardCharsets.UTF_8);
 
     private static FileOutputStream file;
     private static PrintWriter idx;
@@ -1291,6 +1295,23 @@ public final class Obs {
     private static void write(StringBuilder sb) {
         sb.append('\n');
         byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+        if (rawBytes + bytes.length + CAP_END.length > RAW_CAP) {
+            // The cap is the store reader's bound on one decoded frame, so the
+            // frame must end under it: the record that would cross is dropped
+            // and the cap's end record written in its place. (Checked after the
+            // write until M13 Build 1, a capped frame ran one record over and
+            // the reader refused it: the big run's game 211996.)
+            System.err.println("Obs: game " + gameIdx + " hit raw cap ("
+                    + rawBytes + " + " + bytes.length + " > " + RAW_CAP + " bytes), truncating frame");
+            try {
+                frame.write(CAP_END);
+                rawBytes += CAP_END.length;
+                recs++;
+            } catch (IOException ignored) {
+            }
+            endGameFrame();
+            return;
+        }
         try {
             frame.write(bytes);
             rawBytes += bytes.length;
@@ -1299,18 +1320,6 @@ public final class Obs {
             // close + account the partial frame; dropping it with no idx row
             // would leave fileOffset stale and misalign every later frame
             System.err.println("Obs: write failed for game " + gameIdx + ", closing frame: " + e);
-            endGameFrame();
-            return;
-        }
-        if (rawBytes > RAW_CAP) {
-            System.err.println("Obs: game " + gameIdx + " hit raw cap ("
-                    + rawBytes + " > " + RAW_CAP + " bytes), truncating frame");
-            try {
-                frame.write("{\"k\":\"end\",\"status\":\"obs_cap\",\"winner\":-1,\"turns\":-1,\"ms\":0}\n"
-                        .getBytes(StandardCharsets.UTF_8));
-                recs++;
-            } catch (IOException ignored) {
-            }
             endGameFrame();
         }
     }
@@ -1358,6 +1367,18 @@ public final class Obs {
         }
         sb.append('\n');
         byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+        if (forkRawBytes + bytes.length + CAP_END.length > RAW_CAP) {
+            System.err.println("Obs: fork game " + forkGameIdx + " hit raw cap ("
+                    + forkRawBytes + " + " + bytes.length + " > " + RAW_CAP + " bytes), truncating frame");
+            try {
+                forkFrame.write(CAP_END);
+                forkRawBytes += CAP_END.length;
+                forkRecs++;
+            } catch (IOException ignored) {
+            }
+            endForkFrame();
+            return;
+        }
         try {
             forkFrame.write(bytes);
             forkRawBytes += bytes.length;
@@ -1365,18 +1386,6 @@ public final class Obs {
         } catch (IOException e) {
             System.err.println("Obs: fork write failed for game " + forkGameIdx
                     + ", closing frame: " + e);
-            endForkFrame();
-            return;
-        }
-        if (forkRawBytes > RAW_CAP) {
-            System.err.println("Obs: fork game " + forkGameIdx + " hit raw cap ("
-                    + forkRawBytes + " > " + RAW_CAP + " bytes), truncating frame");
-            try {
-                forkFrame.write("{\"k\":\"end\",\"status\":\"obs_cap\",\"winner\":-1,\"turns\":-1,\"ms\":0}\n"
-                        .getBytes(StandardCharsets.UTF_8));
-                forkRecs++;
-            } catch (IOException ignored) {
-            }
             endForkFrame();
         }
     }
