@@ -145,7 +145,10 @@ public class GameCopier {
             newPlayer.setCrankCounter(origPlayer.getCrankCounter());
             // TODO creatureAttackedThisTurn
             for (Mana m : origPlayer.getManaPool()) {
-                newPlayer.getManaPool().addManaNoEvent(m);
+                // A floating mana names the player whose pool it is in, and a refunded payment returns it to that
+                // player's pool: the copy's mana must name the copy's player, or a payment the copy rolls back
+                // puts mana into the original game's pool.
+                newPlayer.getManaPool().addManaNoEvent(new Mana(m.color(), m.sourceCard(), m.manaAbility(), newPlayer));
             }
             playerMap.put(origPlayer, newPlayer);
         }
@@ -162,7 +165,11 @@ public class GameCopier {
 
         for (Player origPlayer : playerMap.keySet()) {
             Player newPlayer = playerMap.get(origPlayer);
-            origPlayer.copyCommandersToSnapshot(newPlayer, gameObjectMap::map);
+            // A player who has left the game is not copied, and neither are that player's cards. A survivor's
+            // commander-damage table still names the departed commander: map it to nothing, which the snapshot
+            // code skips, instead of failing the copy (Anvil ADR-0131).
+            origPlayer.copyCommandersToSnapshot(newPlayer,
+                    c -> c != null && !playerMap.containsKey(c.getOwner()) ? null : gameObjectMap.map(c));
             origPlayer.copyEffectCardsToSnapshot(newPlayer, gameObjectMap::map);
             ((PlayerZoneBattlefield) newPlayer.getZone(ZoneType.Battlefield)).setTriggers(true);
         }
@@ -307,6 +314,11 @@ public class GameCopier {
 
         for (ZoneType zone : ZONES) {
             for (Card card : origGame.getCardsIn(zone)) {
+                if (!playerMap.containsKey(card.getOwner())) {
+                    // an effect a departed player left in a survivor's command zone (Anvil ADR-0131): it has no
+                    // owner in the copy, and the engine should have removed it with its owner (rule 800.4a)
+                    continue;
+                }
                 addCard(newGame, zone, card, aiPlayer);
             }
             // TODO CardsAddedThisTurn is now messed up
@@ -492,14 +504,19 @@ public class GameCopier {
         // an effect card's replacement effects and triggers are what it is for: the commander effect's
         // "put it into the command zone instead" (CR 903.9b), an emblem's trigger
         for (ReplacementEffect re : c.getReplacementEffects()) {
-            newCard.addReplacementEffect(re.copy(newCard, true));
+            final ReplacementEffect reCopy = re.copy(newCard, true);
+            remapActivator(reCopy.getOverridingAbility());
+            newCard.addReplacementEffect(reCopy);
         }
         for (Trigger t : c.getTriggers()) {
-            newCard.addTrigger(t.copy(newCard, true));
+            final Trigger tCopy = t.copy(newCard, true);
+            remapActivator(tCopy.getOverridingAbility());
+            newCard.addTrigger(tCopy);
         }
         for (SpellAbility sa : c.getSpellAbilities()) {
             SpellAbility saCopy = sa.copy(newCard, true);
             if (saCopy != null) {
+                remapActivator(saCopy);
                 newCard.addSpellAbility(saCopy);
             } else {
                 System.err.println(sa.toString());
@@ -507,6 +524,21 @@ public class GameCopier {
         }
 
         return newCard;
+    }
+
+    /**
+     * An ability copied as last-known information keeps the player who last activated it, a player of the original
+     * game. Point it at that player's copy, so that what the copy resolves asks and acts through its own players
+     * (an optional replacement's "you" is read from the ability before the handler sets it).
+     */
+    private void remapActivator(SpellAbility sa) {
+        if (sa == null || sa.getActivatingPlayer() == null) {
+            return;
+        }
+        final Player mapped = playerMap.get(sa.getActivatingPlayer());
+        if (mapped != null) {
+            sa.setActivatingPlayer(mapped);
+        }
     }
 
     private void addCard(Game newGame, ZoneType zone, Card c, Player aiPlayer) {
@@ -721,6 +753,8 @@ public class GameCopier {
         };
     }
 
+    private static final java.util.Set<String> MAP_MISS_SITES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public <T extends GameObject> T find(T o) {
         if (origGame != null && origGame.EXPERIMENTAL_RESTORE_SNAPSHOT) {
             return (T) snapshot.find(o);
@@ -733,6 +767,12 @@ public class GameCopier {
                 return result;
             } else {
                 System.out.println("Couldn't map " + o + "/" + System.identityHashCode(o));
+                // one stack per asking site per JVM, so an unmapped reference can be traced to what held it
+                final StackTraceElement[] st = Thread.currentThread().getStackTrace();
+                final String site = st.length > 4 ? st[2] + " < " + st[3] + " < " + st[4] : "";
+                if (MAP_MISS_SITES.add(site)) {
+                    System.out.println("Couldn't map: first miss asked from " + site);
+                }
             }
         } else if (o instanceof Player) {
             result = (T) playerMap.get(o);

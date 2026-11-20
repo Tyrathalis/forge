@@ -75,7 +75,8 @@ public class SpellAbilityStackInstance implements IIdentifiable, IHasCardView {
             ability.setSVar("StoredTransform", String.valueOf(ability.getHostCard().getTransformedTimestamp()));
         }
 
-        if (sa.getApi() == ApiType.Charm && sa.hasParam("ChoiceRestriction")) {
+        // a charm whose every mode is restricted away has chosen none and has no sub-ability
+        if (sa.getApi() == ApiType.Charm && sa.hasParam("ChoiceRestriction") && sa.getSubAbility() != null) {
             // Remember the Choice here for later handling
             sa.getHostCard().addChosenModes(sa, sa.getSubAbility().getDescription(), sa.getHostCard().getGame().getPhaseHandler().inCombat());
         }

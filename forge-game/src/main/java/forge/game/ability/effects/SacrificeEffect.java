@@ -121,7 +121,11 @@ public class SacrificeEffect extends SpellAbilityEffect {
                         if (validTargets.size() > 1 && i < validArray.length - 1) {
                             removeCandidates(validTargets, validTargetsList, new HashSet<>(), i + 1, 0, amount);
                         }
-                        choosenToSacrifice = p.getController().choosePermanentsToSacrifice(sa, amount, amount, validTargets, msgArray[i]);
+                        // one prompt per type: a script without SacMessage gets a single built description, which
+                        // does not split into one per type (it threw on the second type, Anvil M13 Build 1)
+                        final String subMsg = msgArray.length == validArray.length ? msgArray[i]
+                                : Lang.getInstance().buildValidDesc(List.of(validArray[i].split(",")), false);
+                        choosenToSacrifice = p.getController().choosePermanentsToSacrifice(sa, amount, amount, validTargets, subMsg);
                         for (int j = i + 1; j < validArray.length; ++j) {
                             validTargetsList.get(j).removeAll(choosenToSacrifice);
                         }
