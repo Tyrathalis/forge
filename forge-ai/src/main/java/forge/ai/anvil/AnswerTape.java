@@ -21,8 +21,11 @@ import java.util.Set;
  * Two things enter a tape: each bridge answer given while the mainline game
  * holds the bridge session (TapeBridge), and each search verdict that changed
  * the mainline (a forced option, a forced pass, a surface answer armed for
- * the seat). The search's copies and its value asks are not taped: a replay
- * runs no search and applies the verdicts.
+ * the seat). A search's copies are not taped. A replay runs under the
+ * recorded run's search flags: the search monitor takes every step it takes
+ * on the mainline game (the state-based check at the window, the allocation
+ * ask, the option scan), plays no copy, and the seat applies the taped
+ * verdict.
  *
  * One entry is one line of tab-separated fields, the first naming its kind:
  * <pre>
@@ -30,6 +33,7 @@ import java.util.Set;
  *   set  tag csv|-                  selectK / selectSet / order ("-" = null)
  *   bool tag 0|1
  *   int  tag v
+ *   val  tag v                      the value ask on the mainline session (the allocation head)
  *   plan tag -                      priorityCastPlan answered null
  *   plan tag opt host hasX x refs   refs: p3 (player) e120 (entity) s45 (stack), comma-joined, "" = none
  *   atk  tag -|pairs                pairs: left>right joined by ";" ("" = the empty map)

@@ -768,14 +768,15 @@ public final class AnvilRun {
         // run. -b tape:<file> replays the games in a tape file under the
         // recorded run's own deck, seed and seat flags, with no server: the
         // file names the game indices and the tag set the server had declared.
-        // A replay runs no search and no rollout genre; the search's verdicts
-        // are on the tape.
+        // A replay keeps the run's search flags and runs no rollout genre:
+        // the search monitor does on the mainline what it did live and plays
+        // no copy (SearchMonitor.doSearch); the verdicts are on the tape.
         final boolean tapeRec = params.containsKey("tape");
         java.util.Map<Integer, forge.ai.anvil.AnswerTape.Game> tapeGames = null;
         List<Integer> tapeIdx = null;
         if (bridgeMode.startsWith("tape:")) {
-            if (rolloutK > 0 || search || replayJobs != null || tapeRec) {
-                System.err.println("FATAL: -b tape: excludes -rollout/-search/-replay/-tape");
+            if (rolloutK > 0 || replayJobs != null || tapeRec) {
+                System.err.println("FATAL: -b tape: excludes -rollout/-replay/-tape");
                 System.exit(2);
             }
             try {
@@ -1254,6 +1255,10 @@ public final class AnvilRun {
         long wallS = (System.currentTimeMillis() - t0) / 1000;
         System.out.println("=== anvil tally ===" + (stopped ? " (stopped)" : ""));
         tally.forEach((k, v) -> System.out.printf("%-24s %d%n", k, v));
+        if (search) {
+            System.out.printf("search_leaks             %d of %d searched windows%n", SearchMonitor.LEAKS.get(),
+                    SearchMonitor.LEAK_WINDOWS.get());
+        }
         System.out.printf("wall=%ds%n", wallS);
         System.out.flush();
     }
@@ -1993,6 +1998,7 @@ public final class AnvilRun {
                 boolean rescue, boolean trueLine, byte[] playRng) {
             CopyResult res = new CopyResult();
             long c0 = System.nanoTime();
+            final String copyState0 = LEAK_PER_COPY ? Obs.stateJson(game) : null;
             Game copy;
             try {
                 copy = new GameCopier(game).makeCopy();
@@ -2002,6 +2008,9 @@ public final class AnvilRun {
                 return res;
             }
             res.copyMs = (System.nanoTime() - c0) / 1_000_000;
+            if (copyState0 != null) {
+                leakCheck(copyState0, wid, "making the copy, option " + label, game.getRegisteredPlayers().get(prioSeat));
+            }
             Random rollRng = new Random(rollSeed);
             if (!trueLine) {
                 determinize(copy, seatName, rollRng);
@@ -2103,6 +2112,10 @@ public final class AnvilRun {
                 Obs.endWireGame(copy);
                 forge.ai.AiCache.clear();
                 res.ms = (System.nanoTime() - c0) / 1_000_000;
+                if (copyState0 != null) {
+                    leakCheck(copyState0, wid, "playing the copy, option " + label + ", ended " + res.kind,
+                            game.getRegisteredPlayers().get(prioSeat));
+                }
             }
             return res;
         }
@@ -2358,12 +2371,60 @@ public final class AnvilRun {
             return new SearchDirective.Pending.DeepRound.Result(v, sb.toString());
         }
 
+        /** The copy-leak guard (M13 Build 1): a search plays copies of the
+         *  game and must leave the game itself as it found it. The mainline's
+         *  observed state (the dec records' snapshot: zones, counters, life,
+         *  mana pools) is taken before a window's copies and compared after
+         *  them. A difference is a copy that reached back into the game: one
+         *  stderr line with the first difference, a census row (searchLeak)
+         *  and a count in the worker's tally. Recording only.
+         *  -Danvil.search.leakcheck=off disables it; =copy also checks after
+         *  every copy, naming the copy. */
+        private static final String LEAK_MODE = System.getProperty("anvil.search.leakcheck", "window");
+        private static final boolean LEAK_CHECK = !"off".equals(LEAK_MODE);
+        private static final boolean LEAK_PER_COPY = "copy".equals(LEAK_MODE);
+        static final java.util.concurrent.atomic.AtomicInteger LEAKS = new java.util.concurrent.atomic.AtomicInteger();
+        static final java.util.concurrent.atomic.AtomicInteger LEAK_WINDOWS = new java.util.concurrent.atomic.AtomicInteger();
+
+        private boolean leakCheck(String before, String where, String what, Player prio) {
+            if (!LEAK_PER_COPY || what.startsWith("t")) {
+                LEAK_WINDOWS.incrementAndGet();
+            }
+            final String after = Obs.stateJson(game);
+            if (after.equals(before)) {
+                return false;
+            }
+            int i = 0;
+            final int n = Math.min(before.length(), after.length());
+            while (i < n && before.charAt(i) == after.charAt(i)) {
+                i++;
+            }
+            final int a = Math.max(0, i - 90);
+            if (!LEAK_PER_COPY || what.startsWith("t")) {
+                LEAKS.incrementAndGet();
+                Census.rec(game, prio, "searchLeak", "where", where, "at", i);
+            }
+            System.err.println("[search] LEAK " + where + " (" + what + "): the game's state changed across its copies; before ..."
+                    + before.substring(a, Math.min(before.length(), i + 90)) + "... after ..."
+                    + after.substring(a, Math.min(after.length(), i + 90)) + "...");
+            return true;
+        }
+
         private void doSearch(Player prio, int turn, String phase, int mySw, List<SpellAbility> scanned,
                 String allocJson) {
             final long block0 = System.nanoTime();
             int prioSeat = game.getRegisteredPlayers().indexOf(prio);
             List<SpellAbility> options = scanned != null ? scanned
                     : Lists.newArrayList(AnvilOptions.priorityOptions(game, prio));
+            if (bridge instanceof forge.ai.anvil.ReplayBridge) {
+                // Forced-decision replay: the window is searched as far as the
+                // search touches the mainline (the caller's state-based check,
+                // the scan above, the cache clear every copy ends with). No copy
+                // is played; the seat applies the verdict on the tape.
+                forge.ai.AiCache.clear();
+                return;
+            }
+            final String state0 = LEAK_CHECK ? Obs.stateJson(game) : null;
             List<String> cands = new ArrayList<>(options.size() + 1);
             cands.add(null); // pass
             int manaSkipped = 0;
@@ -2508,6 +2569,9 @@ public final class AnvilRun {
                     .append(",\"ms\":").append((System.nanoTime() - block0) / 1_000_000);
             if (allocJson != null) {
                 sb.append(",\"alloc\":").append(allocJson);
+            }
+            if (state0 != null) {
+                leakCheck(state0, "g" + gameIdx + ".s" + mySw, "t" + turn + " " + phase + " seat " + prioSeat, prio);
             }
             bridge.gameStart("g" + gameIdx, seed, Obs.lastHeaderForBridge(game));
             final PrintWriter out = labels;

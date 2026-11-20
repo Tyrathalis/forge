@@ -150,6 +150,11 @@ public final class ReplayBridge implements AnvilBridge {
     }
 
     @Override
+    public double value(String tag, String observation) {
+        return Double.parseDouble(next("val", tag)[2]);
+    }
+
+    @Override
     public CombatMapAnswer attackMap(String tag, String observation) {
         return AnswerTape.combat(next("atk", tag));
     }

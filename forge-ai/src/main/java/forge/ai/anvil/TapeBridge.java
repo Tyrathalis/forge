@@ -7,7 +7,7 @@ import java.util.List;
  * taped only while the mainline game holds the session: a search copy
  * announces its own derived id ("g12.s3r0o1") and the mainline is announced
  * again when the copy ends, so the session id says whose ask this is. The
- * value and certify asks are never taped (a replay runs no search).
+ * certify ask is not taped (a replay runs no rollout genre).
  * Recording only: every call returns the delegate's answer unchanged.
  */
 public final class TapeBridge implements AnvilBridge {
@@ -126,7 +126,9 @@ public final class TapeBridge implements AnvilBridge {
 
     @Override
     public double value(String tag, String observation) {
-        return in.value(tag, observation);
+        double v = in.value(tag, observation);
+        tape("val\t" + tag + "\t" + v); // the allocation ask; a leaf's value ask runs in its copy's session
+        return v;
     }
 
     @Override
