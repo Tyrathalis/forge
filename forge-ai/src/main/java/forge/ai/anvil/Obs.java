@@ -577,6 +577,20 @@ public final class Obs {
         write(sb);
     }
 
+    /**
+     * The answer tape (Anvil M13 Build 1, AnswerTape): {"k":"ans","a":line},
+     * one per answer the mainline game took from outside the engine, in
+     * stream order. Recording only. The callers gate on the mainline (the
+     * bridge session id; the mainline's own search verdict), so this writes
+     * whenever a store frame is open.
+     */
+    public static synchronized void tape(String line) {
+        if (frame == null) {
+            return;
+        }
+        write(new StringBuilder(line.length() + 24).append("{\"k\":\"ans\",\"a\":").append(q(line)).append('}'));
+    }
+
     public static synchronized void endGame(String status, int winnerIdx, int turns, long ms, boolean drawClock) {
         endGame(status, winnerIdx, turns, ms, drawClock, null);
     }

@@ -289,7 +289,31 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         // pick (what the policy did here); complete it once, after the answer.
         SearchDirective.Pending pend = SearchDirective.takePending(getGame());
         if (pend == null) {
-            return picked;
+            // Forced-decision replay: apply the search verdict the recorded
+            // game took at this ask, if it took one. The same steps as the
+            // live acting rule below, with the verdict read from the tape;
+            // inline, so a forced ask's record carries the live call depth.
+            final AnswerTape.Search v = bridge instanceof ReplayBridge ? ((ReplayBridge) bridge)
+                    .takeSearch(getGame().getRegisteredPlayers().indexOf(player)) : null;
+            if (v == null) {
+                return picked;
+            }
+            if (AnswerTape.Search.PASS.equals(v.mode)) {
+                return null;
+            }
+            List<SpellAbility> play = picked;
+            if (AnswerTape.Search.ACT.equals(v.mode)) {
+                play = searchForcedAsk(v.label).sas;
+                if (play == null || play.isEmpty()) {
+                    return picked; // the forced option voided, as it did in the recorded game
+                }
+            }
+            if (v.armKind >= 0) {
+                SurfaceDirective.takeMainline(getGame(), player.getName());
+                SurfaceDirective.armMainline(getGame(), player.getName(), v.armKind, v.armOrdinal, v.armAnswer,
+                        v.armLabel);
+            }
+            return play;
         }
         final String natural = picked == null || picked.isEmpty() ? "pass" : Census.str(picked.get(0));
         if (!pend.acts()) {
@@ -307,10 +331,14 @@ public class PlayerControllerAnvil extends CensusPlayerController {
         SearchDirective.Pending.Decision d = pend.decide(natural);
         if (d.actIdx < 0 || d.actIdx == d.natIdx) {
             pend.complete(natural, d, "natural");
+            if (d.arm(pend) != null) {
+                tapeSearch(AnswerTape.Search.NAT, null, pend, d);
+            }
             armSurface(pend, d);
             return picked;
         }
         final String label = pend.cands[d.actIdx];
+        tapeSearch(label == null ? AnswerTape.Search.PASS : AnswerTape.Search.ACT, label, pend, d);
         if (label == null) {
             Census.rec(getGame(), getPlayer(), "chooseSpellAbilityToPlay",
                     "by", d.by, "pick", "pass", "nat", natural, "margin", d.margin);
@@ -349,6 +377,19 @@ public class PlayerControllerAnvil extends CensusPlayerController {
             recordSurfaceArm(prev, "stale");
         }
         SurfaceDirective.armMainline(getGame(), player.getName(), s.kind, s.ordinal, s.answers[d.ansIdx], s.label);
+    }
+
+    /** The answer tape (AnswerTape): this window's search verdict, taped
+     *  before it is applied so a forced ask's own answer follows it. */
+    private void tapeSearch(String mode, String label, SearchDirective.Pending pend,
+            SearchDirective.Pending.Decision d) {
+        if (!AnswerTape.recording) {
+            return;
+        }
+        SearchDirective.Pending.SurfAnswers s = AnswerTape.Search.PASS.equals(mode) ? null : d.arm(pend);
+        AnswerTape.record(new AnswerTape.Search(getGame().getRegisteredPlayers().indexOf(player), mode, label,
+                s == null ? -1 : s.kind, s == null ? 0 : s.ordinal, s == null ? null : s.answers[d.ansIdx],
+                s == null ? null : s.label));
     }
 
     private void recordSurfaceArm(SurfaceDirective d, String when) {

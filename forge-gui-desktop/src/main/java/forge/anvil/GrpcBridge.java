@@ -20,7 +20,6 @@ import forge.anvil.bridge.v0.Option;
 import forge.anvil.bridge.v0.ServerMsg;
 import forge.anvil.bridge.v0.WorkerHello;
 import forge.anvil.bridge.v0.WorkerMsg;
-import forge.util.MyRandom;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
@@ -201,8 +200,7 @@ public final class GrpcBridge implements AnvilBridge {
         // e.g. a model checkpoint without the payment head) must reproduce
         // today's behavior exactly, not pick random payment classes. Other
         // tags keep the M0 random-legal echo semantics.
-        int local = n <= 1 || forge.ai.anvil.PlayerControllerAnvil.TAG_PAY_CLASS.equals(tag)
-                ? 0 : MyRandom.getRandom().nextInt(n);
+        int local = forge.ai.anvil.EchoDraw.selectOne(tag, n);
         DecisionResponse resp = roundTrip(tag, AnswerShape.SELECT_ONE, optionLabels, null,
                 DecisionResponse.newBuilder().setIndex(local).build());
         return resp.getIndex();
@@ -229,18 +227,10 @@ public final class GrpcBridge implements AnvilBridge {
 
     @Override
     public int[] selectK(String tag, int n, int k) {
-        int[] all = new int[n];
-        for (int i = 0; i < n; i++) {
-            all[i] = i;
-        }
-        for (int i = 0; i < k && i < n; i++) {
-            int j = i + MyRandom.getRandom().nextInt(n - i);
-            int tmp = all[i];
-            all[i] = all[j];
-            all[j] = tmp;
-        }
         IndexList.Builder local = IndexList.newBuilder();
-        java.util.Arrays.stream(all, 0, Math.min(k, n)).sorted().forEach(local::addIndices);
+        for (int i : forge.ai.anvil.EchoDraw.selectK(n, k)) {
+            local.addIndices(i);
+        }
         DecisionResponse resp = roundTrip(tag, AnswerShape.SELECT_K, null,
                 Constraints.newBuilder().setK(Math.min(k, n)).setMax(n).build(),
                 DecisionResponse.newBuilder().setIndices(local).build());
@@ -267,7 +257,7 @@ public final class GrpcBridge implements AnvilBridge {
 
     @Override
     public boolean bool(String tag) {
-        boolean local = MyRandom.getRandom().nextBoolean();
+        boolean local = forge.ai.anvil.EchoDraw.bool();
         DecisionResponse resp = roundTrip(tag, AnswerShape.BOOL, null, null,
                 DecisionResponse.newBuilder().setFlag(local).build());
         return resp.getFlag();
@@ -275,7 +265,7 @@ public final class GrpcBridge implements AnvilBridge {
 
     @Override
     public int intInRange(String tag, int min, int max) {
-        int local = max <= min ? min : min + MyRandom.getRandom().nextInt(max - min + 1);
+        int local = forge.ai.anvil.EchoDraw.intInRange(min, max);
         DecisionResponse resp = roundTrip(tag, AnswerShape.INT_IN_RANGE, null,
                 Constraints.newBuilder().setMin(min).setMax(max).build(),
                 DecisionResponse.newBuilder().setValue(local).build());

@@ -763,8 +763,49 @@ public final class AnvilRun {
             rangeStart = 0;
         }
 
+        // Forced-decision replay (M13 Build 1; forge.ai.anvil.AnswerTape).
+        // -tape records the answer tape into the obs frames of a gRPC-served
+        // run. -b tape:<file> replays the games in a tape file under the
+        // recorded run's own deck, seed and seat flags, with no server: the
+        // file names the game indices and the tag set the server had declared.
+        // A replay runs no search and no rollout genre; the search's verdicts
+        // are on the tape.
+        final boolean tapeRec = params.containsKey("tape");
+        java.util.Map<Integer, forge.ai.anvil.AnswerTape.Game> tapeGames = null;
+        List<Integer> tapeIdx = null;
+        if (bridgeMode.startsWith("tape:")) {
+            if (rolloutK > 0 || search || replayJobs != null || tapeRec) {
+                System.err.println("FATAL: -b tape: excludes -rollout/-search/-replay/-tape");
+                System.exit(2);
+            }
+            try {
+                tapeGames = forge.ai.anvil.AnswerTape.read(bridgeMode.substring(5));
+            } catch (java.io.IOException | RuntimeException e) {
+                System.err.println("FATAL: cannot read tape file: " + e);
+                System.exit(2);
+            }
+            tapeIdx = new ArrayList<>(tapeGames.keySet());
+            nGames = tapeIdx.size();
+            rangeStart = 0;
+        }
+        if (tapeRec && (!bridgeMode.startsWith("grpc:") || !params.containsKey("obs"))) {
+            System.err.println("FATAL: -tape requires -b grpc:<host>:<port> and -obs");
+            System.exit(2);
+        }
+
         final AnvilBridge bridge;
-        if ("local-random".equals(bridgeMode)) {
+        if (tapeGames != null) {
+            Set<String> taped = null;
+            for (forge.ai.anvil.AnswerTape.Game tg : tapeGames.values()) {
+                if (taped != null && !taped.equals(tg.tags)) {
+                    System.err.println("FATAL: tape file mixes tag sets (game " + tg.idx + ")");
+                    System.exit(2);
+                }
+                taped = tg.tags;
+            }
+            tags = taped == null ? java.util.Collections.emptySet() : taped;
+            bridge = new forge.ai.anvil.ReplayBridge(tapeGames);
+        } else if ("local-random".equals(bridgeMode)) {
             bridge = new LocalRandomBridge();
         } else if ("local-oneshot".equals(bridgeMode)) {
             // M10 smoke rig: random-legal through the one-shot path (the
@@ -779,7 +820,8 @@ public final class AnvilRun {
             if (!grpc.serverBridgedTags().isEmpty()) {
                 tags = grpc.serverBridgedTags(); // server-driven coverage
             }
-            bridge = grpc;
+            forge.ai.anvil.AnswerTape.recording = tapeRec;
+            bridge = tapeRec ? new forge.ai.anvil.TapeBridge(grpc) : grpc;
         } else {
             System.out.println("Unknown bridge mode: " + bridgeMode);
             return;
@@ -971,9 +1013,14 @@ public final class AnvilRun {
                     break;
                 }
                 final ReplayJob rjob = replayJobs != null ? replayJobs.get(g) : null;
-                int idx = rjob != null ? rjob.job : rangeStart + g;
+                int idx = rjob != null ? rjob.job : tapeIdx != null ? tapeIdx.get(g) : rangeStart + g;
                 long seed = rjob != null ? rjob.seed : seedBase != null
                         ? splitmix64(seedBase + idx * 0x9E3779B97F4A7C15L) : legacyBaseSeed + idx;
+                if (tapeGames != null && tapeGames.get(idx).seed != seed) {
+                    System.err.println("FATAL: game " + idx + " derives seed " + seed + " under these flags; its tape has "
+                            + tapeGames.get(idx).seed);
+                    System.exit(2);
+                }
                 if (drillTargets != null && !drillTargets.containsKey(idx)) {
                     tally.merge("drill_skip", 1, Integer::sum);
                     if (results != null) {
@@ -1044,6 +1091,9 @@ public final class AnvilRun {
                 }
                 Census.startGame(idx, seed);
                 Obs.startGame(idx, seed, game, type.toString());
+                if (tapeRec) {
+                    Obs.tape("tags\t" + String.join(",", new java.util.TreeSet<>(tags)));
+                }
                 long gameT0 = System.currentTimeMillis();
                 bridge.gameStart("g" + idx, seed);
                 int[] drillTurns = drillTargets != null ? drillTargets.get(idx) : null;
@@ -1169,6 +1219,8 @@ public final class AnvilRun {
                             + ",\"draw_clock\":" + drawClockHit[0]
                             + ",\"cap\":" + (capReason == null ? "null" : "\"" + capReason + "\"")
                             + ",\"windows\":" + game.getAnvilPriorityGrants()
+                            + ",\"first\":" + game.getRegisteredPlayers().indexOf(game.getStartingPlayer())
+                            + tapeRow(bridge)
                             + ",\"decks\":[\"" + jstr(pair[0]) + "\",\"" + jstr(pair[1]) + "\"]"
                             + ",\"profiles\":[\"" + jstr(seatProfiles[0]) + "\",\"" + jstr(seatProfiles[1]) + "\"]"
                             + (mcMode == null ? "" : ",\"mc\":{\"mode\":\"" + mcMode + "\",\"seats\":"
@@ -1310,6 +1362,18 @@ public final class AnvilRun {
             }
         }
         return sb.append('"').toString();
+    }
+
+    /** A replayed game's tape account for its results row: entries used,
+     *  the tape's length, and where it diverged (null = it did not). A game
+     *  that ended with entries unused diverged without asking. */
+    private static String tapeRow(AnvilBridge bridge) {
+        if (!(bridge instanceof forge.ai.anvil.ReplayBridge)) {
+            return "";
+        }
+        forge.ai.anvil.ReplayBridge rb = (forge.ai.anvil.ReplayBridge) bridge;
+        return ",\"tape\":{\"used\":" + rb.used() + ",\"n\":" + rb.length() + ",\"diverged\":"
+                + (rb.diverged() == null ? "null" : "\"" + jstr(rb.diverged()) + "\"") + "}";
     }
 
     private static Map<String, List<String>> parseParams(String[] args) {
