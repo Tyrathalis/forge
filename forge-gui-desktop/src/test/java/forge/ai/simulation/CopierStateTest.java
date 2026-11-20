@@ -84,4 +84,47 @@ public class CopierStateTest extends SimulationTest {
         Assert.assertEquals(cBridge.getExiledCards().size(), 1);
         Assert.assertSame(cBridge.getExiledCards().getFirst(), cHidden);
     }
+
+    /** A floating mana names the player whose pool it is in, and a refund returns it there: a copy's mana
+     *  must name the copy's player, or a payment rolled back in the copy pays into the original game. */
+    @Test
+    public void floatingManaInACopyBelongsToTheCopysPlayer() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        Card forest = addCard("Forest", p);
+        p.getManaPool().addManaNoEvent(new forge.game.mana.Mana(forge.card.MagicColor.GREEN, forest, null, p));
+
+        Game copy = new GameCopier(game).makeCopy();
+        Player cp = copy.getPlayers().get(1);
+        int n = 0;
+        for (forge.game.mana.Mana m : cp.getManaPool()) {
+            Assert.assertSame(m.getPlayer(), cp);
+            n++;
+        }
+        Assert.assertEquals(n, 1);
+        // what a refund does with paying mana: back to the pool of the player the mana names
+        for (forge.game.mana.Mana m : com.google.common.collect.Lists.newArrayList(cp.getManaPool())) {
+            m.getPlayer().getManaPool().addMana(m);
+        }
+        Assert.assertEquals(p.getManaPool().totalMana(), 1);
+        Assert.assertEquals(cp.getManaPool().totalMana(), 2);
+    }
+
+    /** An optional replacement reads its "you" from the effect's ability: on a copied effect card that
+     *  must be the copy's player, or the copy asks the original game's controller. */
+    @Test
+    public void aCopiedEffectCardsAbilitiesActForTheCopysPlayer() {
+        Game game = initAndCreateGame();
+        Player p = game.getPlayers().get(1);
+        Card commander = addCard("Grizzly Bears", p);
+        p.addCommander(commander);
+        game.getAction().checkStateEffects(true);
+        Card effect = named(p, ZoneType.Command, "Commander Effect");
+        effect.getReplacementEffects().iterator().next().ensureAbility().setActivatingPlayer(p);
+
+        Game copy = new GameCopier(game).makeCopy();
+        Player cp = copy.getPlayers().get(1);
+        Card ce = named(cp, ZoneType.Command, "Commander Effect");
+        Assert.assertSame(ce.getReplacementEffects().iterator().next().getOverridingAbility().getActivatingPlayer(), cp);
+    }
 }
