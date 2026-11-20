@@ -99,6 +99,11 @@ public final class AnvilRun {
 
     /** The game a Monte Carlo decision row belongs to (-mcdecisions); one game at a time per worker. */
     private static volatile int MC_GAME_INDEX = -1;
+    /** The Monte Carlo copy-leak guard's state (one game at a time per worker) and its tally. */
+    private static int MC_LEAK_DEPTH;
+    private static String MC_LEAK_BEFORE;
+    static final java.util.concurrent.atomic.AtomicInteger MC_LEAKS = new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger MC_LEAK_DECISIONS = new java.util.concurrent.atomic.AtomicInteger();
     private static final int DRAW_CLOCK_S = 300;
     /** ADR-0102 deterministic caps (see the rules setup below). */
     static final int DEFAULT_TURN_CAP = 52;
@@ -236,6 +241,43 @@ public final class AnvilRun {
                 };
             }
             forge.ai.simulation.FlatMonteCarloStats.reset();
+            // The copy-leak guard on the Monte Carlo path (M13 Build 2): a comparison plays copies of the
+            // game and must leave the game as it found it. The observed state (the search guard's snapshot)
+            // is taken before a comparison's first copy and compared after its last. Recording only: a
+            // stderr line with the first difference, a census row (mcLeak), a count in the worker's tally.
+            // -Danvil.mc.leakcheck=off disables it.
+            if (!"off".equals(System.getProperty("anvil.mc.leakcheck", "on"))) {
+                forge.ai.simulation.FlatMonteCarloPicker.bracket = (player, opening) -> {
+                    final Game g = player.getGame();
+                    if (opening) {
+                        if (MC_LEAK_DEPTH++ == 0) {
+                            MC_LEAK_BEFORE = Obs.stateJson(g);
+                        }
+                        return;
+                    }
+                    if (--MC_LEAK_DEPTH != 0 || MC_LEAK_BEFORE == null) {
+                        return;
+                    }
+                    final String before = MC_LEAK_BEFORE;
+                    MC_LEAK_BEFORE = null;
+                    MC_LEAK_DECISIONS.incrementAndGet();
+                    final String after = Obs.stateJson(g);
+                    if (after.equals(before)) {
+                        return;
+                    }
+                    int i = 0;
+                    final int n = Math.min(before.length(), after.length());
+                    while (i < n && before.charAt(i) == after.charAt(i)) {
+                        i++;
+                    }
+                    final int a = Math.max(0, i - 90);
+                    MC_LEAKS.incrementAndGet();
+                    Census.rec(g, player, "mcLeak", "at", i);
+                    System.err.println("[mc] LEAK game " + MC_GAME_INDEX + ": the game's state changed across a Monte Carlo "
+                            + "comparison's copies; before ..." + before.substring(a, Math.min(before.length(), i + 90))
+                            + "... after ..." + after.substring(a, Math.min(after.length(), i + 90)) + "...");
+                };
+            }
         }
         // D6 run-2: re-ask-on-veto (d6-vtrace-loop §6b). Per-JVM, all seats.
         boolean reask = params.containsKey("reask");
@@ -1258,6 +1300,10 @@ public final class AnvilRun {
         if (search) {
             System.out.printf("search_leaks             %d of %d searched windows%n", SearchMonitor.LEAKS.get(),
                     SearchMonitor.LEAK_WINDOWS.get());
+        }
+        if (mcMode != null) {
+            System.out.printf("mc_leaks                 %d of %d Monte Carlo comparisons%n", MC_LEAKS.get(),
+                    MC_LEAK_DECISIONS.get());
         }
         System.out.printf("wall=%ds%n", wallS);
         System.out.flush();

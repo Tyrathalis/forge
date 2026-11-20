@@ -108,6 +108,20 @@ public final class FlatMonteCarloPicker {
      * otherwise take several times the budget (5 s were seen with the 2.5 s desktop budget).
      */
     private static volatile long rolloutDeadlineNanos = Long.MAX_VALUE;
+
+    /**
+     * Brackets a comparison for a harness: called with the deciding player and {@code true} before the first copy of
+     * the game is made, and with {@code false} after the last one is done. A comparison plays copies only, so the game
+     * itself must be the same at both calls. Null (the default) = no calls.
+     */
+    public static volatile java.util.function.BiConsumer<Player, Boolean> bracket;
+
+    private static void bracket(final Player player, final boolean opening) {
+        final java.util.function.BiConsumer<Player, Boolean> b = bracket;
+        if (b != null) {
+            b.accept(player, opening);
+        }
+    }
     private static final int ROLLOUT_DEADLINE_FACTOR = 2;
     /** Decisions slower than this are written down in the statistics, with where the time went. */
     private static final long SLOW_DECISION_NANOS = TimeUnit.MILLISECONDS.toNanos(2500);
@@ -527,6 +541,7 @@ public final class FlatMonteCarloPicker {
                                 final Config cfg, final Predicate<SpellAbility> revalidate, final Mode mode) {
         final long start = System.nanoTime();
         final SpellAbility heuristicChoice = approved.isEmpty() ? null : approved.get(0);
+        bracket(player, true);
         try {
             final Result result = chooseImpl(player, approved, extras, cfg, revalidate, start, mode);
             if (DEBUG) {
@@ -542,6 +557,7 @@ public final class FlatMonteCarloPicker {
             return new Result(heuristicChoice, heuristicChoice == null, false, 0, 0, System.nanoTime() - start, "error");
         } finally {
             rolloutDeadlineNanos = Long.MAX_VALUE;
+            bracket(player, false);
         }
     }
 
@@ -1853,6 +1869,7 @@ public final class FlatMonteCarloPicker {
      */
     public static Result chooseAttack(final Player player, final forge.game.combat.Combat combat, final Config cfg) {
         final long start = System.nanoTime();
+        bracket(player, true);
         try {
             final List<Candidate> cands = buildAttackCandidates(player, combat);
             if (cands.size() < 2) {
@@ -1866,6 +1883,7 @@ public final class FlatMonteCarloPicker {
             return new Result(null, false, false, 0, 0, System.nanoTime() - start, "error");
         } finally {
             rolloutDeadlineNanos = Long.MAX_VALUE;
+            bracket(player, false);
         }
     }
 
